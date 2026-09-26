@@ -1133,8 +1133,12 @@ async function saveAdminRecord(env, body, existing = null) {
   const record = {
     name: String(body.name ?? existing?.name ?? "").trim(),
     email,
-    status: body.status === "inactive" ? "inactive" : "active",
-    allProjects: Boolean(body.allProjects),
+    status: body.status != null
+      ? (body.status === "inactive" ? "inactive" : "active")
+      : (existing?.status === "inactive" ? "inactive" : "active"),
+    allProjects: body.allProjects != null
+      ? Boolean(body.allProjects)
+      : Boolean(existing?.allProjects),
     projectIds: Array.isArray(body.projectIds)
       ? [...new Set(body.projectIds.map(String).filter(Boolean))]
       : (Array.isArray(existing?.projectIds) ? existing.projectIds : []),
