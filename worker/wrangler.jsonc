@@ -3,7 +3,13 @@
   "name": "guiasys-licensing-api",
   "main": "src/index.js",
   "compatibility_date": "2026-09-26",
+  "keep_vars": true,
   "vars": {
     "FIREBASE_PROJECT_ID": "guiasys-licensing"
+  },
+  "secrets": {
+    "required": [
+      "FIREBASE_SERVICE_ACCOUNT_JSON"
+    ]
   }
 }
