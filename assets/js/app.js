@@ -122,6 +122,13 @@ function defaultProjectRoute() {
   return first?.[0] || "projects";
 }
 
+function canCreateProjects() {
+  return Boolean(
+    hasPermission("manageProjects") &&
+    (state.administrator?.master || state.administrator?.allProjects)
+  );
+}
+
 function iconSvg(name) {
   const common = 'viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"';
   const paths = {
@@ -613,8 +620,11 @@ async function dashboardView() {
   `).join("");
 
   el.content.innerHTML = `
-    ${pageHeader("Dashboard geral", "Visão consolidada de todos os projetos do GuiaSys Licensing.",
-      '<button class="btn btn-primary" id="dashboard-new-project" type="button">+ Novo projeto</button>')}
+    ${pageHeader(
+      "Dashboard geral",
+      "Visão consolidada de todos os projetos do GuiaSys Licensing.",
+      canCreateProjects() ? '<button class="btn btn-primary" id="dashboard-new-project" type="button">+ Novo projeto</button>' : ""
+    )}
 
     <section class="grid grid-4">
       ${metric("Projetos ativos", data.projectsActive, `${data.projectsTotal} projeto(s) no total`)}
@@ -646,13 +656,19 @@ async function dashboardView() {
     </section>
   `;
 
-  document.querySelector("#dashboard-new-project").onclick = openProjectCreate;
+  document.querySelector("#dashboard-new-project")?.addEventListener("click", openProjectCreate);
 }
 
 async function projectsView() {
+  const canCreate = canCreateProjects();
+  const canEdit = hasPermission("manageProjectSettings");
+
   el.content.innerHTML = `
-    ${pageHeader("Projetos", "Cada projeto possui um ambiente de licenciamento totalmente independente.",
-      '<button class="btn btn-primary" id="new-project" type="button">+ Novo projeto</button>')}
+    ${pageHeader(
+      "Projetos",
+      "Cada projeto possui um ambiente de licenciamento totalmente independente.",
+      canCreate ? '<button class="btn btn-primary" id="new-project" type="button">+ Novo projeto</button>' : ""
+    )}
 
     <section class="project-grid">
       ${state.projects.length
@@ -671,27 +687,33 @@ async function projectsView() {
             </div>
             <div class="project-actions">
               <button class="btn btn-primary open-project" type="button">Abrir projeto</button>
-              <button class="btn btn-ghost edit-project" type="button">Editar</button>
+              ${canEdit ? '<button class="btn btn-ghost edit-project" type="button">Editar</button>' : ""}
             </div>
           </article>
         `).join("")
-        : emptyState("Nenhum projeto cadastrado", "Cadastre seu primeiro produto para começar.", '<button class="btn btn-primary" id="empty-new-project" type="button">Criar primeiro projeto</button>')}
+        : emptyState(
+            "Nenhum projeto disponível",
+            state.administrator?.master
+              ? "Cadastre seu primeiro produto para começar."
+              : "Nenhum projeto foi liberado para esta conta.",
+            canCreate ? '<button class="btn btn-primary" id="empty-new-project" type="button">Criar primeiro projeto</button>' : ""
+          )}
     </section>
   `;
 
-  document.querySelector("#new-project").onclick = openProjectCreate;
+  document.querySelector("#new-project")?.addEventListener("click", openProjectCreate);
   document.querySelector("#empty-new-project")?.addEventListener("click", openProjectCreate);
 
   document.querySelectorAll(".project-card").forEach(card => {
     const id = card.dataset.project;
     card.querySelector(".open-project").onclick = async () => {
       state.selectedProjectId = id;
-      state.route = "project-dashboard";
+      state.route = defaultProjectRoute();
       renderProjectSwitcher();
       renderNavigation();
       await renderContent();
     };
-    card.querySelector(".edit-project").onclick = () => openProjectEdit(state.projects.find(p => p.id === id));
+    card.querySelector(".edit-project")?.addEventListener("click", () => openProjectEdit(state.projects.find(p => p.id === id)));
   });
 }
 
@@ -1700,6 +1722,206 @@ async function projectSettingsView() {
   };
 }
 
+async function loadAdmins() {
+  const data = await api("/api/v1/admin/admins");
+  return data.admins || [];
+}
+
+function adminForm(admin = {}) {
+  const allProjects = Boolean(admin.allProjects);
+  const permissions = admin.permissions || {};
+
+  return `
+    <div class="form-grid form-grid-2">
+      <label class="field">
+        ${fieldTitle("Nome", "Nome usado para identificar este administrador no painel.")}
+        <input name="name" maxlength="120" value="${e(admin.name || "")}" placeholder="Nome do administrador">
+      </label>
+      <label class="field">
+        ${fieldTitle("E-mail Google *", "A pessoa deve entrar no site usando exatamente esta conta Google.")}
+        <input name="email" type="email" required maxlength="160" value="${e(admin.email || "")}" ${admin.id ? "readonly" : ""} placeholder="usuario@gmail.com">
+      </label>
+      <label class="field">
+        ${fieldTitle("Status", "Administradores inativos não conseguem entrar no painel.")}
+        <select name="status">
+          <option value="active" ${admin.status !== "inactive" ? "selected" : ""}>Ativo</option>
+          <option value="inactive" ${admin.status === "inactive" ? "selected" : ""}>Inativo</option>
+        </select>
+      </label>
+      <label class="field check-field">
+        <input name="allProjects" id="admin-all-projects" type="checkbox" value="true" ${allProjects ? "checked" : ""}>
+        ${fieldTitle("Todos os projetos, inclusive futuros", "Quando ativado, o administrador enxerga todos os projetos atuais e qualquer projeto criado futuramente.")}
+      </label>
+
+      <div class="field field-full">
+        ${fieldTitle("Projetos permitidos", "Use esta lista quando o administrador não tiver acesso a todos os projetos.")}
+        <div class="permission-projects" id="admin-project-list">
+          ${state.projects.filter(p => p.status !== "archived").map(project => `
+            <label class="permission-check">
+              <input type="checkbox" name="projectIds" value="${e(project.id)}" ${admin.projectIds?.includes(project.id) ? "checked" : ""}>
+              <span><strong>${e(project.name)}</strong><small>${e(project.prefix)} · ${e(project.id)}</small></span>
+            </label>
+          `).join("") || '<div class="muted-box">Nenhum projeto cadastrado.</div>'}
+        </div>
+      </div>
+
+      <div class="field field-full">
+        <div class="permission-heading">
+          ${fieldTitle("Permissões", "Defina exatamente quais módulos e ações este administrador poderá usar.")}
+          <label class="permission-all"><input id="admin-perm-all" type="checkbox"> Marcar todas</label>
+        </div>
+        <div class="permissions-grid">
+          ${Object.entries(ADMIN_PERMISSION_LABELS).map(([key, label]) => `
+            <label class="permission-check">
+              <input type="checkbox" name="perm_${e(key)}" value="true" ${permissions[key] ? "checked" : ""}>
+              <span>${e(label)}</span>
+            </label>
+          `).join("")}
+        </div>
+      </div>
+
+      <div class="notice field-full">
+        O usuário master continua com acesso total e não depende destas permissões. Administradores adicionais nunca substituem o master.
+      </div>
+    </div>
+  `;
+}
+
+function openAdmin(admin = null, onSaved = null) {
+  openModal({
+    title: admin ? "Editar administrador" : "Novo administrador",
+    subtitle: admin ? admin.email : "Controle o acesso ao GuiaSys Licensing por e-mail Google.",
+    body: adminForm(admin || {}),
+    submitLabel: admin ? "Salvar permissões" : "Cadastrar administrador",
+    wide: true,
+    onOpen: backdrop => {
+      const form = backdrop.querySelector(".modal-form");
+      const allProjects = form.elements.allProjects;
+      const projectChecks = [...form.querySelectorAll('input[name="projectIds"]')];
+      const permAll = form.querySelector("#admin-perm-all");
+      const permChecks = [...form.querySelectorAll('input[name^="perm_"]')];
+
+      const syncProjects = () => {
+        projectChecks.forEach(input => {
+          input.disabled = allProjects.checked;
+          input.closest(".permission-check")?.classList.toggle("field-locked", allProjects.checked);
+        });
+      };
+
+      const syncPermAll = () => {
+        permAll.checked = permChecks.length > 0 && permChecks.every(input => input.checked);
+      };
+
+      allProjects.addEventListener("change", syncProjects);
+      permAll.addEventListener("change", () => {
+        permChecks.forEach(input => { input.checked = permAll.checked; });
+      });
+      permChecks.forEach(input => input.addEventListener("change", syncPermAll));
+
+      syncProjects();
+      syncPermAll();
+    },
+    onSubmit: async (values, form) => {
+      const payload = {
+        name: values.name || "",
+        email: values.email,
+        status: values.status,
+        allProjects: form.elements.allProjects.checked,
+        projectIds: [...form.querySelectorAll('input[name="projectIds"]:checked')].map(input => input.value),
+        permissions: Object.fromEntries(
+          Object.keys(ADMIN_PERMISSION_LABELS).map(key => [
+            key,
+            Boolean(form.querySelector(`input[name="perm_${key}"]`)?.checked)
+          ])
+        )
+      };
+
+      const path = admin
+        ? `/api/v1/admin/admins/${encodeURIComponent(admin.id)}`
+        : "/api/v1/admin/admins";
+
+      await api(path, {
+        method: admin ? "PATCH" : "POST",
+        body: JSON.stringify(payload)
+      });
+
+      toast(admin ? "Administrador atualizado." : "Administrador cadastrado.");
+      if (onSaved) await onSaved();
+    }
+  });
+}
+
+async function administratorsView() {
+  if (!state.administrator?.master) {
+    throw new Error("Somente o administrador master pode gerenciar administradores.");
+  }
+
+  const admins = await loadAdmins();
+
+  el.content.innerHTML = `
+    ${pageHeader(
+      "Administradores",
+      "Cadastre pessoas que podem ajudar nas vendas e operações, com acesso limitado por projeto e função.",
+      '<button class="btn btn-primary" id="new-admin" type="button">+ Novo administrador</button>'
+    )}
+
+    <article class="card master-admin-card">
+      <div class="admin-avatar master-avatar">${initials(state.user.displayName || "Master")}</div>
+      <div class="admin-main">
+        <div class="admin-title-row"><strong>${e(state.user.displayName || "Administrador Master")}</strong><span class="badge badge-success">MASTER</span></div>
+        <span>${e(state.user.email || "")}</span>
+        <small>Acesso total a todos os projetos, configurações e administradores.</small>
+      </div>
+    </article>
+
+    <article class="card table-shell" style="margin-top:18px">
+      <div class="table-toolbar">
+        <h3>Administradores adicionais</h3>
+        <span class="badge">${admins.length} cadastrado(s)</span>
+      </div>
+      ${table(
+        ["Administrador", "Projetos", "Permissões", "Status", "Atualização", ""],
+        admins.map(admin => {
+          const projectText = admin.allProjects
+            ? "Todos + futuros"
+            : (admin.projectIds?.length ? `${admin.projectIds.length} projeto(s)` : "Nenhum");
+          const permissionCount = Object.values(admin.permissions || {}).filter(Boolean).length;
+          return `
+            <tr>
+              <td><strong>${e(admin.name || admin.email)}</strong><small>${e(admin.email)}</small></td>
+              <td>${e(projectText)}</td>
+              <td>${e(permissionCount)} de ${Object.keys(ADMIN_PERMISSION_LABELS).length}</td>
+              <td>${admin.status === "active" ? '<span class="badge badge-success">Ativo</span>' : '<span class="badge badge-muted">Inativo</span>'}</td>
+              <td>${formatDate(admin.updatedAt, true)}</td>
+              <td class="table-actions">
+                <button class="btn btn-ghost btn-sm edit-admin" data-id="${e(admin.id)}" type="button">Editar</button>
+                <button class="btn btn-ghost btn-sm delete-admin" data-id="${e(admin.id)}" type="button">Excluir</button>
+              </td>
+            </tr>
+          `;
+        }),
+        "Nenhum administrador adicional cadastrado."
+      )}
+    </article>
+  `;
+
+  const refresh = async () => await renderContent();
+
+  document.querySelector("#new-admin").onclick = () => openAdmin(null, refresh);
+  document.querySelectorAll(".edit-admin").forEach(button => {
+    button.onclick = () => openAdmin(admins.find(item => item.id === button.dataset.id), refresh);
+  });
+  document.querySelectorAll(".delete-admin").forEach(button => {
+    button.onclick = async () => {
+      const admin = admins.find(item => item.id === button.dataset.id);
+      if (!await confirmAction("Excluir administrador", `Remover o acesso de ${admin.email}?`, "Excluir")) return;
+      await api(`/api/v1/admin/admins/${encodeURIComponent(admin.id)}`, { method: "DELETE" });
+      toast("Administrador removido.");
+      await renderContent();
+    };
+  });
+}
+
 function platformSettingsView() {
   el.content.innerHTML = `
     ${pageHeader("Configurações da plataforma", "Informações gerais da central de licenciamento.")}
@@ -1732,8 +1954,13 @@ async function renderContent() {
   el.content.innerHTML = loadingView();
 
   try {
+    if (!routeAllowed(state.route)) {
+      state.route = state.selectedProjectId ? defaultProjectRoute() : "projects";
+      renderNavigation();
+    }
+
     if (!state.selectedProjectId && projectItems.some(([route]) => route === state.route)) {
-      state.route = "dashboard";
+      state.route = hasPermission("viewDashboard") ? "dashboard" : "projects";
       renderNavigation();
     }
 
@@ -1747,6 +1974,7 @@ async function renderContent() {
     const routes = {
       dashboard: dashboardView,
       projects: projectsView,
+      administrators: administratorsView,
       "platform-settings": async () => platformSettingsView(),
       "project-dashboard": projectDashboardView,
       licenses: licensesView,
@@ -1760,7 +1988,8 @@ async function renderContent() {
       "project-settings": projectSettingsView
     };
 
-    await (routes[state.route] || dashboardView)();
+    await (routes[state.route] || projectsView)();
+    bindInputEnhancements(el.content);
     el.content.focus({ preventScroll: true });
   } catch (error) {
     console.error(error);
@@ -1795,6 +2024,11 @@ async function enterApp(user) {
 
   try {
     await loadProjects();
+
+    if (!routeAllowed(state.route)) {
+      state.route = hasPermission("viewDashboard") ? "dashboard" : "projects";
+    }
+
     renderNavigation();
     showScreen("shell");
     await Promise.all([checkApi(), renderContent()]);
@@ -1837,7 +2071,9 @@ el.logoutButton.addEventListener("click", async () => {
 
 el.projectSwitcher.addEventListener("change", async () => {
   state.selectedProjectId = el.projectSwitcher.value;
-  state.route = state.selectedProjectId ? "project-dashboard" : "dashboard";
+  state.route = state.selectedProjectId
+    ? defaultProjectRoute()
+    : (hasPermission("viewDashboard") ? "dashboard" : "projects");
   renderNavigation();
   await renderContent();
 });
