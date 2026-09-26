@@ -18,7 +18,7 @@ const firebaseConfig = {
 };
 
 const API_BASE = "https://guiasys-licensing-api.lindolfoandrew0.workers.dev";
-const PANEL_VERSION = "0.5.0";
+const PANEL_VERSION = "0.5.1";
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
@@ -70,6 +70,7 @@ const projectItems = [
   ["customers", "◎", "Clientes"],
   ["devices", "▣", "Dispositivos"],
   ["activations", "↯", "Ativações"],
+  ["activation-simulator", "⚡", "Simulador"],
   ["logs", "≡", "Logs"],
   ["project-settings", "⚙", "Configurações"]
 ];
@@ -1161,6 +1162,150 @@ async function activationsView() {
   `;
 }
 
+
+async function activationSimulatorView() {
+  const licenses = await loadEntity("licenses");
+  const usable = licenses.filter(item => !["revoked", "expired"].includes(item.status));
+  const project = selectedProject();
+
+  el.content.innerHTML = `
+    ${pageHeader("Simulador de ativação", "Teste o fluxo que o GuiaPlay usará sem precisar integrar o programa ainda.")}
+
+    <section class="grid grid-2 simulator-grid">
+      <article class="card card-section">
+        <span class="badge">Simulação</span>
+        <h3 style="margin-top:14px">Dados do dispositivo</h3>
+        <p>Use a mesma licença e o mesmo Device ID para testar ativação, validação e desativação.</p>
+
+        <form id="activation-simulator-form" class="form-grid" style="margin-top:20px">
+          <label class="field">
+            <span>Licença *</span>
+            <select name="licenseKey" required>
+              <option value="">Selecione uma licença...</option>
+              ${usable.map(item => `
+                <option value="${e(item.key)}">${e(item.customerName)} — ${e(item.key)} — ${e(statusMap[item.status]?.[0] || item.status)}</option>
+              `).join("")}
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Device ID *</span>
+            <input name="deviceId" required value="GUIASYS-TEST-PC-001" placeholder="Identificador estável da máquina">
+          </label>
+
+          <div class="form-grid form-grid-2">
+            <label class="field">
+              <span>Nome do dispositivo</span>
+              <input name="deviceName" value="PC de Teste" placeholder="PC Principal">
+            </label>
+
+            <label class="field">
+              <span>Plataforma</span>
+              <input name="platform" value="Windows" placeholder="Windows">
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Versão do aplicativo</span>
+            <input name="appVersion" value="0.0.0-test" placeholder="1.0.0">
+          </label>
+
+          <div class="simulator-actions">
+            <button class="btn btn-primary simulator-action" data-action="activate" type="button">Ativar licença</button>
+            <button class="btn btn-ghost simulator-action" data-action="validate" type="button">Validar licença</button>
+            <button class="btn btn-danger simulator-action" data-action="deactivate" type="button">Desativar dispositivo</button>
+          </div>
+        </form>
+      </article>
+
+      <article class="card card-section">
+        <span class="badge">Resposta da API</span>
+        <h3 style="margin-top:14px">Resultado</h3>
+        <p>Aqui você verá exatamente o que um programa integrado receberia do Worker.</p>
+        <pre id="simulator-result" class="simulator-result">Aguardando uma operação...</pre>
+      </article>
+    </section>
+
+    <article class="card card-section" style="margin-top:18px">
+      <span class="badge">Projeto</span>
+      <h3 style="margin-top:14px">Dados usados pelo simulador</h3>
+      <div class="mini-info vertical">
+        <div><span>Projeto</span><strong>${e(project.name)}</strong></div>
+        <div><span>Project ID</span><code>${e(project.id)}</code></div>
+        <div><span>Endpoints</span><code>/api/v1/license/activate · /validate · /deactivate</code></div>
+      </div>
+    </article>
+  `;
+
+  const form = document.querySelector("#activation-simulator-form");
+  const result = document.querySelector("#simulator-result");
+
+  if (!usable.length) {
+    result.textContent = "Crie pelo menos uma licença antes de testar a ativação.";
+  }
+
+  document.querySelectorAll(".simulator-action").forEach(button => {
+    button.addEventListener("click", async () => {
+      if (!form.reportValidity()) return;
+
+      const values = Object.fromEntries(new FormData(form).entries());
+      const action = button.dataset.action;
+      const original = button.textContent;
+
+      document.querySelectorAll(".simulator-action").forEach(item => item.disabled = true);
+      button.textContent = "Processando...";
+      result.textContent = "Enviando requisição...";
+
+      try {
+        const payload = {
+          projectId: state.selectedProjectId,
+          licenseKey: values.licenseKey,
+          deviceId: values.deviceId,
+          deviceName: values.deviceName,
+          platform: values.platform,
+          appVersion: values.appVersion
+        };
+
+        const response = await fetch(`${API_BASE}/api/v1/license/${action}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          cache: "no-store"
+        });
+
+        const data = await response.json().catch(() => ({}));
+        result.textContent = JSON.stringify({
+          httpStatus: response.status,
+          ...data
+        }, null, 2);
+
+        invalidate(state.selectedProjectId);
+
+        if (response.ok && data.ok !== false) {
+          toast(
+            action === "activate"
+              ? "Ativação simulada com sucesso."
+              : action === "validate"
+                ? "Validação concluída com sucesso."
+                : "Dispositivo desativado com sucesso."
+          );
+        } else {
+          toast(data.message || "A API recusou a operação.", "danger");
+        }
+      } catch (error) {
+        result.textContent = JSON.stringify({
+          error: "network_error",
+          message: error.message
+        }, null, 2);
+        toast(error.message, "danger");
+      } finally {
+        document.querySelectorAll(".simulator-action").forEach(item => item.disabled = false);
+        button.textContent = original;
+      }
+    });
+  });
+}
+
 async function logsView() {
   const logs = await loadEntity("logs");
   el.content.innerHTML = `
@@ -1279,6 +1424,7 @@ async function renderContent() {
       customers: customersView,
       devices: devicesView,
       activations: activationsView,
+      "activation-simulator": activationSimulatorView,
       logs: logsView,
       "project-settings": projectSettingsView
     };
