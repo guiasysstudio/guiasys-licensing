@@ -18,7 +18,7 @@ const firebaseConfig = {
 };
 
 const API_BASE = "https://guiasys-licensing-api.lindolfoandrew0.workers.dev";
-const PANEL_VERSION = "0.5.3";
+const PANEL_VERSION = "0.5.4";
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
@@ -82,7 +82,8 @@ const statusMap = {
   pending: ["Aguardando ativação", "warning"],
   expired: ["Expirada", "danger"],
   suspended: ["Suspensa", "warning"],
-  revoked: ["Revogada", "danger"]
+  revoked: ["Revogada", "danger"],
+  none: ["Sem licença", "muted"]
 };
 
 let pendingLoginMessage = "";
@@ -783,22 +784,34 @@ function customerForm(customer = {}) {
 }
 
 async function customersView() {
-  const customers = await loadEntity("customers");
+  const customers = await loadEntity("customers", true);
   el.content.innerHTML = `
     ${pageHeader("Clientes", "Clientes cadastrados somente dentro deste projeto.",
       '<button class="btn btn-primary" id="new-customer" type="button">+ Novo cliente</button>')}
     <article class="card table-shell">
       <div class="table-toolbar"><h3>Clientes</h3><span class="badge">${customers.length} registro(s)</span></div>
       ${table(
-        ["Cliente", "E-mail", "Telefone", "Status", "Cadastro", ""],
+        ["Cliente", "E-mail", "Cliente", "Status da licença", "Licenças", "Cadastro", ""],
         customers.map(customer => `
           <tr>
-            <td><strong>${e(customer.name)}</strong></td>
-            <td>${e(customer.email)}</td>
-            <td>${e(customer.phone || "—")}</td>
+            <td>
+              <strong>${e(customer.name)}</strong>
+              ${customer.recoveredFromLicense ? '<small>Cadastro recuperado do histórico de licença</small>' : ""}
+            </td>
+            <td>${e(customer.email || "—")}</td>
             <td>${badge(customer.status)}</td>
+            <td>
+              ${badge(customer.licenseStatus || "none")}
+              ${customer.licenseCount > 1 ? `<small>${e(customer.activeLicenseCount || 0)} ativa(s) de ${e(customer.licenseCount)} total</small>` : ""}
+            </td>
+            <td>${e(customer.licenseCount || 0)}</td>
             <td>${formatDate(customer.createdAt)}</td>
-            <td class="table-actions"><button class="btn btn-ghost btn-sm edit-customer" data-id="${e(customer.id)}">Editar</button><button class="btn btn-ghost btn-sm delete-customer" data-id="${e(customer.id)}">Excluir</button></td>
+            <td class="table-actions">
+              <button class="btn btn-ghost btn-sm edit-customer" data-id="${e(customer.id)}">Editar</button>
+              ${customer.licenseCount > 0
+                ? `<button class="btn btn-ghost btn-sm disable-customer" data-id="${e(customer.id)}">${customer.status === "inactive" ? "Ativar" : "Desativar"}</button>`
+                : `<button class="btn btn-ghost btn-sm delete-customer" data-id="${e(customer.id)}">Excluir</button>`}
+            </td>
           </tr>
         `),
         "Cadastre um cliente antes de gerar uma licença."
@@ -808,9 +821,22 @@ async function customersView() {
 
   document.querySelector("#new-customer").onclick = () => openCustomer();
   document.querySelectorAll(".edit-customer").forEach(button => button.onclick = () => openCustomer(customers.find(c => c.id === button.dataset.id)));
+
+  document.querySelectorAll(".disable-customer").forEach(button => button.onclick = async () => {
+    const customer = customers.find(c => c.id === button.dataset.id);
+    const nextStatus = customer.status === "inactive" ? "active" : "inactive";
+    await api(`/api/v1/admin/projects/${state.selectedProjectId}/customers/${customer.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: nextStatus })
+    });
+    invalidate(state.selectedProjectId);
+    toast(nextStatus === "active" ? "Cliente reativado." : "Cliente desativado.");
+    await renderContent();
+  });
+
   document.querySelectorAll(".delete-customer").forEach(button => button.onclick = async () => {
     const customer = customers.find(c => c.id === button.dataset.id);
-    if (!await confirmAction("Excluir cliente", `Excluir "${customer.name}" deste projeto?\nLicenças existentes não serão apagadas.`, "Excluir")) return;
+    if (!await confirmAction("Excluir cliente", `Excluir "${customer.name}" deste projeto?`, "Excluir")) return;
     await api(`/api/v1/admin/projects/${state.selectedProjectId}/customers/${customer.id}`, { method: "DELETE" });
     invalidate(state.selectedProjectId);
     toast("Cliente excluído.");
