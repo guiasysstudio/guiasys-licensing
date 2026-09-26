@@ -18,7 +18,7 @@ const firebaseConfig = {
 };
 
 const API_BASE = "https://guiasys-licensing-api.lindolfoandrew0.workers.dev";
-const PANEL_VERSION = "0.5.2";
+const PANEL_VERSION = "0.5.3";
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
@@ -838,7 +838,7 @@ function openCustomer(customer = null) {
 }
 
 async function licenseFormHtml() {
-  const [customers, plans] = await Promise.all([loadEntity("customers"), loadEntity("plans")]);
+  const [customers, plans] = await Promise.all([loadEntity("customers", true), loadEntity("plans", true)]);
 
   return `
     <div class="form-grid form-grid-2">
@@ -846,7 +846,7 @@ async function licenseFormHtml() {
         <span>Cliente *</span>
         <select name="customerId" required>
           <option value="">Selecione...</option>
-          ${customers.filter(c => c.status !== "inactive").map(c => `<option value="${e(c.id)}">${e(c.name)} — ${e(c.email)}</option>`).join("")}
+          ${customers.map(c => `<option value="${e(c.id)}" ${c.status === "inactive" ? "disabled" : ""}>${e(c.name)} — ${e(c.email)}${c.status === "inactive" ? " — Inativo" : ""}</option>`).join("")}
         </select>
       </label>
       <label class="field field-full">
