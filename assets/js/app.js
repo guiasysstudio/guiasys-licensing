@@ -334,7 +334,7 @@ async function enterApp(user) {
     state.adminAuthorized = false;
 
     pendingLoginMessage = error.status === 403
-      ? "Esta conta Google não está autorizada a acessar o GuiaSys Licensing."
+      ? `Esta conta Google não está autorizada. UID Firebase detectado: ${user.uid}`
       : "Não foi possível validar sua sessão administrativa. Verifique a API e tente novamente.";
 
     await signOut(auth);
