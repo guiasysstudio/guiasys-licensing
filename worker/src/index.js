@@ -453,6 +453,84 @@ function normalizeLicenseStatus(license) {
   return license;
 }
 
+
+function summarizeCustomerLicenses(licenses) {
+  const normalized = licenses.map(normalizeLicenseStatus);
+  const counts = {
+    active: normalized.filter(item => item.status === "active").length,
+    pending: normalized.filter(item => item.status === "pending").length,
+    suspended: normalized.filter(item => item.status === "suspended").length,
+    expired: normalized.filter(item => item.status === "expired").length,
+    revoked: normalized.filter(item => item.status === "revoked").length
+  };
+
+  const priority = ["active", "pending", "suspended", "expired", "revoked"];
+  const licenseStatus = priority.find(status => counts[status] > 0) || "none";
+
+  return {
+    licenseStatus,
+    licenseCount: normalized.length,
+    activeLicenseCount: counts.active,
+    pendingLicenseCount: counts.pending,
+    suspendedLicenseCount: counts.suspended,
+    expiredLicenseCount: counts.expired,
+    revokedLicenseCount: counts.revoked
+  };
+}
+
+async function listCustomersWithLicenseStatus(env, projectId, admin) {
+  const [customers, rawLicenses] = await Promise.all([
+    listCollection(env, entityPath(projectId, "customers")),
+    listCollection(env, entityPath(projectId, "licenses"))
+  ]);
+
+  const licenses = rawLicenses.map(normalizeLicenseStatus);
+  const customerMap = new Map(customers.map(customer => [customer.id, customer]));
+  const restoredIds = new Set();
+
+  for (const license of licenses) {
+    if (!license.customerId || customerMap.has(license.customerId) || restoredIds.has(license.customerId)) {
+      continue;
+    }
+
+    const restored = await setDoc(env, `${entityPath(projectId, "customers")}/${license.customerId}`, {
+      name: String(license.customerName || "Cliente restaurado"),
+      email: String(license.customerEmail || "").toLowerCase(),
+      phone: "",
+      notes: "",
+      status: "active",
+      recoveredFromLicense: true,
+      createdAt: license.createdAt || nowIso(),
+      updatedAt: nowIso()
+    });
+
+    customerMap.set(restored.id, restored);
+    restoredIds.add(restored.id);
+
+    await writeLog(
+      env,
+      projectId,
+      "customer.recovered",
+      { customerId: restored.id, sourceLicenseId: license.id },
+      admin?.email || admin?.uid || "system"
+    );
+  }
+
+  const licensesByCustomer = new Map();
+  for (const license of licenses) {
+    if (!license.customerId) continue;
+    if (!licensesByCustomer.has(license.customerId)) licensesByCustomer.set(license.customerId, []);
+    licensesByCustomer.get(license.customerId).push(license);
+  }
+
+  return [...customerMap.values()]
+    .map(customer => ({
+      ...customer,
+      ...summarizeCustomerLicenses(licensesByCustomer.get(customer.id) || [])
+    }))
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt-BR"));
+}
+
 async function findLicenseByKey(env, projectId, licenseKey) {
   const normalizedKey = normalizeLicenseKey(licenseKey);
   if (!normalizedKey) return null;
@@ -998,9 +1076,14 @@ async function handleAdmin(request, env, origin, url, admin) {
 
     if (parts.length === 3) {
       if (method === "GET") {
-        let items = await listCollection(env, entityPath(projectId, entity));
-        if (entity === "licenses") items = items.map(normalizeLicenseStatus);
-        items.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+        let items;
+        if (entity === "customers") {
+          items = await listCustomersWithLicenseStatus(env, projectId, admin);
+        } else {
+          items = await listCollection(env, entityPath(projectId, entity));
+          if (entity === "licenses") items = items.map(normalizeLicenseStatus);
+          items.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+        }
         return json({ ok: true, [entity]: items }, 200, origin);
       }
 
@@ -1051,6 +1134,23 @@ async function handleAdmin(request, env, origin, url, admin) {
         if (!["plans", "customers"].includes(entity)) {
           return errorResponse(origin, 405, "method_not_allowed", "Este recurso não pode ser excluído diretamente.");
         }
+
+        if (entity === "customers") {
+          const licenses = (await listCollection(env, entityPath(projectId, "licenses")))
+            .map(normalizeLicenseStatus)
+            .filter(license => license.customerId === entityId);
+
+          if (licenses.length > 0) {
+            return errorResponse(
+              origin,
+              409,
+              "customer_has_licenses",
+              "Este cliente possui licença(s) vinculada(s) e não pode ser excluído. Desative o cadastro para preservar o histórico.",
+              { licenseCount: licenses.length }
+            );
+          }
+        }
+
         await deleteDoc(env, path);
         await writeLog(env, projectId, `${entity.slice(0, -1)}.deleted`, { id: entityId }, admin.email || admin.uid);
         return json({ ok: true, deleted: true }, 200, origin);
@@ -1075,7 +1175,7 @@ export default {
         return json({
           name: "GuiaSys Licensing API",
           status: "online",
-          version: "1.2.0"
+          version: "1.2.1"
         }, 200, origin);
       }
 
@@ -1083,7 +1183,7 @@ export default {
         return json({
           ok: true,
           service: "guiasys-licensing-api",
-          version: "1.2.0",
+          version: "1.2.1",
           firebaseProject: env.FIREBASE_PROJECT_ID || null,
           serviceAccountConfigured: Boolean(env.FIREBASE_SERVICE_ACCOUNT_JSON),
           adminConfigured: Boolean(env.ADMIN_FIREBASE_UID)
