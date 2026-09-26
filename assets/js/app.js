@@ -26,11 +26,15 @@ provider.setCustomParameters({ prompt: "select_account" });
 
 const state = {
   user: null,
+  administrator: null,
+  adminAuthorized: false,
   apiOnline: false,
   selectedProjectId: "",
   route: "dashboard",
   projects: []
 };
+
+let pendingLoginMessage = "";
 
 const el = {
   boot: document.querySelector("#boot-screen"),
@@ -90,6 +94,10 @@ function showScreen(name) {
   el.shell.classList.toggle("hidden", name !== "shell");
 }
 
+function setLoginMessage(message = "") {
+  el.loginMessage.textContent = message;
+}
+
 async function checkApi() {
   try {
     const response = await fetch(`${API_BASE}/health`, { cache: "no-store" });
@@ -101,6 +109,38 @@ async function checkApi() {
 
   el.apiStatusDot.classList.toggle("status-dot-muted", !state.apiOnline);
   el.apiStatusText.textContent = state.apiOnline ? "API online" : "API indisponível";
+}
+
+async function verifyAdministrator(user) {
+  const idToken = await user.getIdToken(true);
+
+  const response = await fetch(`${API_BASE}/api/v1/admin/me`, {
+    method: "GET",
+    headers: {
+      "Authorization": `Bearer ${idToken}`,
+      "Accept": "application/json"
+    },
+    cache: "no-store"
+  });
+
+  let data;
+
+  try {
+    data = await response.json();
+  } catch {
+    data = {};
+  }
+
+  if (!response.ok || !data.ok || !data.authorized) {
+    const error = new Error(
+      data.message || "Esta conta não possui acesso administrativo."
+    );
+    error.status = response.status;
+    error.code = data.error || "admin_verification_failed";
+    throw error;
+  }
+
+  return data.administrator;
 }
 
 function renderNavigation() {
@@ -151,21 +191,20 @@ function metric(label, value, note) {
   `;
 }
 
-function setupPanel() {
-  const uid = escapeHtml(state.user?.uid || "");
+function adminStatusPanel() {
+  const administrator = state.administrator || {};
+  const uid = escapeHtml(administrator.uid || state.user?.uid || "");
+  const email = escapeHtml(administrator.email || state.user?.email || "");
+
   return `
     <article class="card card-section setup-card">
-      <span class="badge">Configuração inicial</span>
-      <h3 style="margin-top:14px">Autorizar esta conta como administradora</h3>
-      <p>O login com Google já está funcionando. O próximo passo é cadastrar este UID no Worker para que somente esta conta possa executar operações administrativas.</p>
+      <span class="status-pill"><span class="status-dot"></span> Administrador autorizado</span>
+      <h3 style="margin-top:14px">Backend protegido e validado</h3>
+      <p>O Firebase autenticou a sessão e o Cloudflare Worker confirmou que esta conta corresponde ao administrador permitido.</p>
 
       <div class="setup-row">
-        <div class="code-field" id="uid-field">${uid}</div>
-        <button id="copy-uid-button" class="btn btn-primary" type="button">Copiar UID</button>
-      </div>
-
-      <div class="notice" style="margin-top:16px">
-        Ainda não estamos liberando operações de licenciamento pelo navegador. Isso é proposital até a validação administrativa do backend estar concluída.
+        <div class="code-field">UID: ${uid}</div>
+        <div class="code-field">Conta: ${email || "não informada"}</div>
       </div>
     </article>
   `;
@@ -178,7 +217,7 @@ function dashboardView() {
         <h1>Dashboard geral</h1>
         <p>Visão consolidada da plataforma GuiaSys Licensing.</p>
       </div>
-      <span class="badge">Ambiente inicial</span>
+      <span class="badge">Administração segura</span>
     </div>
 
     <section class="grid grid-4">
@@ -189,7 +228,7 @@ function dashboardView() {
     </section>
 
     <section class="grid grid-2" style="margin-top:18px">
-      ${setupPanel()}
+      ${adminStatusPanel()}
       <article class="card card-section">
         <span class="badge">Arquitetura</span>
         <h3 style="margin-top:14px">Ambientes isolados por projeto</h3>
@@ -207,13 +246,13 @@ function projectsView() {
         <h1>Projetos</h1>
         <p>Cadastre os produtos que usarão o motor central de licenciamento.</p>
       </div>
-      <button class="btn btn-primary" type="button" disabled title="Será liberado após a autorização administrativa">+ Novo projeto</button>
+      <button class="btn btn-primary" type="button" disabled title="Cadastro de projetos será conectado ao backend na próxima etapa">+ Novo projeto</button>
     </div>
 
     <article class="card card-section">
       <div class="empty-state">
         <strong>Nenhum projeto cadastrado</strong>
-        O primeiro projeto será criado assim que concluirmos a autorização administrativa do backend.
+        A autenticação administrativa já está validada. O próximo módulo será o cadastro real de projetos.
       </div>
     </article>
   `;
@@ -252,7 +291,7 @@ function projectPlaceholder() {
     <article class="card card-section">
       <div class="empty-state">
         <strong>Módulo preparado</strong>
-        Esta área será conectada ao backend seguro depois da autorização administrativa.
+        Esta área será conectada aos endpoints administrativos do projeto.
       </div>
     </article>
   `;
@@ -272,23 +311,36 @@ function renderContent() {
   } else {
     el.content.innerHTML = dashboardView();
   }
-
-  document.querySelector("#copy-uid-button")?.addEventListener("click", async event => {
-    await navigator.clipboard.writeText(state.user.uid);
-    event.currentTarget.textContent = "UID copiado";
-    setTimeout(() => event.currentTarget.textContent = "Copiar UID", 1600);
-  });
 }
 
 function renderUser() {
-  const name = state.user?.displayName || "Administrador";
+  const name = state.user?.displayName || state.administrator?.name || "Administrador";
   el.userName.textContent = name;
-  el.userEmail.textContent = state.user?.email || "";
+  el.userEmail.textContent = state.user?.email || state.administrator?.email || "";
   el.userAvatar.textContent = initials(name).toUpperCase().slice(0, 2);
 }
 
 async function enterApp(user) {
+  showScreen("boot");
   state.user = user;
+
+  try {
+    state.administrator = await verifyAdministrator(user);
+    state.adminAuthorized = true;
+  } catch (error) {
+    console.error("Falha na autorização administrativa:", error);
+
+    state.administrator = null;
+    state.adminAuthorized = false;
+
+    pendingLoginMessage = error.status === 403
+      ? "Esta conta Google não está autorizada a acessar o GuiaSys Licensing."
+      : "Não foi possível validar sua sessão administrativa. Verifique a API e tente novamente.";
+
+    await signOut(auth);
+    return;
+  }
+
   renderUser();
   renderProjectSwitcher();
   renderNavigation();
@@ -298,20 +350,22 @@ async function enterApp(user) {
 }
 
 el.loginButton.addEventListener("click", async () => {
-  el.loginMessage.textContent = "";
+  setLoginMessage("");
   el.loginButton.disabled = true;
 
   try {
     await signInWithPopup(auth, provider);
   } catch (error) {
     console.error(error);
-    el.loginMessage.textContent = "Não foi possível entrar com o Google. Tente novamente.";
+    setLoginMessage("Não foi possível entrar com o Google. Tente novamente.");
   } finally {
     el.loginButton.disabled = false;
   }
 });
 
 el.logoutButton.addEventListener("click", async () => {
+  state.adminAuthorized = false;
+  state.administrator = null;
   await signOut(auth);
 });
 
@@ -341,7 +395,13 @@ onAuthStateChanged(auth, async user => {
   }
 
   state.user = null;
+  state.administrator = null;
+  state.adminAuthorized = false;
+
   showScreen("login");
+  setLoginMessage(pendingLoginMessage);
+  pendingLoginMessage = "";
+
   await checkApi();
 });
 
