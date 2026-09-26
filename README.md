@@ -4,8 +4,8 @@ Central universal de licenciamento multi-projeto da GuiaSys Studio.
 
 ## Estado
 
-**Painel:** v0.5.0  
-**API:** v1.2.0
+**Painel:** v0.6.0  
+**API:** v1.3.0
 
 A aplicação já possui a estrutura funcional para:
 
@@ -24,6 +24,9 @@ A aplicação já possui a estrutura funcional para:
 - desativação de dispositivos;
 - logs e auditoria;
 - configurações individuais por projeto;
+- administradores adicionais por e-mail Google, com projetos e permissões limitadas;
+- campos tipados, máscaras e ajuda contextual;
+- planos com regras imutáveis durante a emissão de licenças;
 - API pública para ativar, validar e desativar licenças.
 
 ## Arquitetura
