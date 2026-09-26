@@ -1532,7 +1532,7 @@ async function activationSimulatorView() {
 
         <form id="activation-simulator-form" class="form-grid" style="margin-top:20px">
           <label class="field">
-            <span>Licença *</span>
+            ${fieldTitle("Licença *", "Licença que será enviada para a API durante o teste.")}
             <select name="licenseKey" required>
               <option value="">Selecione uma licença...</option>
               ${usable.map(item => `
@@ -1542,24 +1542,24 @@ async function activationSimulatorView() {
           </label>
 
           <label class="field">
-            <span>Device ID *</span>
+            ${fieldTitle("Device ID *", "Identificador estável e único do dispositivo. Em produção, o aplicativo deverá gerar ou recuperar esse identificador automaticamente.")}
             <input name="deviceId" required value="GUIASYS-TEST-PC-001" placeholder="Identificador estável da máquina">
           </label>
 
           <div class="form-grid form-grid-2">
             <label class="field">
-              <span>Nome do dispositivo</span>
+              ${fieldTitle("Nome do dispositivo", "Nome amigável apenas para facilitar a identificação no painel.")}
               <input name="deviceName" value="PC de Teste" placeholder="PC Principal">
             </label>
 
             <label class="field">
-              <span>Plataforma</span>
+              ${fieldTitle("Plataforma", "Sistema operacional ou plataforma do dispositivo que está ativando a licença.")}
               <input name="platform" value="Windows" placeholder="Windows">
             </label>
           </div>
 
           <label class="field">
-            <span>Versão do aplicativo</span>
+            ${fieldTitle("Versão do aplicativo", "Versão do programa que realizou a ativação ou validação.")}
             <input name="appVersion" value="0.0.0-test" placeholder="1.0.0">
           </label>
 
