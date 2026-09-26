@@ -18,7 +18,7 @@ const firebaseConfig = {
 };
 
 const API_BASE = "https://guiasys-licensing-api.lindolfoandrew0.workers.dev";
-const PANEL_VERSION = "0.5.1";
+const PANEL_VERSION = "0.5.2";
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
@@ -1165,7 +1165,7 @@ async function activationsView() {
 
 async function activationSimulatorView() {
   const licenses = await loadEntity("licenses");
-  const usable = licenses.filter(item => !["revoked", "expired"].includes(item.status));
+  const usable = licenses;
   const project = selectedProject();
 
   el.content.innerHTML = `
