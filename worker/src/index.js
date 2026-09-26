@@ -16,6 +16,66 @@ const ENTITY_NAMES = new Set([
   "logs"
 ]);
 
+const DEFAULT_ADMIN_PERMISSIONS = {
+  viewDashboard: false,
+  manageProjects: false,
+  managePlans: false,
+  manageCustomers: false,
+  manageLicenses: false,
+  manageDevices: false,
+  viewActivations: false,
+  viewLogs: false,
+  manageProjectSettings: false,
+  managePlatformSettings: false
+};
+
+function normalizeAdminPermissions(value = {}) {
+  return Object.fromEntries(
+    Object.keys(DEFAULT_ADMIN_PERMISSIONS).map(key => [key, Boolean(value?.[key])])
+  );
+}
+
+function allPermissions() {
+  return Object.fromEntries(
+    Object.keys(DEFAULT_ADMIN_PERMISSIONS).map(key => [key, true])
+  );
+}
+
+function can(admin, permission) {
+  return Boolean(admin?.master || admin?.permissions?.[permission]);
+}
+
+function canAccessProject(admin, projectId) {
+  return Boolean(
+    admin?.master ||
+    admin?.allProjects ||
+    (Array.isArray(admin?.projectIds) && admin.projectIds.includes(projectId))
+  );
+}
+
+function requirePermission(admin, permission, message = "Você não possui permissão para esta operação.") {
+  if (!can(admin, permission)) {
+    throw Object.assign(new Error(message), { status: 403, reason: "permission_denied" });
+  }
+}
+
+function requireProjectAccess(admin, projectId) {
+  if (!canAccessProject(admin, projectId)) {
+    throw Object.assign(new Error("Você não possui acesso a este projeto."), { status: 403, reason: "project_access_denied" });
+  }
+}
+
+function permissionForEntity(entity) {
+  return {
+    plans: "managePlans",
+    customers: "manageCustomers",
+    licenses: "manageLicenses",
+    devices: "manageDevices",
+    activations: "viewActivations",
+    logs: "viewLogs"
+  }[entity] || null;
+}
+
 let googleTokenCache = { token: null, expiresAt: 0 };
 let firebaseKeyCache = { keys: null, expiresAt: 0 };
 
@@ -228,20 +288,55 @@ async function requireAdmin(request, env) {
 
   try {
     const user = await verifyFirebaseIdToken(token, env);
-    if (user.sub !== env.ADMIN_FIREBASE_UID) {
+    const baseUser = {
+      uid: user.sub,
+      email: user.email || null,
+      name: user.name || null,
+      picture: user.picture || null,
+      emailVerified: Boolean(user.email_verified)
+    };
+
+    if (user.sub === env.ADMIN_FIREBASE_UID) {
+      return {
+        ok: true,
+        user: {
+          ...baseUser,
+          master: true,
+          role: "master",
+          allProjects: true,
+          projectIds: [],
+          permissions: allPermissions()
+        }
+      };
+    }
+
+    if (!baseUser.email || !baseUser.emailVerified) {
+      return { ok: false, status: 403, error: "admin_required", message: "Esta conta não possui acesso administrativo." };
+    }
+
+    const adminId = await sha256Hex(baseUser.email.toLowerCase());
+    const record = await getDoc(env, `admins/${adminId}`);
+
+    if (!record || record.status !== "active") {
       return { ok: false, status: 403, error: "admin_required", message: "Esta conta não possui acesso administrativo." };
     }
 
     return {
       ok: true,
       user: {
-        uid: user.sub,
-        email: user.email || null,
-        name: user.name || null,
-        emailVerified: Boolean(user.email_verified)
+        ...baseUser,
+        adminId,
+        master: false,
+        role: "admin",
+        allProjects: Boolean(record.allProjects),
+        projectIds: Array.isArray(record.projectIds) ? record.projectIds : [],
+        permissions: normalizeAdminPermissions(record.permissions)
       }
     };
   } catch (error) {
+    if (error?.status === 403) {
+      return { ok: false, status: 403, error: "admin_required", message: error.message };
+    }
     return { ok: false, status: 401, error: "invalid_token", message: error.message };
   }
 }
@@ -579,6 +674,10 @@ async function createPlan(env, projectId, body, admin) {
   const createdAt = nowIso();
   const lifetime = Boolean(body.lifetime);
 
+  const startMode = ["first_activation", "immediate"].includes(body.startMode)
+    ? body.startMode
+    : "first_activation";
+
   const plan = {
     name,
     description: String(body.description || "").trim(),
@@ -586,6 +685,7 @@ async function createPlan(env, projectId, body, admin) {
     durationDays: lifetime ? 0 : Math.max(1, Number(body.durationDays || 30)),
     lifetime,
     deviceLimit: Math.max(1, Number(body.deviceLimit || 1)),
+    startMode,
     active: body.active !== false,
     createdAt,
     updatedAt: createdAt
@@ -636,13 +736,17 @@ async function createLicense(env, projectId, body, admin) {
 
   const id = randomId("lic");
   const createdAt = nowIso();
-  const lifetime = body.lifetime != null ? Boolean(body.lifetime) : Boolean(plan?.lifetime);
+
+  // Quando um plano cadastrado é usado, as regras comerciais vêm exclusivamente do plano.
+  // O cliente web não pode sobrescrever duração, vitalício, dispositivos ou início da validade.
+  const lifetime = plan ? Boolean(plan.lifetime) : Boolean(body.lifetime);
   const durationDays = lifetime
     ? 0
-    : Math.max(1, Number(body.durationDays || plan?.durationDays || 30));
-  const maxDevices = Math.max(1, Number(body.maxDevices || plan?.deviceLimit || 1));
-  const startMode = ["first_activation", "immediate"].includes(body.startMode)
-    ? body.startMode
+    : Math.max(1, Number(plan ? plan.durationDays : (body.durationDays || 30)));
+  const maxDevices = Math.max(1, Number(plan ? plan.deviceLimit : (body.maxDevices || 1)));
+  const requestedStartMode = plan ? plan.startMode : body.startMode;
+  const startMode = ["first_activation", "immediate"].includes(requestedStartMode)
+    ? requestedStartMode
     : "first_activation";
   const key = generateLicenseKey(project.prefix);
 
@@ -708,6 +812,9 @@ async function updateEntity(env, projectId, entity, id, body, admin) {
     if ("price" in clean) clean.price = Math.max(0, Number(clean.price || 0));
     if ("durationDays" in clean) clean.durationDays = Math.max(1, Number(clean.durationDays || 1));
     if ("deviceLimit" in clean) clean.deviceLimit = Math.max(1, Number(clean.deviceLimit || 1));
+    if ("startMode" in clean && !["first_activation", "immediate"].includes(clean.startMode)) {
+      clean.startMode = "first_activation";
+    }
     if (clean.lifetime) clean.durationDays = 0;
   }
 
@@ -772,10 +879,14 @@ function todayInBrazil(iso = nowIso()) {
   }).format(new Date(iso));
 }
 
-async function dashboard(env, projectId = "") {
-  const projects = projectId
+async function dashboard(env, projectId = "", admin = null) {
+  let projects = projectId
     ? [await getDoc(env, projectPath(projectId))].filter(Boolean)
     : await listCollection(env, "projects");
+
+  if (admin && !admin.master && !admin.allProjects) {
+    projects = projects.filter(project => admin.projectIds.includes(project.id));
+  }
 
   let activeLicenses = 0;
   let pendingLicenses = 0;
@@ -1005,6 +1116,36 @@ async function publicDeactivate(env, body) {
   return { ok: true, deactivated: true, serverTime: now };
 }
 
+async function listAdminRecords(env) {
+  const items = await listCollection(env, "admins");
+  items.sort((a, b) => String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "pt-BR"));
+  return items;
+}
+
+async function saveAdminRecord(env, body, existing = null) {
+  const email = String(body.email ?? existing?.email ?? "").trim().toLowerCase();
+  if (!email || !email.includes("@")) {
+    throw Object.assign(new Error("Informe um e-mail válido para o administrador."), { status: 400 });
+  }
+
+  const id = await sha256Hex(email);
+  const now = nowIso();
+  const record = {
+    name: String(body.name ?? existing?.name ?? "").trim(),
+    email,
+    status: body.status === "inactive" ? "inactive" : "active",
+    allProjects: Boolean(body.allProjects),
+    projectIds: Array.isArray(body.projectIds)
+      ? [...new Set(body.projectIds.map(String).filter(Boolean))]
+      : (Array.isArray(existing?.projectIds) ? existing.projectIds : []),
+    permissions: normalizeAdminPermissions(body.permissions ?? existing?.permissions ?? {}),
+    createdAt: existing?.createdAt || now,
+    updatedAt: now
+  };
+
+  return await setDoc(env, `admins/${id}`, record);
+}
+
 async function handleAdmin(request, env, origin, url, admin) {
   const method = request.method;
   const path = url.pathname.replace(/^\/api\/v1\/admin\/?/, "");
@@ -1014,18 +1155,68 @@ async function handleAdmin(request, env, origin, url, admin) {
     return json({ ok: true, authorized: true, administrator: admin }, 200, origin);
   }
 
+  if (parts[0] === "admins") {
+    if (!admin.master) {
+      return errorResponse(origin, 403, "master_required", "Somente o administrador master pode gerenciar administradores.");
+    }
+
+    if (parts.length === 1 && method === "GET") {
+      return json({ ok: true, admins: await listAdminRecords(env) }, 200, origin);
+    }
+
+    if (parts.length === 1 && method === "POST") {
+      const body = await readJson(request);
+      if (String(body.email || "").trim().toLowerCase() === String(admin.email || "").trim().toLowerCase()) {
+        return errorResponse(origin, 409, "master_account", "A conta master não precisa ser cadastrada novamente.");
+      }
+      return json({ ok: true, admin: await saveAdminRecord(env, body) }, 201, origin);
+    }
+
+    const adminId = parts[1];
+    if (adminId && parts.length === 2) {
+      const path = `admins/${adminId}`;
+      const existing = await getDoc(env, path);
+      if (!existing) return errorResponse(origin, 404, "admin_not_found", "Administrador não encontrado.");
+
+      if (method === "PATCH") {
+        const body = await readJson(request);
+        if (body.email && String(body.email).trim().toLowerCase() !== existing.email) {
+          return errorResponse(origin, 400, "email_immutable", "O e-mail do administrador não pode ser alterado. Exclua e cadastre novamente.");
+        }
+        return json({ ok: true, admin: await saveAdminRecord(env, body, existing) }, 200, origin);
+      }
+
+      if (method === "DELETE") {
+        await deleteDoc(env, path);
+        return json({ ok: true, deleted: true }, 200, origin);
+      }
+    }
+
+    return errorResponse(origin, 404, "not_found", "Rota de administradores não encontrada.");
+  }
+
   if (parts.length === 1 && parts[0] === "dashboard" && method === "GET") {
-    return json({ ok: true, dashboard: await dashboard(env, url.searchParams.get("projectId") || "") }, 200, origin);
+    requirePermission(admin, "viewDashboard", "Você não possui permissão para visualizar o dashboard.");
+    const requestedProjectId = url.searchParams.get("projectId") || "";
+    if (requestedProjectId) requireProjectAccess(admin, requestedProjectId);
+    return json({ ok: true, dashboard: await dashboard(env, requestedProjectId, admin) }, 200, origin);
   }
 
   if (parts[0] === "projects") {
     if (parts.length === 1) {
       if (method === "GET") {
-        const projects = await listCollection(env, "projects");
+        let projects = await listCollection(env, "projects");
+        if (!admin.master && !admin.allProjects) {
+          projects = projects.filter(project => admin.projectIds.includes(project.id));
+        }
         projects.sort((a, b) => String(a.name).localeCompare(String(b.name), "pt-BR"));
         return json({ ok: true, projects }, 200, origin);
       }
       if (method === "POST") {
+        requirePermission(admin, "manageProjects", "Você não possui permissão para criar projetos.");
+        if (!admin.master && !admin.allProjects) {
+          return errorResponse(origin, 403, "all_projects_required", "Para criar projetos, este administrador precisa ter acesso a todos os projetos.");
+        }
         return json({ ok: true, project: await createProject(env, await readJson(request), admin) }, 201, origin);
       }
     }
@@ -1035,9 +1226,12 @@ async function handleAdmin(request, env, origin, url, admin) {
       return errorResponse(origin, 404, "project_not_found", "Projeto não encontrado.");
     }
 
+    requireProjectAccess(admin, projectId);
+
     if (parts.length === 2) {
       if (method === "GET") return json({ ok: true, project: await getDoc(env, projectPath(projectId)) }, 200, origin);
       if (method === "PATCH") {
+        requirePermission(admin, "manageProjectSettings", "Você não possui permissão para alterar as configurações deste projeto.");
         const current = await getDoc(env, projectPath(projectId));
         const body = await readJson(request);
         const next = {
@@ -1057,6 +1251,7 @@ async function handleAdmin(request, env, origin, url, admin) {
         return json({ ok: true, project: saved }, 200, origin);
       }
       if (method === "DELETE") {
+        requirePermission(admin, "manageProjects", "Você não possui permissão para arquivar projetos.");
         const current = await getDoc(env, projectPath(projectId));
         const saved = await setDoc(env, projectPath(projectId), {
           ...current,
@@ -1072,6 +1267,11 @@ async function handleAdmin(request, env, origin, url, admin) {
     const entity = parts[2];
     if (!ENTITY_NAMES.has(entity)) {
       return errorResponse(origin, 404, "not_found", "Rota administrativa não encontrada.");
+    }
+
+    const entityPermission = permissionForEntity(entity);
+    if (entityPermission) {
+      requirePermission(admin, entityPermission, "Você não possui permissão para acessar este módulo.");
     }
 
     if (parts.length === 3) {
@@ -1175,7 +1375,7 @@ export default {
         return json({
           name: "GuiaSys Licensing API",
           status: "online",
-          version: "1.2.1"
+          version: "1.3.0"
         }, 200, origin);
       }
 
@@ -1183,7 +1383,7 @@ export default {
         return json({
           ok: true,
           service: "guiasys-licensing-api",
-          version: "1.2.1",
+          version: "1.3.0",
           firebaseProject: env.FIREBASE_PROJECT_ID || null,
           serviceAccountConfigured: Boolean(env.FIREBASE_SERVICE_ACCOUNT_JSON),
           adminConfigured: Boolean(env.ADMIN_FIREBASE_UID)
