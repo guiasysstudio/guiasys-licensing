@@ -1336,3 +1336,48 @@ button { cursor: pointer; }
     grid-column: 2;
   }
 }
+
+
+/* ===== Simulador de ativação ===== */
+
+.simulator-grid {
+  align-items: start;
+}
+
+.simulator-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.simulator-result {
+  min-height: 360px;
+  max-height: 520px;
+  overflow: auto;
+  margin: 18px 0 0;
+  padding: 18px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(2, 8, 23, 0.52);
+  color: #dbeafe;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+  .simulator-actions {
+    flex-direction: column;
+  }
+
+  .simulator-actions .btn {
+    width: 100%;
+  }
+
+  .simulator-result {
+    min-height: 260px;
+  }
+}
