@@ -699,38 +699,38 @@ function projectForm(project = {}) {
   return `
     <div class="form-grid form-grid-2">
       <label class="field">
-        <span>Nome do projeto *</span>
+        ${fieldTitle("Nome do projeto *", "Nome que identifica o produto dentro do GuiaSys Licensing.")}
         <input name="name" required maxlength="80" value="${e(project.name || "")}" placeholder="Ex.: GuiaPlay">
       </label>
       <label class="field">
-        <span>Prefixo da key *</span>
-        <input name="prefix" required maxlength="8" value="${e(project.prefix || "")}" placeholder="GPL">
+        ${fieldTitle("Prefixo da key *", "Sigla usada no início das chaves geradas. Exemplo: GPL-XXXXX-... para GuiaPlay.")}
+        <input name="prefix" required maxlength="8" data-mask="prefix" value="${e(project.prefix || "")}" placeholder="GPL">
       </label>
       <label class="field">
-        <span>Slug</span>
-        <input name="slug" maxlength="48" value="${e(project.slug || "")}" placeholder="guiaplay">
+        ${fieldTitle("Slug", "Identificador técnico amigável do projeto, usado internamente. Use letras minúsculas, números e hífen.")}
+        <input name="slug" maxlength="48" data-mask="slug" value="${e(project.slug || "")}" placeholder="guiaplay">
       </label>
       <label class="field">
-        <span>Status</span>
+        ${fieldTitle("Status", "Projetos inativos não aceitam novas ativações de licença.")}
         <select name="status">
           <option value="active" ${project.status !== "inactive" ? "selected" : ""}>Ativo</option>
           <option value="inactive" ${project.status === "inactive" ? "selected" : ""}>Inativo</option>
         </select>
       </label>
       <label class="field">
-        <span>Dias de trial</span>
-        <input name="trialDays" type="number" min="0" value="${e(project.trialDays ?? 0)}">
+        ${fieldTitle("Dias de trial", "Quantidade de dias de avaliação gratuita. Use 0 para não oferecer trial.")}
+        <input name="trialDays" inputmode="numeric" data-mask="integer" data-max-digits="4" value="${e(project.trialDays ?? 0)}">
       </label>
       <label class="field">
-        <span>Dias permitidos offline</span>
-        <input name="offlineDays" type="number" min="0" value="${e(project.offlineDays ?? 7)}">
+        ${fieldTitle("Dias permitidos offline", "Período máximo que o aplicativo pode continuar funcionando sem conseguir validar a licença pela internet.")}
+        <input name="offlineDays" inputmode="numeric" data-mask="integer" data-max-digits="4" value="${e(project.offlineDays ?? 7)}">
       </label>
       <label class="field">
-        <span>Intervalo de validação (horas)</span>
-        <input name="validationHours" type="number" min="1" value="${e(project.validationHours ?? 24)}">
+        ${fieldTitle("Intervalo de validação (horas)", "Frequência com que o aplicativo deve consultar o servidor para confirmar se a licença continua válida.")}
+        <input name="validationHours" inputmode="numeric" data-mask="integer" data-max-digits="4" value="${e(project.validationHours ?? 24)}">
       </label>
       <label class="field field-full">
-        <span>Descrição</span>
+        ${fieldTitle("Descrição", "Descrição interna para ajudar a identificar o projeto.")}
         <textarea name="description" rows="3" maxlength="300" placeholder="Descrição interna do projeto">${e(project.description || "")}</textarea>
       </label>
     </div>
@@ -742,7 +742,7 @@ function projectPayload(values) {
     ...values,
     trialDays: Number(values.trialDays || 0),
     offlineDays: Number(values.offlineDays || 0),
-    validationHours: Number(values.validationHours || 24)
+    validationHours: Math.max(1, Number(values.validationHours || 24))
   };
 }
 
@@ -834,16 +834,60 @@ async function projectDashboardView() {
   `;
 }
 
+function bindPlanFormBehavior(form) {
+  const lifetime = form.elements.lifetime;
+  const duration = form.elements.durationDays;
+  if (!lifetime || !duration) return;
+
+  const sync = () => {
+    duration.disabled = lifetime.checked;
+    duration.closest(".field")?.classList.toggle("field-locked", lifetime.checked);
+    if (lifetime.checked) duration.value = "0";
+    else if (!Number(duration.value)) duration.value = "30";
+  };
+
+  lifetime.addEventListener("change", sync);
+  sync();
+}
+
 function planForm(plan = {}) {
   return `
     <div class="form-grid form-grid-2">
-      <label class="field field-full"><span>Nome do plano *</span><input name="name" required value="${e(plan.name || "")}" placeholder="Ex.: Semestral"></label>
-      <label class="field"><span>Preço (R$)</span><input name="price" type="number" min="0" step="0.01" value="${e(plan.price ?? 0)}"></label>
-      <label class="field"><span>Dispositivos</span><input name="deviceLimit" type="number" min="1" value="${e(plan.deviceLimit ?? 1)}"></label>
-      <label class="field"><span>Duração em dias</span><input name="durationDays" type="number" min="1" value="${e(plan.durationDays || 30)}"></label>
-      <label class="field check-field"><input name="lifetime" type="checkbox" value="true" ${plan.lifetime ? "checked" : ""}><span>Licença vitalícia</span></label>
-      <label class="field check-field"><input name="active" type="checkbox" value="true" ${plan.active !== false ? "checked" : ""}><span>Plano ativo</span></label>
-      <label class="field field-full"><span>Descrição</span><textarea name="description" rows="3">${e(plan.description || "")}</textarea></label>
+      <label class="field field-full">
+        ${fieldTitle("Nome do plano *", "Nome comercial ou interno do plano. Exemplo: Mensal, Anual, ADM.")}
+        <input name="name" required maxlength="80" value="${e(plan.name || "")}" placeholder="Ex.: Mensal">
+      </label>
+      <label class="field">
+        ${fieldTitle("Preço (R$)", "Valor do plano em reais. O campo aceita somente valor monetário.")}
+        <div class="money-input"><span>R$</span><input name="price" inputmode="numeric" data-mask="currency" value="${e(formatCurrencyInput(plan.price ?? 0))}"></div>
+      </label>
+      <label class="field">
+        ${fieldTitle("Dispositivos", "Quantidade máxima de dispositivos que podem ficar ativos ao mesmo tempo nesta licença.")}
+        <input name="deviceLimit" inputmode="numeric" data-mask="integer" data-max-digits="3" value="${e(plan.deviceLimit ?? 1)}">
+      </label>
+      <label class="field">
+        ${fieldTitle("Duração em dias", "Quantidade de dias de validade. É ignorada quando o plano é vitalício.")}
+        <input name="durationDays" inputmode="numeric" data-mask="integer" data-max-digits="5" value="${e(plan.lifetime ? 0 : (plan.durationDays || 30))}">
+      </label>
+      <label class="field">
+        ${fieldTitle("Início da validade", "Define se a contagem começa no momento da emissão da key ou somente na primeira ativação.")}
+        <select name="startMode">
+          <option value="first_activation" ${(plan.startMode || "first_activation") === "first_activation" ? "selected" : ""}>Na primeira ativação</option>
+          <option value="immediate" ${plan.startMode === "immediate" ? "selected" : ""}>Imediatamente ao gerar</option>
+        </select>
+      </label>
+      <label class="field check-field">
+        <input name="lifetime" type="checkbox" value="true" ${plan.lifetime ? "checked" : ""}>
+        ${fieldTitle("Licença vitalícia", "Quando ativado, a licença não possui data de expiração.")}
+      </label>
+      <label class="field check-field">
+        <input name="active" type="checkbox" value="true" ${plan.active !== false ? "checked" : ""}>
+        ${fieldTitle("Plano ativo", "Planos inativos deixam de aparecer para novas emissões, mas licenças já emitidas continuam existindo.")}
+      </label>
+      <label class="field field-full">
+        ${fieldTitle("Descrição", "Informação interna sobre o plano.")}
+        <textarea name="description" rows="3">${e(plan.description || "")}</textarea>
+      </label>
     </div>
   `;
 }
@@ -892,12 +936,14 @@ function openPlan(plan = null) {
     body: planForm(plan || {}),
     submitLabel: plan ? "Salvar alterações" : "Criar plano",
     wide: true,
+    onOpen: backdrop => bindPlanFormBehavior(backdrop.querySelector(".modal-form")),
     onSubmit: async (values, form) => {
       const payload = {
         ...values,
-        price: Number(values.price || 0),
-        durationDays: Number(values.durationDays || 30),
+        price: currencyFromInput(values.price),
+        durationDays: form.elements.lifetime.checked ? 0 : Number(values.durationDays || 30),
         deviceLimit: Number(values.deviceLimit || 1),
+        startMode: values.startMode || "first_activation",
         lifetime: form.elements.lifetime.checked,
         active: form.elements.active.checked
       };
@@ -915,11 +961,29 @@ function openPlan(plan = null) {
 function customerForm(customer = {}) {
   return `
     <div class="form-grid form-grid-2">
-      <label class="field"><span>Nome *</span><input name="name" required value="${e(customer.name || "")}"></label>
-      <label class="field"><span>E-mail *</span><input name="email" type="email" required value="${e(customer.email || "")}"></label>
-      <label class="field"><span>Telefone</span><input name="phone" value="${e(customer.phone || "")}"></label>
-      <label class="field"><span>Status</span><select name="status"><option value="active" ${customer.status !== "inactive" ? "selected" : ""}>Ativo</option><option value="inactive" ${customer.status === "inactive" ? "selected" : ""}>Inativo</option></select></label>
-      <label class="field field-full"><span>Observações</span><textarea name="notes" rows="4">${e(customer.notes || "")}</textarea></label>
+      <label class="field">
+        ${fieldTitle("Nome *", "Nome do cliente que ficará vinculado às licenças deste projeto.")}
+        <input name="name" required maxlength="120" value="${e(customer.name || "")}">
+      </label>
+      <label class="field">
+        ${fieldTitle("E-mail *", "E-mail de identificação e contato do cliente.")}
+        <input name="email" type="email" required maxlength="160" value="${e(customer.email || "")}">
+      </label>
+      <label class="field">
+        ${fieldTitle("Telefone", "Telefone brasileiro com DDD. Exemplo: (69) 99999-9999.")}
+        <input name="phone" inputmode="numeric" data-mask="phone" maxlength="15" value="${e(customer.phone || "")}" placeholder="(69) 99999-9999">
+      </label>
+      <label class="field">
+        ${fieldTitle("Status", "Clientes inativos permanecem no histórico, mas não podem receber novas licenças.")}
+        <select name="status">
+          <option value="active" ${customer.status !== "inactive" ? "selected" : ""}>Ativo</option>
+          <option value="inactive" ${customer.status === "inactive" ? "selected" : ""}>Inativo</option>
+        </select>
+      </label>
+      <label class="field field-full">
+        ${fieldTitle("Observações", "Notas internas sobre o cliente.")}
+        <textarea name="notes" rows="4">${e(customer.notes || "")}</textarea>
+      </label>
     </div>
   `;
 }
@@ -1004,50 +1068,132 @@ function openCustomer(customer = null) {
   });
 }
 
+function bindLicensePlanBehavior(form) {
+  const planSelect = form.elements.planId;
+  const duration = form.elements.durationDays;
+  const devices = form.elements.maxDevices;
+  const startMode = form.elements.startMode;
+  const lifetime = form.elements.lifetime;
+  const note = form.querySelector("#plan-lock-note");
+
+  if (!planSelect) return;
+
+  const fields = [duration, devices, startMode, lifetime].filter(Boolean);
+
+  const sync = () => {
+    const option = planSelect.selectedOptions[0];
+    const hasPlan = Boolean(option?.value);
+
+    if (hasPlan) {
+      const isLifetime = option.dataset.lifetime === "true";
+      duration.value = isLifetime ? "0" : (option.dataset.duration || "30");
+      devices.value = option.dataset.devices || "1";
+      startMode.value = option.dataset.startMode || "first_activation";
+      lifetime.checked = isLifetime;
+    }
+
+    fields.forEach(control => {
+      control.disabled = hasPlan;
+      control.closest(".field")?.classList.toggle("field-locked", hasPlan);
+    });
+
+    if (!hasPlan && duration.value === "0") duration.value = "30";
+    if (note) {
+      note.textContent = hasPlan
+        ? "As regras deste plano foram carregadas automaticamente e não podem ser alteradas nesta emissão."
+        : "Licença personalizada: você pode definir duração, dispositivos, início da validade e vitalício.";
+      note.classList.toggle("plan-note-locked", hasPlan);
+    }
+  };
+
+  planSelect.addEventListener("change", sync);
+  sync();
+}
+
 async function licenseFormHtml() {
   const [customers, plans] = await Promise.all([loadEntity("customers", true), loadEntity("plans", true)]);
 
   return `
     <div class="form-grid form-grid-2">
       <label class="field field-full">
-        <span>Cliente *</span>
+        ${fieldTitle("Cliente *", "Cliente que será dono desta licença.")}
         <select name="customerId" required>
           <option value="">Selecione...</option>
           ${customers.map(c => `<option value="${e(c.id)}" ${c.status === "inactive" ? "disabled" : ""}>${e(c.name)} — ${e(c.email)}${c.status === "inactive" ? " — Inativo" : ""}</option>`).join("")}
         </select>
       </label>
       <label class="field field-full">
-        <span>Plano</span>
+        ${fieldTitle("Plano", "Escolha um plano cadastrado ou use Licença personalizada. Ao escolher um plano, as regras ficam bloqueadas para edição.")}
         <select name="planId" id="license-plan">
           <option value="">Licença personalizada</option>
-          ${plans.filter(p => p.active !== false).map(p => `<option value="${e(p.id)}">${e(p.name)} — ${p.lifetime ? "Vitalício" : `${e(p.durationDays)} dias`} — ${e(p.deviceLimit)} disp.</option>`).join("")}
+          ${plans.filter(p => p.active !== false).map(p => `
+            <option
+              value="${e(p.id)}"
+              data-duration="${e(p.durationDays || 0)}"
+              data-devices="${e(p.deviceLimit || 1)}"
+              data-lifetime="${p.lifetime ? "true" : "false"}"
+              data-start-mode="${e(p.startMode || "first_activation")}"
+            >${e(p.name)} — ${p.lifetime ? "Vitalício" : `${e(p.durationDays)} dias`} — ${e(p.deviceLimit)} disp.</option>
+          `).join("")}
+        </select>
+        <small id="plan-lock-note" class="plan-lock-note"></small>
+      </label>
+      <label class="field">
+        ${fieldTitle("Duração personalizada (dias)", "Quantidade de dias de validade. Disponível somente para licença personalizada.")}
+        <input name="durationDays" inputmode="numeric" data-mask="integer" data-max-digits="5" value="30">
+      </label>
+      <label class="field">
+        ${fieldTitle("Máximo de dispositivos", "Quantidade de dispositivos ativos permitidos. Disponível somente para licença personalizada.")}
+        <input name="maxDevices" inputmode="numeric" data-mask="integer" data-max-digits="3" value="1">
+      </label>
+      <label class="field">
+        ${fieldTitle("Início da validade", "Define quando começa a contar o prazo da licença. Disponível somente para licença personalizada.")}
+        <select name="startMode">
+          <option value="first_activation">Na primeira ativação</option>
+          <option value="immediate">Imediatamente</option>
         </select>
       </label>
-      <label class="field"><span>Duração personalizada (dias)</span><input name="durationDays" type="number" min="1" value="30"></label>
-      <label class="field"><span>Máximo de dispositivos</span><input name="maxDevices" type="number" min="1" value="1"></label>
-      <label class="field"><span>Início da validade</span><select name="startMode"><option value="first_activation">Na primeira ativação</option><option value="immediate">Imediatamente</option></select></label>
-      <label class="field check-field"><input name="lifetime" type="checkbox" value="true"><span>Vitalícia</span></label>
-      <label class="field field-full"><span>Observações</span><textarea name="notes" rows="3"></textarea></label>
+      <label class="field check-field">
+        <input name="lifetime" type="checkbox" value="true">
+        ${fieldTitle("Vitalícia", "Licença sem data de expiração. Disponível somente para licença personalizada.")}
+      </label>
+      <label class="field field-full">
+        ${fieldTitle("Observações", "Observações específicas desta licença. Este campo continua editável mesmo quando um plano é selecionado.")}
+        <textarea name="notes" rows="3"></textarea>
+      </label>
     </div>
   `;
 }
 
 async function openLicenseCreate(onCreated = null) {
-  const [plans, html] = await Promise.all([loadEntity("plans"), licenseFormHtml()]);
+  const [plans, html] = await Promise.all([loadEntity("plans", true), licenseFormHtml()]);
   openModal({
     title: "Gerar licença",
     subtitle: selectedProject().name,
     body: html,
     submitLabel: "Gerar licença",
     wide: true,
+    onOpen: backdrop => bindLicensePlanBehavior(backdrop.querySelector(".modal-form")),
     onSubmit: async (values, form) => {
       const selectedPlan = plans.find(p => p.id === values.planId);
-      const payload = {
-        ...values,
-        durationDays: Number(values.durationDays || selectedPlan?.durationDays || 30),
-        maxDevices: Number(values.maxDevices || selectedPlan?.deviceLimit || 1),
-        lifetime: form.elements.lifetime.checked || Boolean(selectedPlan?.lifetime)
-      };
+      const payload = selectedPlan
+        ? {
+            customerId: values.customerId,
+            planId: selectedPlan.id,
+            durationDays: selectedPlan.durationDays,
+            maxDevices: selectedPlan.deviceLimit,
+            lifetime: Boolean(selectedPlan.lifetime),
+            startMode: selectedPlan.startMode || "first_activation",
+            notes: values.notes || ""
+          }
+        : {
+            ...values,
+            durationDays: Number(values.durationDays || 30),
+            maxDevices: Number(values.maxDevices || 1),
+            lifetime: form.elements.lifetime.checked,
+            startMode: values.startMode || "first_activation"
+          };
+
       const data = await api(`/api/v1/admin/projects/${state.selectedProjectId}/licenses`, {
         method: "POST",
         body: JSON.stringify(payload)
@@ -1230,27 +1376,45 @@ async function generateLicenseView() {
     </article>
   `;
 
-  const plans = await loadEntity("plans");
-  document.querySelector("#generate-license-form").addEventListener("submit", async event => {
+  const plans = await loadEntity("plans", true);
+  const form = document.querySelector("#generate-license-form");
+  bindInputEnhancements(form);
+  bindLicensePlanBehavior(form);
+
+  form.addEventListener("submit", async event => {
     event.preventDefault();
-    const form = event.currentTarget;
     const button = form.querySelector("button[type=submit]");
     button.disabled = true;
     try {
       const values = Object.fromEntries(new FormData(form).entries());
       const selectedPlan = plans.find(p => p.id === values.planId);
+
+      const payload = selectedPlan
+        ? {
+            customerId: values.customerId,
+            planId: selectedPlan.id,
+            durationDays: selectedPlan.durationDays,
+            maxDevices: selectedPlan.deviceLimit,
+            lifetime: Boolean(selectedPlan.lifetime),
+            startMode: selectedPlan.startMode || "first_activation",
+            notes: values.notes || ""
+          }
+        : {
+            ...values,
+            durationDays: Number(values.durationDays || 30),
+            maxDevices: Number(values.maxDevices || 1),
+            lifetime: form.elements.lifetime.checked,
+            startMode: values.startMode || "first_activation"
+          };
+
       const data = await api(`/api/v1/admin/projects/${state.selectedProjectId}/licenses`, {
         method: "POST",
-        body: JSON.stringify({
-          ...values,
-          durationDays: Number(values.durationDays || selectedPlan?.durationDays || 30),
-          maxDevices: Number(values.maxDevices || selectedPlan?.deviceLimit || 1),
-          lifetime: form.elements.lifetime.checked || Boolean(selectedPlan?.lifetime)
-        })
+        body: JSON.stringify(payload)
       });
       invalidate(state.selectedProjectId);
       showGeneratedLicense(data.license);
       form.reset();
+      bindLicensePlanBehavior(form);
     } catch (error) {
       toast(error.message, "danger");
     } finally {
