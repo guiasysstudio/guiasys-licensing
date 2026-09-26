@@ -18,7 +18,7 @@ const firebaseConfig = {
 };
 
 const API_BASE = "https://guiasys-licensing-api.lindolfoandrew0.workers.dev";
-const PANEL_VERSION = "0.5.4";
+const PANEL_VERSION = "0.6.0";
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
@@ -57,23 +57,37 @@ const el = {
 };
 
 const globalItems = [
-  ["dashboard", "⌂", "Dashboard"],
-  ["projects", "▦", "Projetos"],
-  ["platform-settings", "⚙", "Configurações"]
+  ["dashboard", "dashboard", "Dashboard", "viewDashboard"],
+  ["projects", "projects", "Projetos", null],
+  ["administrators", "users", "Administradores", "master"],
+  ["platform-settings", "settings", "Configurações", "managePlatformSettings"]
 ];
 
 const projectItems = [
-  ["project-dashboard", "◫", "Dashboard"],
-  ["licenses", "⌁", "Licenças"],
-  ["generate-license", "+", "Gerar licença"],
-  ["plans", "◇", "Planos"],
-  ["customers", "◎", "Clientes"],
-  ["devices", "▣", "Dispositivos"],
-  ["activations", "↯", "Ativações"],
-  ["activation-simulator", "⚡", "Simulador"],
-  ["logs", "≡", "Logs"],
-  ["project-settings", "⚙", "Configurações"]
+  ["project-dashboard", "dashboard", "Dashboard", "viewDashboard"],
+  ["licenses", "key", "Licenças", "manageLicenses"],
+  ["generate-license", "plus-circle", "Gerar licença", "manageLicenses"],
+  ["plans", "plans", "Planos", "managePlans"],
+  ["customers", "users", "Clientes", "manageCustomers"],
+  ["devices", "monitor", "Dispositivos", "manageDevices"],
+  ["activations", "activity", "Ativações", "viewActivations"],
+  ["activation-simulator", "flask", "Simulador", "manageLicenses"],
+  ["logs", "logs", "Logs", "viewLogs"],
+  ["project-settings", "settings", "Configurações", "manageProjectSettings"]
 ];
+
+const ADMIN_PERMISSION_LABELS = {
+  viewDashboard: "Visualizar dashboards",
+  manageProjects: "Criar e arquivar projetos",
+  managePlans: "Gerenciar planos",
+  manageCustomers: "Gerenciar clientes",
+  manageLicenses: "Gerenciar licenças e usar o simulador",
+  manageDevices: "Gerenciar dispositivos",
+  viewActivations: "Visualizar ativações",
+  viewLogs: "Visualizar logs",
+  manageProjectSettings: "Alterar configurações dos projetos",
+  managePlatformSettings: "Visualizar configurações da plataforma"
+};
 
 const statusMap = {
   active: ["Ativa", "success"],
@@ -85,6 +99,116 @@ const statusMap = {
   revoked: ["Revogada", "danger"],
   none: ["Sem licença", "muted"]
 };
+
+
+function hasPermission(permission) {
+  if (!permission) return true;
+  if (permission === "master") return Boolean(state.administrator?.master);
+  return Boolean(state.administrator?.master || state.administrator?.permissions?.[permission]);
+}
+
+function routeAllowed(route) {
+  const global = globalItems.find(item => item[0] === route);
+  if (global) return hasPermission(global[3]);
+
+  const project = projectItems.find(item => item[0] === route);
+  if (project) return hasPermission(project[3]);
+
+  return true;
+}
+
+function defaultProjectRoute() {
+  const first = projectItems.find(item => hasPermission(item[3]));
+  return first?.[0] || "projects";
+}
+
+function iconSvg(name) {
+  const common = 'viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"';
+  const paths = {
+    dashboard: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+    projects: '<path d="M3 7h7l2 2h9v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M3 7V5a2 2 0 0 1 2-2h5l2 2h5"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6A1.7 1.7 0 0 0 10.4 3V3h4v.1A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.18.37.5.68.88.86.3.14.64.2.97.18H21v4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>',
+    key: '<path d="M21 2 13.6 9.4"/><circle cx="8.5" cy="14.5" r="5.5"/><path d="m16 6 2 2 2-2"/><path d="m13 9 2 2"/><path d="M6.5 14.5h.01"/>',
+    "plus-circle": '<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>',
+    plans: '<path d="M4 6h16v12H4z"/><path d="M8 10h8M8 14h5"/>',
+    users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+    monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+    activity: '<path d="M3 12h4l2-7 4 14 2-7h6"/>',
+    flask: '<path d="M9 3h6M10 3v6l-5 8a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-8V3"/><path d="M8 15h8"/>',
+    logs: '<path d="M6 4h12M6 9h12M6 14h12M6 19h12"/><path d="M3 4h.01M3 9h.01M3 14h.01M3 19h.01"/>'
+  };
+  return `<svg ${common}>${paths[name] || paths.dashboard}</svg>`;
+}
+
+function helpTip(text) {
+  return `<span class="help-tip" tabindex="0" data-tip="${e(text)}" aria-label="${e(text)}">?</span>`;
+}
+
+function fieldTitle(label, tip = "") {
+  return `<span class="field-label">${e(label)}${tip ? helpTip(tip) : ""}</span>`;
+}
+
+function onlyDigits(value, max = 32) {
+  return String(value || "").replace(/\D/g, "").slice(0, max);
+}
+
+function formatPhone(value) {
+  const digits = onlyDigits(value, 11);
+  if (!digits) return "";
+  if (digits.length <= 2) return `(${digits}`;
+  if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  if (digits.length <= 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+}
+
+function formatCurrencyInput(value) {
+  const number = Number(value || 0);
+  return number.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function currencyFromInput(value) {
+  const normalized = String(value || "")
+    .replace(/[^\d,.-]/g, "")
+    .replace(/\./g, "")
+    .replace(",", ".");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function bindInputEnhancements(root = document) {
+  root.querySelectorAll('[data-mask="phone"]').forEach(input => {
+    input.value = formatPhone(input.value);
+    input.addEventListener("input", () => { input.value = formatPhone(input.value); });
+  });
+
+  root.querySelectorAll('[data-mask="integer"]').forEach(input => {
+    input.addEventListener("input", () => {
+      input.value = onlyDigits(input.value, Number(input.dataset.maxDigits || 8));
+    });
+  });
+
+  root.querySelectorAll('[data-mask="prefix"]').forEach(input => {
+    input.addEventListener("input", () => {
+      input.value = input.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+    });
+  });
+
+  root.querySelectorAll('[data-mask="slug"]').forEach(input => {
+    input.addEventListener("input", () => {
+      input.value = input.value.toLowerCase().replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-").slice(0, 48);
+    });
+  });
+
+  root.querySelectorAll('[data-mask="currency"]').forEach(input => {
+    input.addEventListener("input", () => {
+      const digits = onlyDigits(input.value, 12);
+      input.value = (Number(digits || 0) / 100).toLocaleString("pt-BR", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+    });
+  });
+}
 
 let pendingLoginMessage = "";
 
@@ -226,7 +350,7 @@ function toast(message, tone = "success") {
   }, 3200);
 }
 
-function openModal({ title, subtitle = "", body, submitLabel = "Salvar", onSubmit, wide = false }) {
+function openModal({ title, subtitle = "", body, submitLabel = "Salvar", onSubmit, onOpen = null, wide = false }) {
   const backdrop = document.createElement("div");
   backdrop.className = "modal-backdrop";
   backdrop.innerHTML = `
@@ -279,6 +403,8 @@ function openModal({ title, subtitle = "", body, submitLabel = "Salvar", onSubmi
     }
   });
 
+  bindInputEnhancements(backdrop);
+  if (typeof onOpen === "function") onOpen(backdrop);
   setTimeout(() => backdrop.querySelector("input, select, textarea")?.focus(), 50);
 }
 
@@ -315,17 +441,21 @@ function confirmAction(title, message, confirmLabel = "Confirmar", tone = "dange
 }
 
 function renderNavigation() {
-  el.globalNav.innerHTML = globalItems.map(([route, icon, label]) => `
-    <button class="nav-button ${state.route === route ? "active" : ""}" data-route="${route}" type="button">
-      <span class="nav-icon">${icon}</span><span>${label}</span>
-    </button>
-  `).join("");
+  el.globalNav.innerHTML = globalItems
+    .filter(([, , , permission]) => hasPermission(permission))
+    .map(([route, icon, label]) => `
+      <button class="nav-button ${state.route === route ? "active" : ""}" data-route="${route}" type="button">
+        <span class="nav-icon">${iconSvg(icon)}</span><span>${label}</span>
+      </button>
+    `).join("");
 
-  el.projectNav.innerHTML = projectItems.map(([route, icon, label]) => `
-    <button class="nav-button ${state.route === route ? "active" : ""}" data-route="${route}" type="button">
-      <span class="nav-icon">${icon}</span><span>${label}</span>
-    </button>
-  `).join("");
+  el.projectNav.innerHTML = projectItems
+    .filter(([, , , permission]) => hasPermission(permission))
+    .map(([route, icon, label]) => `
+      <button class="nav-button ${state.route === route ? "active" : ""}" data-route="${route}" type="button">
+        <span class="nav-icon">${iconSvg(icon)}</span><span>${label}</span>
+      </button>
+    `).join("");
 
   el.projectNavigation.classList.toggle("hidden", !state.selectedProjectId);
 
@@ -352,9 +482,20 @@ function renderProjectSwitcher() {
 
 function renderUser() {
   const name = state.user?.displayName || state.administrator?.name || "Administrador";
+  const photo = state.user?.photoURL || state.administrator?.picture || "";
   el.userName.textContent = name;
   el.userEmail.textContent = state.user?.email || state.administrator?.email || "";
-  el.userAvatar.textContent = initials(name);
+
+  if (photo) {
+    el.userAvatar.textContent = "";
+    el.userAvatar.style.backgroundImage = `url("${photo.replace(/"/g, "%22")}")`;
+    el.userAvatar.classList.add("has-photo");
+  } else {
+    el.userAvatar.style.backgroundImage = "";
+    el.userAvatar.classList.remove("has-photo");
+    el.userAvatar.textContent = initials(name);
+  }
+
   document.querySelector(".version").textContent = `Painel v${PANEL_VERSION}`;
 }
 
