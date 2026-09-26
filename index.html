@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="description" content="GuiaSys Licensing — Central de licenciamento dos produtos GuiaSys.">
+  <title>GuiaSys Licensing</title>
+  <link rel="stylesheet" href="./assets/css/app.css">
+</head>
+<body>
+  <div id="app">
+    <section id="boot-screen" class="boot-screen" aria-live="polite">
+      <div class="brand-mark">GS</div>
+      <div>
+        <strong>GuiaSys Licensing</strong>
+        <span>Inicializando...</span>
+      </div>
+    </section>
+
+    <section id="login-screen" class="login-screen hidden">
+      <div class="login-panel">
+        <div class="login-brand">
+          <div class="brand-mark brand-mark-lg">GS</div>
+          <div>
+            <p class="eyebrow">GUIASYS STUDIO</p>
+            <h1>Licensing</h1>
+          </div>
+        </div>
+
+        <div class="login-copy">
+          <h2>Central de licenciamento</h2>
+          <p>Gerencie projetos, planos, clientes, licenças, dispositivos, ativações e auditoria em ambientes isolados por produto.</p>
+        </div>
+
+        <button id="google-login-button" class="btn btn-primary btn-lg" type="button">
+          <span class="google-g" aria-hidden="true">G</span>
+          Entrar com Google
+        </button>
+
+        <p id="login-message" class="form-message" role="status"></p>
+      </div>
+
+      <aside class="login-aside">
+        <div class="aside-glow"></div>
+        <div class="aside-content">
+          <span class="status-pill"><span class="status-dot"></span> Infraestrutura protegida</span>
+          <h2>Um motor.<br>Projetos independentes.</h2>
+          <p>Cada produto possui seus próprios clientes, planos, licenças, dispositivos e logs, sem misturar dados entre projetos.</p>
+        </div>
+      </aside>
+    </section>
+
+    <section id="app-shell" class="app-shell hidden">
+      <aside class="sidebar">
+        <div class="sidebar-brand">
+          <div class="brand-mark">GS</div>
+          <div class="sidebar-brand-text">
+            <strong>GuiaSys</strong>
+            <span>Licensing</span>
+          </div>
+        </div>
+
+        <nav id="global-nav" class="sidebar-nav" aria-label="Navegação principal"></nav>
+
+        <div id="project-navigation" class="project-navigation hidden">
+          <div class="sidebar-section-label">PROJETO ATUAL</div>
+          <nav id="project-nav" class="sidebar-nav" aria-label="Navegação do projeto"></nav>
+        </div>
+
+        <div class="sidebar-footer">
+          <div class="api-status">
+            <span id="api-status-dot" class="status-dot status-dot-muted"></span>
+            <span id="api-status-text">Verificando API...</span>
+          </div>
+          <span class="version">Painel v0.1.0</span>
+        </div>
+      </aside>
+
+      <main class="main-column">
+        <header class="topbar">
+          <button id="mobile-menu-button" class="icon-button mobile-only" type="button" aria-label="Abrir menu">☰</button>
+
+          <div class="project-switcher-wrap">
+            <label for="project-switcher">Projeto</label>
+            <select id="project-switcher" class="project-switcher">
+              <option value="">Visão geral</option>
+            </select>
+          </div>
+
+          <div class="topbar-spacer"></div>
+
+          <div class="user-menu">
+            <div id="user-avatar" class="user-avatar">A</div>
+            <div class="user-info">
+              <strong id="user-name">Administrador</strong>
+              <span id="user-email"></span>
+            </div>
+            <button id="logout-button" class="btn btn-ghost" type="button">Sair</button>
+          </div>
+        </header>
+
+        <div id="content" class="content" tabindex="-1"></div>
+      </main>
+    </section>
+  </div>
+
+  <script type="module" src="./assets/js/app.js"></script>
+</body>
+</html>
