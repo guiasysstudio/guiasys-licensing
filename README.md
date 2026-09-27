@@ -4,8 +4,8 @@ Central universal de licenciamento multi-projeto da GuiaSys Studio.
 
 ## Estado
 
-**Painel:** v0.8.1  
-**API:** v1.5.0  
+**Painel:** v0.9.0  
+**API:** v1.6.0  
 **Protocolo público:** GSL-v1
 
 A aplicação já possui a estrutura funcional para:
@@ -33,7 +33,10 @@ A aplicação já possui a estrutura funcional para:
 - código de integração permanente por projeto;
 - trial centralizado e dinâmico por projeto, com início/expiração registrados por dispositivo;
 - catálogo público opcional para futuro portal do cliente;
-- API pública para configuração, trial, ativação, validação e desativação de licenças.
+- API pública para configuração, trial, ativação, validação e desativação de licenças;
+- entitlement offline assinado com ES256 por projeto;
+- rate limiting nos endpoints públicos;
+- CORS configurável por projeto para integrações Web.
 
 ## Arquitetura
 
@@ -62,9 +65,11 @@ projects/{projectId}
 ├── trials
 ├── devices
 ├── activations
-└── logs
+├── logs
+└── internal/signing   # chave privada ES256, nunca exposta pela API administrativa
 
 integrationCodes/{sha256(integrationCode)}
+rateLimits/{sha256(client|bucket)}
 ```
 
 Clientes, licenças e dispositivos de um projeto não são compartilhados automaticamente com outro projeto.
@@ -172,10 +177,14 @@ Retorna somente projetos e planos explicitamente marcados para aparecer no futur
 - Lookup de key no Firestore feito por SHA-256 da key.
 - Device ID convertido para SHA-256 antes de persistência.
 - Logs de auditoria separados por projeto.
+- Respostas de trial/licença recebem `entitlement.token` JWS assinado com ES256.
+- A chave pública de verificação é exposta em `/api/v1/project/config`; a privada permanece somente no armazenamento interno do backend.
+- `offlineUntil` limita explicitamente o uso do cache offline.
+- Rate limiting por IP/rota reduz brute force e abuso dos endpoints públicos.
+- Integrações Web só são aceitas a partir das origens cadastradas no projeto.
 
 ## Próximas evoluções
 
-- assinatura criptográfica das respostas para cache offline nos aplicativos;
 - SDK `GuiaSys.Licensing` para .NET;
 - área do cliente;
 - pacotes com múltiplos produtos;
@@ -216,3 +225,20 @@ Cada projeto possui uma página **Integração** que gera as instruções comple
 - Alterar a duração no painel afeta novos trials; trials já iniciados preservam o snapshot original.
 - O produto nunca deve funcionar além de `expiresAt`, mesmo offline.
 - Uma licença paga ativa passa a comandar o acesso e não soma dias restantes do trial.
+
+
+### Entitlement offline assinado
+
+As respostas bem-sucedidas de trial e licença incluem:
+
+- `offlineUntil`;
+- `entitlement.format = JWS`;
+- `entitlement.algorithm = ES256`;
+- `entitlement.keyId`;
+- `entitlement.token`.
+
+O cliente deve validar o JWS com `signing.publicJwk` retornado por `/api/v1/project/config`, conferir o hash do Device ID e nunca usar o cache depois de `offlineUntil` ou `expiresAt`.
+
+### Integração Web
+
+Cada projeto pode cadastrar origens HTTPS permitidas. Navegadores só conseguem consumir os endpoints públicos do projeto quando o cabeçalho `Origin` corresponde a uma origem cadastrada. Aplicativos nativos desktop/mobile normalmente não enviam `Origin` e não dependem dessa lista.
