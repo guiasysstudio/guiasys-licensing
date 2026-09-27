@@ -1776,10 +1776,17 @@ async function handleAdmin(request, env, origin, url, admin) {
         const next = {
           ...current,
           ...body,
+          id: projectId,
           name: String(body.name ?? current.name).trim(),
           slug: slugify(body.slug ?? current.slug),
           prefix: normalizePrefix(body.prefix ?? current.prefix),
+          status: body.status != null
+            ? (body.status === "inactive" ? "inactive" : "active")
+            : (current.status === "inactive" ? "inactive" : "active"),
           integrationCode: current.integrationCode || generateIntegrationCode(),
+          signingKeyId: current.signingKeyId || null,
+          signingAlgorithm: current.signingAlgorithm || "ES256",
+          signingPublicJwk: current.signingPublicJwk || null,
           publicCatalog: body.publicCatalog != null ? Boolean(body.publicCatalog) : Boolean(current.publicCatalog),
           allowedOrigins: body.allowedOrigins != null ? normalizeAllowedOrigins(body.allowedOrigins) : normalizeAllowedOrigins(current.allowedOrigins || []),
           trialEnabled: body.trialEnabled != null
