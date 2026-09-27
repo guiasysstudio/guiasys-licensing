@@ -1738,6 +1738,39 @@ async function trialView() {
       </form>
     </article>
 
+    <article class="card card-section" style="margin-top:18px">
+      <div class="section-heading">
+        <div>
+          <span class="eyebrow">SIMULADOR DE TRIAL</span>
+          <h3>Teste sem instalar o produto</h3>
+          <p>Use o mesmo Device ID para testar início, revalidação, expiração e a regra de não reiniciar o período.</p>
+        </div>
+      </div>
+      <div class="form-grid form-grid-2">
+        <label class="field">
+          ${fieldTitle("Device ID de teste", "Identificador estável usado para representar o mesmo computador durante os testes.")}
+          <input id="trial-test-device-id" value="TRIAL-TEST-${e(project.prefix || "GSS")}-01">
+        </label>
+        <label class="field">
+          ${fieldTitle("Nome do dispositivo", "Nome apenas informativo para aparecer no histórico.")}
+          <input id="trial-test-device-name" value="PC Teste">
+        </label>
+        <label class="field">
+          ${fieldTitle("Plataforma", "Plataforma enviada pelo produto real.")}
+          <input id="trial-test-platform" value="Windows">
+        </label>
+        <label class="field">
+          ${fieldTitle("Versão", "A versão é metadado e não altera a validade do trial.")}
+          <input id="trial-test-version" value="1.0.0">
+        </label>
+      </div>
+      <div class="form-page-footer trial-test-actions">
+        <button class="btn btn-primary" id="trial-test-start" type="button">Iniciar / consultar trial</button>
+        <button class="btn btn-ghost" id="trial-test-validate" type="button">Validar trial</button>
+      </div>
+      <pre id="trial-test-result" class="integration-contract trial-test-result">Nenhum teste executado.</pre>
+    </article>
+
     <article class="card table-shell" style="margin-top:18px">
       <div class="table-toolbar">
         <div><span class="eyebrow">HISTÓRICO</span><h3>Dispositivos que usaram trial</h3></div>
@@ -1766,6 +1799,43 @@ async function trialView() {
   `;
 
   bindInputEnhancements(el.content);
+
+  const runTrialTest = async action => {
+    const result = document.querySelector("#trial-test-result");
+    const payload = {
+      integrationCode: project.integrationCode,
+      deviceId: document.querySelector("#trial-test-device-id").value.trim(),
+      deviceName: document.querySelector("#trial-test-device-name").value.trim(),
+      platform: document.querySelector("#trial-test-platform").value.trim(),
+      appVersion: document.querySelector("#trial-test-version").value.trim()
+    };
+
+    if (!payload.deviceId) {
+      result.textContent = "Informe um Device ID de teste.";
+      return;
+    }
+
+    result.textContent = "Consultando...";
+    try {
+      const data = await api(`/api/v1/trial/${action}`, {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+      result.textContent = JSON.stringify(data, null, 2);
+      invalidate(project.id);
+      toast(action === "start" ? "Trial consultado com sucesso." : "Trial validado com sucesso.");
+    } catch (error) {
+      result.textContent = JSON.stringify({
+        ok: false,
+        status: error.status || null,
+        error: error.code || "request_error",
+        message: error.message
+      }, null, 2);
+    }
+  };
+
+  document.querySelector("#trial-test-start").addEventListener("click", () => runTrialTest("start"));
+  document.querySelector("#trial-test-validate").addEventListener("click", () => runTrialTest("validate"));
 
   document.querySelector("#trial-settings-form").addEventListener("submit", async event => {
     event.preventDefault();
