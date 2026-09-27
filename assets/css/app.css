@@ -1821,3 +1821,40 @@ button { cursor: pointer; }
     font-size: 10.5px;
   }
 }
+
+
+/* ===== v0.8.0 — trial centralizado e código de integração ===== */
+
+.integration-code-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 18px;
+}
+
+.integration-code-card h3 {
+  margin: 7px 0 6px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: clamp(20px, 2.4vw, 30px);
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+}
+
+.integration-code-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+  max-width: 760px;
+}
+
+@media (max-width: 760px) {
+  .integration-code-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .integration-code-card .btn {
+    width: 100%;
+  }
+}
