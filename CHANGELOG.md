@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.0 — 2026-09-27
+
+### Integração universal
+- Criada página `Integração` em cada projeto.
+- Documento personalizado gerado com Project ID, prefixo, políticas, endpoints, payloads, estados, erros e critérios de aceite.
+- Modos de orientação: Universal, .NET, Web/JavaScript e Android/Kotlin.
+- Botões para copiar integração completa e JSON de configuração.
+- Planos permanecem dinâmicos e não precisam ser conhecidos pelo aplicativo integrado.
+
+### Protocolo GSL-v1
+- Contrato público versionado.
+- Respostas de ativação/validação passam a expor nome/e-mail do cliente, emissão, ativação, expiração, modo de início e duração.
+- Códigos públicos de erro padronizados para integração.
+- Regra explícita: validade iniciada na primeira ativação usa `activatedAt`, nunca a data de emissão da key.
+
+
 ## 0.6.0 — 2026-09-26
 
 ### UX e formulários
