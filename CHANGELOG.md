@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.8.0 — 2026-09-27
+
+### Trial centralizado
+- Nova página `Trial / Avaliação` por projeto.
+- Trial ativado/desativado pelo painel, com duração, intervalo de validação e tolerância offline configuráveis.
+- Primeira ativação do trial exige internet.
+- Trials são registrados por Device ID no Firestore.
+- Atualização/reinstalação não reinicia trial para o mesmo dispositivo.
+- Mudanças de política afetam somente novos trials; trials já iniciados preservam o snapshot original.
+- Histórico administrativo de trials com opção de redefinição para suporte/testes.
+- Novos endpoints `/api/v1/trial/start` e `/api/v1/trial/validate`.
+
+### Integração
+- Cada projeto passa a possuir um Código de Integração permanente `GSLI-...`.
+- Novo endpoint `/api/v1/project/config` para regras dinâmicas.
+- License API aceita Código de Integração, mantendo `projectId` por compatibilidade.
+- Contrato de integração atualizado com trial, atualizações de versão e aba Conta/Licença.
+- Alterações de versão do produto não invalidam licença nem reiniciam trial.
+
+### Preparação do portal do cliente
+- Projetos podem ser marcados como disponíveis no portal.
+- Planos podem ser marcados individualmente para venda.
+- Novo catálogo público `/api/v1/catalog` retorna somente itens explicitamente publicados.
+
+
 ## 0.7.0 — 2026-09-27
 
 ### Integração universal
