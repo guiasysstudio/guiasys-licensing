@@ -1,6 +1,6 @@
 // GuiaSys Licensing API — deploy automático via Cloudflare Workers Builds
 const PROTOCOL_VERSION = "GSL-v1";
-const API_VERSION = "1.4.0";
+const API_VERSION = "1.5.0";
 const ALLOWED_ORIGINS = [
   "http://127.0.0.1:5500",
   "http://127.0.0.1:5501",
@@ -13,6 +13,7 @@ const ENTITY_NAMES = new Set([
   "plans",
   "customers",
   "licenses",
+  "trials",
   "devices",
   "activations",
   "logs"
@@ -24,6 +25,7 @@ const DEFAULT_ADMIN_PERMISSIONS = {
   managePlans: false,
   manageCustomers: false,
   manageLicenses: false,
+  manageTrial: false,
   viewIntegration: false,
   manageDevices: false,
   viewActivations: false,
@@ -73,6 +75,7 @@ function permissionForEntity(entity) {
     plans: "managePlans",
     customers: "manageCustomers",
     licenses: "manageLicenses",
+    trials: "manageTrial",
     devices: "manageDevices",
     activations: "viewActivations",
     logs: "viewLogs"
@@ -169,6 +172,19 @@ function generateLicenseKey(prefix = "GSS") {
   }
 
   return `${normalizePrefix(prefix) || "GSS"}-${groups.join("-")}`;
+}
+
+function generateIntegrationCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  const groups = [];
+  for (let g = 0; g < 3; g++) {
+    let part = "";
+    for (let i = 0; i < 4; i++) part += alphabet[bytes[g * 4 + i] % alphabet.length];
+    groups.push(part);
+  }
+  return `GSLI-${groups.join("-")}`;
 }
 
 function plusDays(iso, days) {
@@ -544,6 +560,79 @@ function entityPath(projectId, entity) {
   return `projects/${projectId}/${entity}`;
 }
 
+async function ensureProjectIntegrationCode(env, project) {
+  if (!project) return null;
+  if (project.integrationCode) return project;
+
+  const integrationCode = generateIntegrationCode();
+  const updated = await setDoc(env, projectPath(project.id), {
+    ...project,
+    integrationCode,
+    trialEnabled: Boolean(project.trialEnabled ?? Number(project.trialDays || 0) > 0),
+    trialDays: Math.max(0, Number(project.trialDays || 0)),
+    trialValidationHours: Math.max(1, Number(project.trialValidationHours || project.validationHours || 24)),
+    trialOfflineHours: Math.max(0, Number(project.trialOfflineHours ?? (Number(project.offlineDays || 0) * 24))),
+    publicCatalog: Boolean(project.publicCatalog),
+    updatedAt: nowIso()
+  });
+
+  const lookupId = await sha256Hex(integrationCode);
+  await setDoc(env, `integrationCodes/${lookupId}`, {
+    projectId: project.id,
+    createdAt: nowIso()
+  });
+  return updated;
+}
+
+async function resolvePublicProject(env, body = {}) {
+  const directProjectId = String(body.projectId || "").trim();
+  const integrationCode = String(body.integrationCode || "").trim().toUpperCase();
+
+  let projectId = directProjectId;
+  if (!projectId && integrationCode) {
+    const lookupId = await sha256Hex(integrationCode);
+    const lookup = await getDoc(env, `integrationCodes/${lookupId}`);
+    projectId = String(lookup?.projectId || "");
+  }
+
+  if (!projectId) {
+    throw Object.assign(new Error("Informe projectId ou integrationCode."), { status: 400, reason: "invalid_request" });
+  }
+
+  let project = await getDoc(env, projectPath(projectId));
+  if (!project) {
+    throw Object.assign(new Error("Projeto não encontrado."), { status: 404, reason: "project_not_found" });
+  }
+
+  project = await ensureProjectIntegrationCode(env, project);
+  if (project.status !== "active") {
+    throw Object.assign(new Error("Projeto inativo."), { status: 403, reason: "project_inactive" });
+  }
+
+  return { projectId: project.id, project };
+}
+
+function publicProjectConfigView(project) {
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    projectId: project.id,
+    integrationCode: project.integrationCode,
+    name: project.name,
+    prefix: project.prefix,
+    trial: {
+      enabled: Boolean(project.trialEnabled && Number(project.trialDays || 0) > 0),
+      days: Math.max(0, Number(project.trialDays || 0)),
+      validationHours: Math.max(1, Number(project.trialValidationHours || project.validationHours || 24)),
+      offlineHours: Math.max(0, Number(project.trialOfflineHours ?? (Number(project.offlineDays || 0) * 24)))
+    },
+    license: {
+      validationHours: Math.max(1, Number(project.validationHours || 24)),
+      offlineDays: Math.max(0, Number(project.offlineDays || 0))
+    },
+    serverTime: nowIso()
+  };
+}
+
 function normalizeLicenseStatus(license) {
   if (license.status === "active" && license.expiresAt && isPast(license.expiresAt)) {
     return { ...license, status: "expired" };
@@ -651,21 +740,33 @@ async function createProject(env, body, admin) {
 
   const id = randomId("prj");
   const createdAt = nowIso();
+  const validationHours = Math.max(1, Number(body.validationHours || 24));
+  const offlineDays = Math.max(0, Number(body.offlineDays ?? 7));
+  const trialDays = Math.max(0, Number(body.trialDays || 0));
+  const integrationCode = generateIntegrationCode();
+
   const project = {
     name,
     slug: slugify(body.slug || name) || id,
     prefix: normalizePrefix(body.prefix || name.slice(0, 4)) || "GSS",
+    integrationCode,
     description: String(body.description || "").trim(),
     status: body.status === "inactive" ? "inactive" : "active",
-    trialDays: Math.max(0, Number(body.trialDays || 0)),
-    offlineDays: Math.max(0, Number(body.offlineDays || 7)),
-    validationHours: Math.max(1, Number(body.validationHours || 24)),
+    publicCatalog: Boolean(body.publicCatalog),
+    trialEnabled: Boolean(body.trialEnabled ?? trialDays > 0),
+    trialDays,
+    trialValidationHours: Math.max(1, Number(body.trialValidationHours || validationHours)),
+    trialOfflineHours: Math.max(0, Number(body.trialOfflineHours ?? (offlineDays * 24))),
+    offlineDays,
+    validationHours,
     createdAt,
     updatedAt: createdAt
   };
 
   const saved = await setDoc(env, projectPath(id), project);
-  await writeLog(env, id, "project.created", { name: saved.name }, admin.email || admin.uid);
+  const lookupId = await sha256Hex(integrationCode);
+  await setDoc(env, `integrationCodes/${lookupId}`, { projectId: id, createdAt });
+  await writeLog(env, id, "project.created", { name: saved.name, integrationCode }, admin.email || admin.uid);
   return saved;
 }
 
@@ -690,6 +791,7 @@ async function createPlan(env, projectId, body, admin) {
     deviceLimit: Math.max(1, Number(body.deviceLimit || 1)),
     startMode,
     active: body.active !== false,
+    publicCatalog: Boolean(body.publicCatalog),
     createdAt,
     updatedAt: createdAt
   };
@@ -818,6 +920,7 @@ async function updateEntity(env, projectId, entity, id, body, admin) {
     if ("startMode" in clean && !["first_activation", "immediate"].includes(clean.startMode)) {
       clean.startMode = "first_activation";
     }
+    if ("publicCatalog" in clean) clean.publicCatalog = Boolean(clean.publicCatalog);
     if (clean.lifetime) clean.durationDays = 0;
   }
 
@@ -945,6 +1048,7 @@ function publicLicenseView(project, license, extra = {}) {
     protocolVersion: PROTOCOL_VERSION,
     valid: true,
     projectId: project.id,
+    integrationCode: project.integrationCode,
     licenseId: license.id,
     status: "active",
     planName: license.planName,
