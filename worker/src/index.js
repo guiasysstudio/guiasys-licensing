@@ -1,4 +1,6 @@
 // GuiaSys Licensing API — deploy automático via Cloudflare Workers Builds
+const PROTOCOL_VERSION = "GSL-v1";
+const API_VERSION = "1.4.0";
 const ALLOWED_ORIGINS = [
   "http://127.0.0.1:5500",
   "http://127.0.0.1:5501",
@@ -112,12 +114,12 @@ function errorResponse(origin, status, error, message, details = null) {
 async function readJson(request) {
   const contentType = request.headers.get("Content-Type") || "";
   if (!contentType.includes("application/json")) {
-    throw Object.assign(new Error("O corpo da requisição deve ser JSON."), { status: 415 });
+    throw Object.assign(new Error("O corpo da requisição deve ser JSON."), { status: 415, reason: "invalid_request" });
   }
   try {
     return await request.json();
   } catch {
-    throw Object.assign(new Error("JSON inválido."), { status: 400 });
+    throw Object.assign(new Error("JSON inválido."), { status: 400, reason: "invalid_request" });
   }
 }
 
@@ -937,21 +939,46 @@ async function dashboard(env, projectId = "", admin = null) {
   };
 }
 
+function publicLicenseView(project, license, extra = {}) {
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    valid: true,
+    projectId: project.id,
+    licenseId: license.id,
+    status: "active",
+    planName: license.planName,
+    customerName: license.customerName,
+    customerEmail: license.customerEmail,
+    activatedAt: license.activatedAt,
+    expiresAt: license.expiresAt,
+    durationDays: Number(license.durationDays || 0),
+    lifetime: Boolean(license.lifetime),
+    maxDevices: Number(license.maxDevices || 1),
+    offlineDays: Number(project.offlineDays || 0),
+    validationHours: Number(project.validationHours || 24),
+    serverTime: nowIso(),
+    ...extra
+  };
+}
+
 async function publicActivate(env, body) {
   const projectId = String(body.projectId || "");
   const licenseKey = normalizeLicenseKey(body.licenseKey);
   const deviceId = String(body.deviceId || "");
   if (!projectId || !licenseKey || !deviceId) {
-    throw Object.assign(new Error("projectId, licenseKey e deviceId são obrigatórios."), { status: 400 });
+    throw Object.assign(new Error("projectId, licenseKey e deviceId são obrigatórios."), { status: 400, reason: "invalid_request" });
   }
 
   const project = await getDoc(env, projectPath(projectId));
-  if (!project || project.status !== "active") {
-    throw Object.assign(new Error("Projeto inválido ou inativo."), { status: 404 });
+  if (!project) {
+    throw Object.assign(new Error("Projeto não encontrado."), { status: 404, reason: "project_not_found" });
+  }
+  if (project.status !== "active") {
+    throw Object.assign(new Error("Projeto inativo."), { status: 403, reason: "project_inactive" });
   }
 
   let license = await findLicenseByKey(env, projectId, licenseKey);
-  if (!license) throw Object.assign(new Error("Licença inválida."), { status: 404 });
+  if (!license) throw Object.assign(new Error("Licença inválida."), { status: 404, reason: "license_invalid" });
 
   if (["revoked", "suspended", "expired"].includes(license.status)) {
     throw Object.assign(new Error(`Licença ${license.status}.`), { status: 403, reason: license.status });
@@ -1015,21 +1042,10 @@ async function publicActivate(env, body) {
     deviceHash
   }, "api");
 
-  return {
-    valid: true,
-    projectId,
-    licenseId: license.id,
-    status: "active",
-    planName: license.planName,
-    customerName: license.customerName,
-    expiresAt: license.expiresAt,
-    lifetime: Boolean(license.lifetime),
-    maxDevices: Number(license.maxDevices || 1),
+  return publicLicenseView(project, license, {
     activeDevices: existingDevice?.active ? activeDevices.length : activeDevices.length + 1,
-    offlineDays: Number(project.offlineDays || 0),
-    validationHours: Number(project.validationHours || 24),
     serverTime: now
-  };
+  });
 }
 
 async function publicValidate(env, body) {
@@ -1037,16 +1053,19 @@ async function publicValidate(env, body) {
   const licenseKey = normalizeLicenseKey(body.licenseKey);
   const deviceId = String(body.deviceId || "");
   if (!projectId || !licenseKey || !deviceId) {
-    throw Object.assign(new Error("projectId, licenseKey e deviceId são obrigatórios."), { status: 400 });
+    throw Object.assign(new Error("projectId, licenseKey e deviceId são obrigatórios."), { status: 400, reason: "invalid_request" });
   }
 
   const project = await getDoc(env, projectPath(projectId));
-  if (!project || project.status !== "active") {
-    throw Object.assign(new Error("Projeto inválido ou inativo."), { status: 404 });
+  if (!project) {
+    throw Object.assign(new Error("Projeto não encontrado."), { status: 404, reason: "project_not_found" });
+  }
+  if (project.status !== "active") {
+    throw Object.assign(new Error("Projeto inativo."), { status: 403, reason: "project_inactive" });
   }
 
   const license = await findLicenseByKey(env, projectId, licenseKey);
-  if (!license) throw Object.assign(new Error("Licença inválida."), { status: 404 });
+  if (!license) throw Object.assign(new Error("Licença inválida."), { status: 404, reason: "license_invalid" });
 
   if (["revoked", "suspended", "expired", "pending"].includes(license.status)) {
     throw Object.assign(new Error(`Licença ${license.status}.`), { status: 403, reason: license.status });
@@ -1066,19 +1085,7 @@ async function publicValidate(env, body) {
     updatedAt: now
   });
 
-  return {
-    valid: true,
-    projectId,
-    licenseId: license.id,
-    status: "active",
-    planName: license.planName,
-    expiresAt: license.expiresAt,
-    lifetime: Boolean(license.lifetime),
-    maxDevices: Number(license.maxDevices || 1),
-    offlineDays: Number(project.offlineDays || 0),
-    validationHours: Number(project.validationHours || 24),
-    serverTime: now
-  };
+  return publicLicenseView(project, license, { serverTime: now });
 }
 
 async function publicDeactivate(env, body) {
@@ -1086,17 +1093,25 @@ async function publicDeactivate(env, body) {
   const licenseKey = normalizeLicenseKey(body.licenseKey);
   const deviceId = String(body.deviceId || "");
   if (!projectId || !licenseKey || !deviceId) {
-    throw Object.assign(new Error("projectId, licenseKey e deviceId são obrigatórios."), { status: 400 });
+    throw Object.assign(new Error("projectId, licenseKey e deviceId são obrigatórios."), { status: 400, reason: "invalid_request" });
+  }
+
+  const project = await getDoc(env, projectPath(projectId));
+  if (!project) {
+    throw Object.assign(new Error("Projeto não encontrado."), { status: 404, reason: "project_not_found" });
+  }
+  if (project.status !== "active") {
+    throw Object.assign(new Error("Projeto inativo."), { status: 403, reason: "project_inactive" });
   }
 
   const license = await findLicenseByKey(env, projectId, licenseKey);
-  if (!license) throw Object.assign(new Error("Licença inválida."), { status: 404 });
+  if (!license) throw Object.assign(new Error("Licença inválida."), { status: 404, reason: "license_invalid" });
 
   const deviceHash = await sha256Hex(deviceId);
   const path = `projects/${projectId}/devices/${deviceHash}`;
   const device = await getDoc(env, path);
   if (!device || device.licenseId !== license.id) {
-    throw Object.assign(new Error("Dispositivo não encontrado para esta licença."), { status: 404 });
+    throw Object.assign(new Error("Dispositivo não autorizado para esta licença."), { status: 403, reason: "device_not_authorized" });
   }
 
   const now = nowIso();
@@ -1113,7 +1128,7 @@ async function publicDeactivate(env, body) {
 
   await writeLog(env, projectId, "device.deactivated", { licenseId: license.id, deviceHash }, "api");
 
-  return { ok: true, deactivated: true, serverTime: now };
+  return { protocolVersion: PROTOCOL_VERSION, ok: true, deactivated: true, serverTime: now };
 }
 
 async function listAdminRecords(env) {
@@ -1379,7 +1394,8 @@ export default {
         return json({
           name: "GuiaSys Licensing API",
           status: "online",
-          version: "1.3.0"
+          version: API_VERSION,
+          protocolVersion: PROTOCOL_VERSION
         }, 200, origin);
       }
 
@@ -1387,7 +1403,8 @@ export default {
         return json({
           ok: true,
           service: "guiasys-licensing-api",
-          version: "1.3.0",
+          version: API_VERSION,
+          protocolVersion: PROTOCOL_VERSION,
           firebaseProject: env.FIREBASE_PROJECT_ID || null,
           serviceAccountConfigured: Boolean(env.FIREBASE_SERVICE_ACCOUNT_JSON),
           adminConfigured: Boolean(env.ADMIN_FIREBASE_UID)
