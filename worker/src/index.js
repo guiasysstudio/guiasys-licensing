@@ -1312,8 +1312,9 @@ async function publicActivate(env, body, origin = "") {
   const existingDevice = await getDoc(env, devicePath);
   const devices = await listCollection(env, `projects/${projectId}/devices`);
   const activeDevices = devices.filter(device => device.licenseId === license.id && device.active !== false);
+  const sameActiveDevice = Boolean(existingDevice?.active && existingDevice.licenseId === license.id);
 
-  if (!existingDevice?.active && activeDevices.length >= Number(license.maxDevices || 1)) {
+  if (!sameActiveDevice && activeDevices.length >= Number(license.maxDevices || 1)) {
     throw Object.assign(new Error("Limite de dispositivos atingido."), { status: 409, reason: "device_limit" });
   }
 
@@ -1346,7 +1347,7 @@ async function publicActivate(env, body, origin = "") {
     platform: String(body.platform || "").trim(),
     appVersion: String(body.appVersion || "").trim(),
     active: true,
-    firstActivatedAt: existingDevice?.firstActivatedAt || now,
+    firstActivatedAt: sameActiveDevice ? (existingDevice?.firstActivatedAt || now) : now,
     lastSeenAt: now,
     updatedAt: now
   });
@@ -1356,12 +1357,13 @@ async function publicActivate(env, body, origin = "") {
     licenseId: license.id,
     customerId: license.customerId,
     deviceHash,
-    type: existingDevice?.active ? "revalidate" : "activate",
+    type: sameActiveDevice ? "revalidate" : (existingDevice?.active ? "switch_license" : "activate"),
     createdAt: now
   });
 
-  await writeLog(env, projectId, "license.activated", {
+  await writeLog(env, projectId, existingDevice?.active && existingDevice.licenseId !== license.id ? "device.license_reassigned" : "license.activated", {
     licenseId: license.id,
+    previousLicenseId: existingDevice?.active && existingDevice.licenseId !== license.id ? existingDevice.licenseId : null,
     deviceHash
   }, "api");
 
@@ -1380,7 +1382,7 @@ async function publicActivate(env, body, origin = "") {
   }
 
   const view = publicLicenseView(project, license, {
-    activeDevices: existingDevice?.active ? activeDevices.length : activeDevices.length + 1,
+    activeDevices: sameActiveDevice ? activeDevices.length : activeDevices.length + 1,
     serverTime: now
   });
   return await attachSignedEntitlement(env, project, view, deviceHash);
