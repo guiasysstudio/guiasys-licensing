@@ -1248,15 +1248,13 @@ async function publicTrialStart(env, body) {
     throw Object.assign(new Error("deviceId é obrigatório para iniciar o trial."), { status: 400, reason: "invalid_request" });
   }
 
-  if (!project.trialEnabled || Number(project.trialDays || 0) <= 0) {
-    throw Object.assign(new Error("Este projeto não oferece avaliação gratuita."), { status: 403, reason: "trial_unavailable" });
-  }
-
   const deviceHash = await sha256Hex(deviceId);
   const path = `projects/${projectId}/trials/${deviceHash}`;
   let trial = await getDoc(env, path);
   const now = nowIso();
 
+  // A política atual vale para NOVOS trials. Um trial já iniciado mantém o snapshot original,
+  // mesmo se o administrador reduzir a duração ou desativar novas avaliações depois.
   if (trial) {
     if (isPast(trial.expiresAt) || trial.status === "expired") {
       if (trial.status !== "expired") {
@@ -1278,6 +1276,10 @@ async function publicTrialStart(env, body) {
       updatedAt: now
     });
     return publicTrialView(project, trial);
+  }
+
+  if (!project.trialEnabled || Number(project.trialDays || 0) <= 0) {
+    throw Object.assign(new Error("Este projeto não oferece avaliação gratuita."), { status: 403, reason: "trial_unavailable" });
   }
 
   const durationDays = Math.max(1, Number(project.trialDays || 0));
