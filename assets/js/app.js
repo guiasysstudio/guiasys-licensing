@@ -18,7 +18,8 @@ const firebaseConfig = {
 };
 
 const API_BASE = "https://guiasys-licensing-api.lindolfoandrew0.workers.dev";
-const PANEL_VERSION = "0.6.0";
+const PANEL_VERSION = "0.7.0";
+const PROTOCOL_VERSION = "GSL-v1";
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
@@ -72,6 +73,7 @@ const projectItems = [
   ["devices", "monitor", "Dispositivos", "manageDevices"],
   ["activations", "activity", "Ativações", "viewActivations"],
   ["activation-simulator", "flask", "Simulador", "manageLicenses"],
+  ["integration", "plug", "Integração", "viewIntegration"],
   ["logs", "logs", "Logs", "viewLogs"],
   ["project-settings", "settings", "Configurações", "manageProjectSettings"]
 ];
@@ -82,6 +84,7 @@ const ADMIN_PERMISSION_LABELS = {
   managePlans: "Gerenciar planos",
   manageCustomers: "Gerenciar clientes",
   manageLicenses: "Gerenciar licenças e usar o simulador",
+  viewIntegration: "Visualizar material de integração",
   manageDevices: "Gerenciar dispositivos",
   viewActivations: "Visualizar ativações",
   viewLogs: "Visualizar logs",
@@ -142,6 +145,7 @@ function iconSvg(name) {
     monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
     activity: '<path d="M3 12h4l2-7 4 14 2-7h6"/>',
     flask: '<path d="M9 3h6M10 3v6l-5 8a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-8V3"/><path d="M8 15h8"/>',
+    plug: '<path d="M8 12h8"/><path d="M9 8V4M15 8V4"/><path d="M7 8h10v3a5 5 0 0 1-5 5v4"/><path d="M9 20h6"/>',
     logs: '<path d="M6 4h12M6 9h12M6 14h12M6 19h12"/><path d="M3 4h.01M3 9h.01M3 14h.01M3 19h.01"/>'
   };
   return `<svg ${common}>${paths[name] || paths.dashboard}</svg>`;
@@ -1659,6 +1663,375 @@ async function activationSimulatorView() {
   });
 }
 
+
+function integrationPlatformNotes(platform) {
+  const notes = {
+    universal: [
+      "Use uma camada própria de licenciamento separada da lógica de negócio.",
+      "Use armazenamento seguro adequado à plataforma para a key e para o estado local da licença.",
+      "O identificador do dispositivo deve ser estável entre atualizações do aplicativo.",
+      "Nunca embuta credenciais administrativas, Service Account ou segredos do Worker."
+    ],
+    dotnet: [
+      "Crie um serviço como GuiaSysLicensingService ou um projeto reutilizável GuiaSys.Licensing.",
+      "Use HttpClient com timeout e CancellationToken; não bloqueie a UI.",
+      "No Windows, derive um Device ID estável do sistema e armazene dados sensíveis com DPAPI/ProtectedData quando aplicável.",
+      "Separe modelos de request/response, estado local e apresentação da UI.",
+      "A validação deve ocorrer no startup em background quando já houver cache válido, respeitando validationHours."
+    ],
+    web: [
+      "Use fetch/HTTPS e nunca coloque credenciais administrativas no JavaScript.",
+      "Aplicações web não devem confiar em armazenamento local para liberar longos períodos offline.",
+      "Mantenha o projectId no frontend; ele não é segredo. A key pertence ao usuário e deve ser tratada como dado sensível.",
+      "Para sites que exigem sessão permanente, prefira revalidar no backend do próprio site quando houver backend disponível."
+    ],
+    android: [
+      "Implemente a integração em um Repository/Service separado da UI.",
+      "Use Android Keystore para proteger material local quando aplicável.",
+      "Use um Device ID estável gerado pelo aplicativo e persistido com segurança; não dependa de identificadores de hardware proibidos ou instáveis.",
+      "Chamadas de rede devem ser assíncronas e a UI deve tratar claramente sem conexão, expiração e limite de dispositivos."
+    ]
+  };
+  return notes[platform] || notes.universal;
+}
+
+function integrationPlatformLabel(platform) {
+  return {
+    universal: "Universal / qualquer tecnologia",
+    dotnet: ".NET / Windows / desktop",
+    web: "Site / JavaScript",
+    android: "Android / Kotlin"
+  }[platform] || "Universal";
+}
+
+function buildIntegrationConfig(project) {
+  return {
+    protocol: PROTOCOL_VERSION,
+    apiBaseUrl: API_BASE,
+    project: {
+      name: project.name,
+      projectId: project.id,
+      prefix: project.prefix
+    },
+    policy: {
+      validationHours: Number(project.validationHours || 24),
+      offlineDays: Number(project.offlineDays || 0)
+    },
+    endpoints: {
+      activate: "/api/v1/license/activate",
+      validate: "/api/v1/license/validate",
+      deactivate: "/api/v1/license/deactivate"
+    }
+  };
+}
+
+function buildIntegrationContract(project, platform = "universal") {
+  const config = buildIntegrationConfig(project);
+  const notes = integrationPlatformNotes(platform);
+  const sampleKey = `${project.prefix || "GSS"}-XXXXX-XXXXX-XXXXX-XXXXX`;
+
+  return [
+    "GUIASYS LICENSING — CONTRATO DE INTEGRAÇÃO",
+    "============================================================",
+    `Protocolo: ${PROTOCOL_VERSION}`,
+    `Tipo de projeto alvo: ${integrationPlatformLabel(platform)}`,
+    `Projeto: ${project.name}`,
+    `Project ID: ${project.id}`,
+    `Prefixo das keys: ${project.prefix}`,
+    `API Base: ${API_BASE}`,
+    "",
+    "REGRA PRINCIPAL",
+    "------------------------------------------------------------",
+    "Este projeto deve se adaptar ao GuiaSys Licensing. Não crie um segundo sistema de licenças, não crie outro formato de key e não tente decodificar a key localmente.",
+    "A license key é um identificador aleatório. Plano, validade, cliente, dispositivos e status pertencem ao servidor GuiaSys Licensing.",
+    "",
+    "PLANOS",
+    "------------------------------------------------------------",
+    "NÃO grave no aplicativo uma lista fixa de planos ou durações.",
+    "O administrador pode criar planos de 7, 15, 25, 30, 60, 120 dias, vitalícios ou qualquer outra duração permitida pelo painel sem atualizar o aplicativo.",
+    "O aplicativo deve usar os dados reais devolvidos pela API para aquela licença: planName, durationDays, lifetime, activatedAt e expiresAt.",
+    "Alterar um plano no painel não modifica retroativamente uma licença já emitida; a licença mantém o snapshot das regras existentes no momento da emissão.",
+    "",
+    "VALIDADE DA LICENÇA",
+    "------------------------------------------------------------",
+    "issuedAt = data/hora em que a key foi gerada.",
+    "activatedAt = data/hora em que a licença começou efetivamente a valer.",
+    "expiresAt = data/hora final calculada pelo servidor.",
+    "startMode = first_activation ou immediate.",
+    "",
+    "Quando startMode = first_activation, a duração começa SOMENTE na primeira ativação bem-sucedida.",
+    "Exemplo: uma key de 30 dias pode ser gerada em 27/09 e ativada somente em 29/09. Nesse caso, activatedAt será 29/09 e expiresAt será calculado 30 dias a partir de 29/09.",
+    "O aplicativo NUNCA deve calcular validade usando a data em que a key foi criada. Ele deve exibir e respeitar activatedAt/expiresAt retornados pelo servidor.",
+    "Quando lifetime = true, expiresAt será null e a interface deve mostrar 'Vitalícia'.",
+    "",
+    "CONFIGURAÇÃO DESTE PROJETO",
+    "------------------------------------------------------------",
+    `Project ID: ${project.id}`,
+    `Validação periódica: a cada ${project.validationHours || 24} hora(s)`,
+    `Tolerância offline configurada: ${project.offlineDays || 0} dia(s)`,
+    `Exemplo visual de key: ${sampleKey}`,
+    "",
+    "ENDPOINTS",
+    "------------------------------------------------------------",
+    `POST ${API_BASE}/api/v1/license/activate`,
+    `POST ${API_BASE}/api/v1/license/validate`,
+    `POST ${API_BASE}/api/v1/license/deactivate`,
+    "",
+    "1. PRIMEIRA ATIVAÇÃO",
+    "------------------------------------------------------------",
+    "Na primeira execução sem licença local, abrir uma tela de ativação e pedir a license key.",
+    "Gerar/recuperar um Device ID estável para a máquina/dispositivo.",
+    "",
+    "Request:",
+    JSON.stringify({
+      projectId: project.id,
+      licenseKey: sampleKey,
+      deviceId: "<DEVICE_ID_ESTAVEL>",
+      deviceName: "<NOME_AMIGAVEL_DO_DISPOSITIVO>",
+      platform: "<PLATAFORMA>",
+      appVersion: "<VERSAO_DO_PROJETO>"
+    }, null, 2),
+    "",
+    "Se HTTP 200 e ok=true/valid=true, salvar a key com proteção adequada à plataforma e liberar o produto.",
+    "",
+    "Exemplo dos campos relevantes de sucesso:",
+    JSON.stringify({
+      ok: true,
+      license: {
+        protocolVersion: PROTOCOL_VERSION,
+        valid: true,
+        projectId: project.id,
+        licenseId: "lic_xxxxxxxxxxxxxxxxxxxx",
+        status: "active",
+        planName: "Mensal",
+        customerName: "Nome do cliente",
+        customerEmail: "cliente@exemplo.com",
+        issuedAt: "2026-09-27T12:00:00.000Z",
+        activatedAt: "2026-09-29T14:00:00.000Z",
+        expiresAt: "2026-10-29T14:00:00.000Z",
+        startMode: "first_activation",
+        durationDays: 30,
+        lifetime: false,
+        maxDevices: 1,
+        offlineDays: Number(project.offlineDays || 0),
+        validationHours: Number(project.validationHours || 24),
+        serverTime: "2026-09-29T14:00:00.000Z"
+      }
+    }, null, 2),
+    "",
+    "2. VALIDAÇÃO PERIÓDICA",
+    "------------------------------------------------------------",
+    "Depois de ativada, a licença deve ser revalidada pela API. Não faça uma chamada em cada ação do usuário.",
+    `Este projeto está configurado para revalidar aproximadamente a cada ${project.validationHours || 24} hora(s).`,
+    "",
+    "Request:",
+    JSON.stringify({
+      projectId: project.id,
+      licenseKey: sampleKey,
+      deviceId: "<MESMO_DEVICE_ID_DA_ATIVACAO>",
+      appVersion: "<VERSAO_DO_PROJETO>"
+    }, null, 2),
+    "",
+    "Endpoint: POST /api/v1/license/validate",
+    "Ao receber sucesso, atualizar o cache local, a última validação e os dados exibidos ao usuário.",
+    "",
+    "3. DESATIVAÇÃO",
+    "------------------------------------------------------------",
+    "Disponibilizar em 'Licença' ou 'Gerenciar licença' uma opção para desativar este dispositivo.",
+    "A desativação libera uma vaga do limite de dispositivos para uso em outra máquina.",
+    "",
+    "Request:",
+    JSON.stringify({
+      projectId: project.id,
+      licenseKey: sampleKey,
+      deviceId: "<MESMO_DEVICE_ID_DA_ATIVACAO>"
+    }, null, 2),
+    "",
+    "Endpoint: POST /api/v1/license/deactivate",
+    "",
+    "4. TELA DE LICENÇA NO PROJETO INTEGRADO",
+    "------------------------------------------------------------",
+    "Depois da ativação, criar uma área de licença que mostre:",
+    "- Nome do cliente (customerName)",
+    "- E-mail do cliente (customerEmail)",
+    "- License key armazenada pelo próprio aplicativo",
+    "- Plano (planName)",
+    "- Status",
+    "- Data de emissão (issuedAt), quando útil",
+    "- Início efetivo da validade (activatedAt)",
+    "- Validade final (expiresAt) ou 'Vitalícia'",
+    "- Limite de dispositivos (maxDevices)",
+    "- Última validação realizada pelo aplicativo",
+    "- Botão 'Desativar neste dispositivo'",
+    "",
+    "5. CÓDIGOS DE ERRO OFICIAIS",
+    "------------------------------------------------------------",
+    "invalid_request          -> requisição incompleta ou inválida",
+    "project_not_found        -> Project ID inexistente",
+    "project_inactive         -> projeto desativado no Licensing",
+    "license_invalid          -> key inexistente/incorreta",
+    "pending                  -> licença ainda não ativada para validação",
+    "expired                  -> licença expirada",
+    "suspended                -> licença suspensa pelo administrador",
+    "revoked                  -> licença revogada",
+    "device_limit             -> limite de dispositivos atingido",
+    "device_not_authorized    -> dispositivo não pertence mais à licença",
+    "network_error            -> tratar localmente quando não houver resposta HTTP",
+    "",
+    "O programa deve tratar o campo 'error' da resposta; não dependa do texto de 'message' para tomar decisões.",
+    "",
+    "6. COMPORTAMENTO DE BLOQUEIO",
+    "------------------------------------------------------------",
+    "active -> liberar normalmente.",
+    "expired -> bloquear recursos licenciados e informar necessidade de renovação.",
+    "suspended -> bloquear e informar que a licença está suspensa.",
+    "revoked -> bloquear e informar que a licença foi revogada.",
+    "device_limit -> não ativar o novo dispositivo.",
+    "device_not_authorized -> remover autorização local e solicitar ativação válida.",
+    "license_invalid -> não liberar o produto.",
+    "",
+    "7. FUNCIONAMENTO OFFLINE",
+    "------------------------------------------------------------",
+    `A política deste projeto permite até ${project.offlineDays || 0} dia(s) offline após uma validação online bem-sucedida.`,
+    "O aplicativo deve guardar a última autorização válida em armazenamento protegido pela plataforma e nunca ultrapassar expiresAt.",
+    "Se a tolerância offline terminar, exigir conexão para uma nova validação.",
+    "Uma resposta online de revogação, suspensão ou expiração sempre substitui qualquer cache local anterior.",
+    "",
+    "8. SEGURANÇA",
+    "------------------------------------------------------------",
+    "NUNCA incluir no projeto integrado:",
+    "- FIREBASE_SERVICE_ACCOUNT_JSON",
+    "- ADMIN_FIREBASE_UID",
+    "- credenciais administrativas",
+    "- segredos do Cloudflare Worker",
+    "- qualquer chave privada do servidor",
+    "",
+    "Pode ficar no aplicativo:",
+    `- API Base: ${API_BASE}`,
+    `- Project ID: ${project.id}`,
+    `- Protocolo: ${PROTOCOL_VERSION}`,
+    "Esses valores identificam a integração e não são segredos.",
+    "",
+    "9. IDENTIDADE DO DISPOSITIVO",
+    "------------------------------------------------------------",
+    "Use um Device ID estável e específico do dispositivo. Atualizar o aplicativo não deve gerar uma nova máquina.",
+    "Não use um valor aleatório novo em cada execução.",
+    "O mesmo Device ID usado em activate deve ser usado em validate e deactivate.",
+    "",
+    "10. ORIENTAÇÕES PARA ESTA TECNOLOGIA",
+    "------------------------------------------------------------",
+    ...notes.map(note => `- ${note}`),
+    "",
+    "11. CRITÉRIOS DE ACEITAÇÃO",
+    "------------------------------------------------------------",
+    "[ ] Key válida ativa o produto.",
+    "[ ] Key inválida é recusada.",
+    "[ ] O segundo dispositivo é bloqueado quando o limite é 1.",
+    "[ ] Desativar o primeiro dispositivo libera uma vaga.",
+    "[ ] Licença suspensa é bloqueada na próxima validação.",
+    "[ ] Licença revogada é bloqueada na próxima validação.",
+    "[ ] Licença expirada é bloqueada.",
+    "[ ] Reativação administrativa volta a permitir validação.",
+    "[ ] Uma licença de N dias iniciada na primeira ativação vence N dias após activatedAt, não após issuedAt.",
+    "[ ] Licença vitalícia exibe 'Vitalícia' e não inventa expiresAt.",
+    "[ ] O projeto exibe nome, e-mail, key, plano, status e período real retornado pelo servidor.",
+    "[ ] Nenhum segredo administrativo está presente no código cliente.",
+    "",
+    "12. REGRA DE COMPATIBILIDADE",
+    "------------------------------------------------------------",
+    `Implemente o protocolo ${PROTOCOL_VERSION} exatamente como descrito acima.`,
+    "Não altere o formato de key, endpoints, nomes dos estados ou semântica da validade no projeto integrado.",
+    "Se houver necessidade de mudar o protocolo, a mudança deve nascer primeiro no GuiaSys Licensing e só depois ser aplicada aos projetos clientes.",
+    "",
+    "CONFIGURAÇÃO EM JSON",
+    "------------------------------------------------------------",
+    JSON.stringify(config, null, 2)
+  ].join("\n");
+}
+
+async function integrationView() {
+  const project = selectedProject();
+  let platform = "universal";
+
+  const drawContract = () => {
+    const text = buildIntegrationContract(project, platform);
+    const pre = document.querySelector("#integration-contract");
+    if (pre) pre.textContent = text;
+    return text;
+  };
+
+  el.content.innerHTML = `
+    ${pageHeader(
+      "Integração",
+      "Material oficial para integrar " + project.name + " ao GuiaSys Licensing.",
+      '<span class="status-pill"><span class="status-dot"></span> ' + PROTOCOL_VERSION + '</span>'
+    )}
+
+    <section class="grid grid-4 integration-summary">
+      ${metric("Protocolo", PROTOCOL_VERSION, "Contrato oficial")}
+      ${metric("Prefixo", project.prefix, "Formato das keys")}
+      ${metric("Validação", (project.validationHours || 24) + "h", "Intervalo online")}
+      ${metric("Offline", (project.offlineDays || 0) + " dia(s)", "Tolerância local")}
+    </section>
+
+    <article class="card card-section integration-controls">
+      <div>
+        <span class="eyebrow">GERADOR DE INTEGRAÇÃO</span>
+        <h3>Instruções prontas para o projeto</h3>
+        <p>Escolha a tecnologia e copie o contrato completo. O outro projeto deve se adaptar a este documento.</p>
+      </div>
+      <div class="integration-actions">
+        <label class="field integration-platform">
+          <span>Tecnologia alvo</span>
+          <select id="integration-platform">
+            <option value="universal">Universal / qualquer tecnologia</option>
+            <option value="dotnet">.NET / Windows / desktop</option>
+            <option value="web">Site / JavaScript</option>
+            <option value="android">Android / Kotlin</option>
+          </select>
+        </label>
+        <button class="btn btn-primary" id="copy-integration" type="button">Copiar integração completa</button>
+        <button class="btn btn-ghost" id="copy-integration-json" type="button">Copiar JSON</button>
+      </div>
+    </article>
+
+    <section class="integration-identity card card-section">
+      <div><span>Projeto</span><strong>${e(project.name)}</strong></div>
+      <div><span>Project ID</span><code>${e(project.id)}</code></div>
+      <div><span>API</span><code>${e(API_BASE)}</code></div>
+      <div><span>Regra de planos</span><strong>Dinâmica — definida pelo servidor</strong></div>
+    </section>
+
+    <article class="card integration-document-card">
+      <div class="table-toolbar">
+        <div>
+          <span class="eyebrow">DOCUMENTO GERADO</span>
+          <h3>Contrato para copiar no chat/projeto de destino</h3>
+        </div>
+        <span class="badge">Atualiza automaticamente com este projeto</span>
+      </div>
+      <pre id="integration-contract" class="integration-contract"></pre>
+    </article>
+  `;
+
+  drawContract();
+
+  document.querySelector("#integration-platform").addEventListener("change", event => {
+    platform = event.target.value;
+    drawContract();
+  });
+
+  document.querySelector("#copy-integration").addEventListener("click", async () => {
+    await navigator.clipboard.writeText(drawContract());
+    toast("Integração completa copiada.");
+  });
+
+  document.querySelector("#copy-integration-json").addEventListener("click", async () => {
+    await navigator.clipboard.writeText(JSON.stringify(buildIntegrationConfig(project), null, 2));
+    toast("Configuração JSON copiada.");
+  });
+}
+
 async function logsView() {
   const logs = await loadEntity("logs");
   el.content.innerHTML = `
@@ -1984,6 +2357,7 @@ async function renderContent() {
       devices: devicesView,
       activations: activationsView,
       "activation-simulator": activationSimulatorView,
+      integration: integrationView,
       logs: logsView,
       "project-settings": projectSettingsView
     };
