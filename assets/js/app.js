@@ -1908,13 +1908,14 @@ function integrationPlatformNotes(platform) {
     web: [
       "Use fetch/HTTPS e nunca coloque credenciais administrativas no JavaScript.",
       "Aplicações web não devem confiar em armazenamento local para liberar longos períodos offline.",
-      "Mantenha o projectId no frontend; ele não é segredo. A key pertence ao usuário e deve ser tratada como dado sensível.",
-      "Para sites que exigem sessão permanente, prefira revalidar no backend do próprio site quando houver backend disponível."
+      "Use o integrationCode como identificador preferencial no frontend; o projectId permanece apenas para compatibilidade e também não é segredo.",
+      "Em aplicações web, não confie em LocalStorage/IndexedDB como mecanismo de segurança. Para um site licenciado, a decisão de liberar recursos deve ser validada no backend/servidor sempre que houver backend disponível.",
+      "Um frontend JavaScript puro não oferece proteção offline forte contra adulteração; nesse cenário, trate a conexão com o servidor como requisito para operações licenciadas sensíveis."
     ],
     android: [
       "Implemente a integração em um Repository/Service separado da UI.",
       "Use Android Keystore para proteger material local quando aplicável.",
-      "Use um Device ID estável gerado pelo aplicativo e persistido com segurança; não dependa de identificadores de hardware proibidos ou instáveis.",
+      "Não dependa apenas de um UUID salvo localmente, pois a desinstalação pode apagá-lo. No Android moderno, derive uma identidade estável apropriada à plataforma (por exemplo, ANDROID_ID no escopo do app/assinatura, devidamente hashado) e trate troca de assinatura, usuário ou reset de fábrica como possível mudança de dispositivo.",
       "Chamadas de rede devem ser assíncronas e a UI deve tratar claramente sem conexão, expiração e limite de dispositivos."
     ]
   };
@@ -1990,7 +1991,7 @@ function buildIntegrationContract(project, platform = "universal") {
     "REGRA DE ATUALIZAÇÕES DO PRODUTO",
     "----------------------------------------------------------------",
     "Atualizar o programa NÃO reinicia trial, NÃO consome novo dispositivo e NÃO invalida licença.",
-    "Exemplo: uma licença válida no GuiaCopy 2.1.0 continua válida no 2.2.0, 2.3.0 etc., enquanto usar o mesmo Código de Integração, a mesma key e o mesmo Device ID.",
+    `Exemplo: uma licença válida no ${project.name} 2.1.0 continua válida no 2.2.0, 2.3.0 etc., enquanto usar o mesmo Código de Integração, a mesma key e o mesmo Device ID.`,
     "appVersion é apenas metadado enviado ao servidor para auditoria/diagnóstico.",
     "",
     "CONFIGURAÇÃO DINÂMICA",
@@ -2097,7 +2098,7 @@ function buildIntegrationContract(project, platform = "universal") {
     "Quando houver licença paga ativa, mostrar:",
     "- Nome do cliente (customerName)",
     "- E-mail do cliente (customerEmail)",
-    "- License Key armazenada pelo próprio cliente",
+    "- License Key armazenada pelo próprio produto/aplicativo com a proteção adequada à plataforma",
     "- Plano (planName)",
     "- Status",
     "- Data de início real (activatedAt)",
