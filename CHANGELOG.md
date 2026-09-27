@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.9.0 — 2026-09-27
+
+### Segurança de produção
+- API atualizada para v1.6.0.
+- Cada projeto recebe par de chaves ES256 próprio para assinatura de autorização offline.
+- Respostas válidas de trial/licença passam a incluir JWS assinado e `offlineUntil`.
+- Chave pública é entregue no contrato/configuração; chave privada permanece em armazenamento interno do backend.
+- Rate limiting aplicado aos endpoints públicos de catálogo, configuração, trial e licença.
+- Integrações Web passam a validar origens cadastradas por projeto.
+- Novos erros públicos: `origin_not_allowed`, `rate_limited` e `trial_converted`.
+
+### Licenças e trial
+- Ativar licença paga converte o trial do mesmo Device ID e impede reinício para obter dias extras.
+- Corrigido o limite de dispositivos ao trocar de uma licença para outra no mesmo computador.
+- Simulador de licença passou a testar pelo Código de Integração, igual aos produtos reais.
+- Histórico de trial diferencia ativos, expirados e convertidos.
+
+### Painel e integração
+- Configuração de domínios permitidos para projetos Web.
+- Contrato oficial documenta verificação ES256, `deviceHash`, `offlineUntil`, CORS e rate limiting.
+- Painel atualizado para v0.9.0.
+
+
 ## 0.8.1 — 2026-09-27
 
 ### Integração
