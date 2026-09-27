@@ -4,8 +4,8 @@ Central universal de licenciamento multi-projeto da GuiaSys Studio.
 
 ## Estado
 
-**Painel:** v0.7.0  
-**API:** v1.4.0  
+**Painel:** v0.8.0  
+**API:** v1.5.0  
 **Protocolo público:** GSL-v1
 
 A aplicação já possui a estrutura funcional para:
@@ -30,7 +30,10 @@ A aplicação já possui a estrutura funcional para:
 - planos com regras imutáveis durante a emissão de licenças;
 - página de integração por projeto com contrato personalizado para Universal, .NET, Web e Android;
 - protocolo público versionado `GSL-v1`;
-- API pública para ativar, validar e desativar licenças.
+- código de integração permanente por projeto;
+- trial centralizado e dinâmico por projeto, com início/expiração registrados por dispositivo;
+- catálogo público opcional para futuro portal do cliente;
+- API pública para configuração, trial, ativação, validação e desativação de licenças.
 
 ## Arquitetura
 
@@ -56,9 +59,12 @@ projects/{projectId}
 ├── customers
 ├── licenses
 ├── licenseKeys
+├── trials
 ├── devices
 ├── activations
 └── logs
+
+integrationCodes/{sha256(integrationCode)}
 ```
 
 Clientes, licenças e dispositivos de um projeto não são compartilhados automaticamente com outro projeto.
@@ -97,13 +103,43 @@ Nunca versione o JSON da Service Account.
 
 ## API pública para os programas
 
-### Ativar
+O cliente integrado deve preferir o **Código de Integração** do projeto. O `projectId` permanece aceito por compatibilidade.
+
+### Configuração dinâmica
+
+`POST /api/v1/project/config`
+
+```json
+{
+  "integrationCode": "GSLI-XXXX-XXXX-XXXX"
+}
+```
+
+### Iniciar trial
+
+`POST /api/v1/trial/start`
+
+```json
+{
+  "integrationCode": "GSLI-XXXX-XXXX-XXXX",
+  "deviceId": "identificador-estavel-da-maquina",
+  "deviceName": "PC Principal",
+  "platform": "Windows",
+  "appVersion": "1.0.0"
+}
+```
+
+### Validar trial
+
+`POST /api/v1/trial/validate`
+
+### Ativar licença
 
 `POST /api/v1/license/activate`
 
 ```json
 {
-  "projectId": "prj_xxx",
+  "integrationCode": "GSLI-XXXX-XXXX-XXXX",
   "licenseKey": "GPL-XXXXX-XXXXX-XXXXX-XXXXX",
   "deviceId": "identificador-estavel-da-maquina",
   "deviceName": "PC Principal",
@@ -112,13 +148,19 @@ Nunca versione o JSON da Service Account.
 }
 ```
 
-### Validar
+### Validar licença
 
 `POST /api/v1/license/validate`
 
-### Desativar
+### Desativar licença neste dispositivo
 
 `POST /api/v1/license/deactivate`
+
+### Catálogo público
+
+`GET /api/v1/catalog`
+
+Retorna somente projetos e planos explicitamente marcados para aparecer no futuro portal do cliente.
 
 ## Segurança
 
@@ -164,3 +206,13 @@ A resposta pública inclui, entre outros campos:
 - `serverTime`
 
 Cada projeto possui uma página **Integração** que gera as instruções completas e personalizadas para serem entregues ao projeto de destino.
+
+
+### Regra de trial
+
+- O primeiro início do trial exige internet.
+- O servidor registra `startedAt` e `expiresAt`.
+- Atualização ou reinstalação não reinicia o trial para o mesmo Device ID.
+- Alterar a duração no painel afeta novos trials; trials já iniciados preservam o snapshot original.
+- O produto nunca deve funcionar além de `expiresAt`, mesmo offline.
+- Uma licença paga ativa passa a comandar o acesso e não soma dias restantes do trial.
