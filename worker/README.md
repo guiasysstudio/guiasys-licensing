@@ -20,10 +20,23 @@ Todos exigem Firebase ID Token do administrador em `Authorization: Bearer <token
 - emissão e ações de licenças
 - leitura de dispositivos, ativações e logs
 
-## Endpoints para aplicativos
+## Endpoints públicos
 
+- `GET /api/v1/catalog`
+- `POST /api/v1/project/config`
+- `POST /api/v1/trial/start`
+- `POST /api/v1/trial/validate`
 - `POST /api/v1/license/activate`
 - `POST /api/v1/license/validate`
 - `POST /api/v1/license/deactivate`
 
 Os dados permanecem isolados em `projects/{projectId}/...`.
+
+
+## Hardening
+
+- Rate limiting por IP/rota nos endpoints públicos.
+- CORS por origem configurada em cada projeto Web.
+- Entitlements offline assinados com ES256.
+- Chave privada de assinatura nunca é entregue ao cliente.
+- Trial convertido em licença paga não pode ser reiniciado.
