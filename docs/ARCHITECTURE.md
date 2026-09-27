@@ -35,9 +35,10 @@ Administrador
 Programa GuiaSys
   -> integrationCode + key/deviceId
   -> Worker
-  -> valida licença
+  -> valida licença/trial
   -> Firestore
-  -> resposta de licença
+  -> assina entitlement ES256
+  -> resposta + offlineUntil + JWS
 ```
 
 ## Modelo de dados
@@ -54,6 +55,10 @@ projects/{projectId}/trials/{sha256(deviceId)}
 projects/{projectId}/devices/{sha256(deviceId)}
 projects/{projectId}/activations/{activationId}
 projects/{projectId}/logs/{logId}
+projects/{projectId}/internal/signing
+
+integrationCodes/{sha256(integrationCode)}
+rateLimits/{sha256(client|bucket)}
 ```
 
 As coleções de cada projeto nunca são consultadas como dados globais pelos módulos do projeto. O dashboard global é a exceção administrativa e agrega os ambientes.
@@ -96,3 +101,32 @@ Atualizar ou reinstalar o aplicativo não reinicia trial nem licença enquanto o
 ## Portal do cliente — fronteira futura
 
 O portal do cliente será uma aplicação separada. Ele poderá compartilhar Firebase Authentication e Firestore, mas o Worker continuará sendo a camada de autorização e regras. O catálogo público diferencia projetos e planos explicitamente disponibilizados para venda.
+
+
+## Autorização offline assinada
+
+Cada projeto possui um par ES256 (ECDSA P-256/SHA-256). A chave privada fica em `projects/{projectId}/internal/signing`, coleção que não é exposta pelo roteamento administrativo. A chave pública fica no documento do projeto e é entregue pela configuração pública/contrato.
+
+Após uma ativação ou validação bem-sucedida, o Worker assina um JWS contendo, entre outros:
+
+- protocolo;
+- tipo (`license` ou `trial`);
+- projeto e Código de Integração;
+- hash do dispositivo;
+- status;
+- datas relevantes;
+- `offlineUntil`.
+
+O cliente valida a assinatura, compara o Device ID local e respeita `offlineUntil` e `expiresAt`.
+
+## Proteção contra abuso
+
+Endpoints públicos usam rate limiting por IP e categoria de operação. O objetivo é reduzir brute force de keys e abuso sem alterar o protocolo GSL-v1.
+
+## CORS por projeto
+
+Para aplicações Web, cada projeto possui `allowedOrigins`. Requisições com cabeçalho `Origin` só são aceitas se a origem estiver na lista do projeto ou fizer parte das origens administrativas internas. Aplicações nativas sem `Origin` continuam funcionando normalmente.
+
+## Conversão de trial
+
+Ao ativar uma licença paga no mesmo Device ID, um trial existente é marcado como `converted`. Ele deixa de ser reutilizável e não soma tempo restante à licença paga.
