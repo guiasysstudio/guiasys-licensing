@@ -1479,6 +1479,7 @@ async function handleAdmin(request, env, origin, url, admin) {
         if (!admin.master && !admin.allProjects) {
           projects = projects.filter(project => admin.projectIds.includes(project.id));
         }
+        projects = await Promise.all(projects.map(project => ensureProjectIntegrationCode(env, project)));
         projects.sort((a, b) => String(a.name).localeCompare(String(b.name), "pt-BR"));
         return json({ ok: true, projects }, 200, origin);
       }
@@ -1499,7 +1500,10 @@ async function handleAdmin(request, env, origin, url, admin) {
     requireProjectAccess(admin, projectId);
 
     if (parts.length === 2) {
-      if (method === "GET") return json({ ok: true, project: await getDoc(env, projectPath(projectId)) }, 200, origin);
+      if (method === "GET") {
+        const project = await ensureProjectIntegrationCode(env, await getDoc(env, projectPath(projectId)));
+        return json({ ok: true, project }, 200, origin);
+      }
       if (method === "PATCH") {
         requirePermission(admin, "manageProjectSettings", "Você não possui permissão para alterar as configurações deste projeto.");
         const current = await getDoc(env, projectPath(projectId));
@@ -1510,13 +1514,22 @@ async function handleAdmin(request, env, origin, url, admin) {
           name: String(body.name ?? current.name).trim(),
           slug: slugify(body.slug ?? current.slug),
           prefix: normalizePrefix(body.prefix ?? current.prefix),
+          integrationCode: current.integrationCode || generateIntegrationCode(),
+          publicCatalog: body.publicCatalog != null ? Boolean(body.publicCatalog) : Boolean(current.publicCatalog),
+          trialEnabled: body.trialEnabled != null
+            ? Boolean(body.trialEnabled)
+            : Boolean(current.trialEnabled ?? Number(body.trialDays ?? current.trialDays ?? 0) > 0),
           trialDays: Math.max(0, Number(body.trialDays ?? current.trialDays ?? 0)),
+          trialValidationHours: Math.max(1, Number(body.trialValidationHours ?? current.trialValidationHours ?? body.validationHours ?? current.validationHours ?? 24)),
+          trialOfflineHours: Math.max(0, Number(body.trialOfflineHours ?? current.trialOfflineHours ?? (Number(body.offlineDays ?? current.offlineDays ?? 0) * 24))),
           offlineDays: Math.max(0, Number(body.offlineDays ?? current.offlineDays ?? 7)),
           validationHours: Math.max(1, Number(body.validationHours ?? current.validationHours ?? 24)),
           createdAt: current.createdAt,
           updatedAt: nowIso()
         };
         const saved = await setDoc(env, projectPath(projectId), next);
+        const integrationLookupId = await sha256Hex(saved.integrationCode);
+        await setDoc(env, `integrationCodes/${integrationLookupId}`, { projectId, createdAt: current.createdAt || nowIso() });
         await writeLog(env, projectId, "project.updated", { name: saved.name }, admin.email || admin.uid);
         return json({ ok: true, project: saved }, 200, origin);
       }
@@ -1573,6 +1586,15 @@ async function handleAdmin(request, env, origin, url, admin) {
       const action = parts[4];
       const body = await readJson(request).catch(() => ({}));
       return json({ ok: true, license: await licenseAction(env, projectId, entityId, action, body, admin) }, 200, origin);
+    }
+
+    if (entity === "trials" && parts.length === 5 && parts[4] === "reset" && method === "POST") {
+      const path = `${entityPath(projectId, "trials")}/${entityId}`;
+      const trial = await getDoc(env, path);
+      if (!trial) return errorResponse(origin, 404, "trial_not_found", "Trial não encontrado.");
+      await deleteDoc(env, path);
+      await writeLog(env, projectId, "trial.reset", { deviceHash: entityId }, admin.email || admin.uid);
+      return json({ ok: true, reset: true }, 200, origin);
     }
 
     if (entity === "devices" && parts.length === 5 && parts[4] === "deactivate" && method === "POST") {
