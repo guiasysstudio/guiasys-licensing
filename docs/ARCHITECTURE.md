@@ -56,3 +56,20 @@ projects/{projectId}/logs/{logId}
 ```
 
 As coleções de cada projeto nunca são consultadas como dados globais pelos módulos do projeto. O dashboard global é a exceção administrativa e agrega os ambientes.
+
+
+## Contrato de integração
+
+O contrato público atual é `GSL-v1`.
+
+Um projeto cliente conhece somente:
+
+- API base pública;
+- `projectId`;
+- versão do protocolo;
+- license key fornecida pelo usuário;
+- Device ID estável gerado pelo cliente.
+
+Planos e regras comerciais permanecem no servidor. O cliente recebe o estado efetivo da licença por `activate` e `validate`.
+
+A página `Integração` de cada projeto gera o documento oficial que deve ser seguido pelo projeto de destino. Mudanças incompatíveis no protocolo exigem uma nova versão do contrato.
