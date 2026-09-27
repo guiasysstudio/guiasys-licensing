@@ -4,8 +4,9 @@ Central universal de licenciamento multi-projeto da GuiaSys Studio.
 
 ## Estado
 
-**Painel:** v0.6.0  
-**API:** v1.3.0
+**Painel:** v0.7.0  
+**API:** v1.4.0  
+**Protocolo público:** GSL-v1
 
 A aplicação já possui a estrutura funcional para:
 
@@ -27,6 +28,8 @@ A aplicação já possui a estrutura funcional para:
 - administradores adicionais por e-mail Google, com projetos e permissões limitadas;
 - campos tipados, máscaras e ajuda contextual;
 - planos com regras imutáveis durante a emissão de licenças;
+- página de integração por projeto com contrato personalizado para Universal, .NET, Web e Android;
+- protocolo público versionado `GSL-v1`;
 - API pública para ativar, validar e desativar licenças.
 
 ## Arquitetura
@@ -135,3 +138,29 @@ Nunca versione o JSON da Service Account.
 - área do cliente;
 - pacotes com múltiplos produtos;
 - billing e automações comerciais.
+
+
+## Protocolo GSL-v1
+
+O projeto integrado não decodifica a key e não mantém uma tabela fixa de planos. A key identifica uma licença; o Worker devolve o entitlement real dessa licença.
+
+A resposta pública inclui, entre outros campos:
+
+- `protocolVersion`
+- `projectId`
+- `licenseId`
+- `planName`
+- `customerName`
+- `customerEmail`
+- `issuedAt`
+- `activatedAt`
+- `expiresAt`
+- `startMode`
+- `durationDays`
+- `lifetime`
+- `maxDevices`
+- `offlineDays`
+- `validationHours`
+- `serverTime`
+
+Cada projeto possui uma página **Integração** que gera as instruções completas e personalizadas para serem entregues ao projeto de destino.
