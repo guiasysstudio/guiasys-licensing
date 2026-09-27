@@ -18,7 +18,7 @@ const firebaseConfig = {
 };
 
 const API_BASE = "https://guiasys-licensing-api.lindolfoandrew0.workers.dev";
-const PANEL_VERSION = "0.8.0";
+const PANEL_VERSION = "0.8.1";
 const PROTOCOL_VERSION = "GSL-v1";
 
 const firebaseApp = initializeApp(firebaseConfig);
@@ -732,10 +732,10 @@ function projectForm(project = {}) {
     <div class="form-grid form-grid-2">
       <label class="field">
         ${fieldTitle("Nome do projeto *", "Nome que identifica o produto dentro do GuiaSys Licensing.")}
-        <input name="name" required maxlength="80" value="${e(project.name || "")}" placeholder="Ex.: GuiaPlay">
+        <input name="name" required maxlength="80" value="${e(project.name || "")}" placeholder="Ex.: MeuProduto">
       </label>
       <label class="field">
-        ${fieldTitle("Prefixo da key *", "Sigla usada no início das chaves geradas. Exemplo: GPL-XXXXX-... para GuiaPlay.")}
+        ${fieldTitle("Prefixo da key *", "Sigla usada no início das chaves geradas. Exemplo: APP-XXXXX-... para um produto com prefixo APP.")}
         <input name="prefix" required maxlength="8" data-mask="prefix" value="${e(project.prefix || "")}" placeholder="GPL">
       </label>
       <label class="field">
@@ -1917,6 +1917,20 @@ function integrationPlatformNotes(platform) {
       "Use Android Keystore para proteger material local quando aplicável.",
       "Não dependa apenas de um UUID salvo localmente, pois a desinstalação pode apagá-lo. No Android moderno, derive uma identidade estável apropriada à plataforma (por exemplo, ANDROID_ID no escopo do app/assinatura, devidamente hashado) e trate troca de assinatura, usuário ou reset de fábrica como possível mudança de dispositivo.",
       "Chamadas de rede devem ser assíncronas e a UI deve tratar claramente sem conexão, expiração e limite de dispositivos."
+    ],
+    ios: [
+      "Implemente a integração em uma camada Service/Repository separada da UI.",
+      "Use Keychain para armazenar License Key, estado local e material de autorização sensível.",
+      "Não dependa de um identificador de hardware privado. Use uma identidade estável compatível com as regras da Apple e trate restauração/reset/troca de conta como possível mudança de dispositivo.",
+      "Use URLSession/async-await para chamadas HTTPS e aplique no cliente as datas startedAt/expiresAt/activatedAt retornadas pelo servidor.",
+      "Atualização pela App Store não deve gerar novo Device ID nem reiniciar trial/licença."
+    ],
+    flutter: [
+      "Centralize o licenciamento em um service/repository Dart separado da camada de apresentação.",
+      "Use armazenamento seguro nativo por plataforma (Keychain no iOS e Keystore no Android) por meio de um mecanismo apropriado; não trate SharedPreferences como armazenamento seguro.",
+      "O Device ID deve permanecer estável entre atualizações e seguir as regras específicas de Android/iOS quando o app for compilado para cada plataforma.",
+      "Use HTTP assíncrono com timeout e tratamento explícito dos estados offline, expired, suspended, revoked e device_limit.",
+      "Não duplique regras do GSL-v1 em widgets/telas; a UI apenas apresenta o estado devolvido pela camada de licenciamento."
     ]
   };
   return notes[platform] || notes.universal;
@@ -1926,8 +1940,10 @@ function integrationPlatformLabel(platform) {
   return {
     universal: "Universal / qualquer tecnologia",
     dotnet: ".NET / Windows / desktop",
-    web: "Site / JavaScript",
-    android: "Android / Kotlin"
+    web: "Site / JavaScript / TypeScript",
+    android: "Android / Kotlin",
+    ios: "iOS / Swift",
+    flutter: "Flutter / Dart"
   }[platform] || "Universal";
 }
 
@@ -2237,8 +2253,10 @@ async function integrationView() {
           <select id="integration-platform">
             <option value="universal">Universal / qualquer tecnologia</option>
             <option value="dotnet">.NET / Windows / desktop</option>
-            <option value="web">Site / JavaScript</option>
+            <option value="web">Site / JavaScript / TypeScript</option>
             <option value="android">Android / Kotlin</option>
+            <option value="ios">iOS / Swift</option>
+            <option value="flutter">Flutter / Dart</option>
           </select>
         </label>
         <button class="btn btn-primary" id="copy-integration" type="button">Copiar integração completa</button>
