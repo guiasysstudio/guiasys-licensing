@@ -18,7 +18,7 @@ const firebaseConfig = {
 };
 
 const API_BASE = "https://guiasys-licensing-api.lindolfoandrew0.workers.dev";
-const PANEL_VERSION = "0.7.0";
+const PANEL_VERSION = "0.8.0";
 const PROTOCOL_VERSION = "GSL-v1";
 
 const firebaseApp = initializeApp(firebaseConfig);
@@ -73,6 +73,7 @@ const projectItems = [
   ["devices", "monitor", "Dispositivos", "manageDevices"],
   ["activations", "activity", "Ativações", "viewActivations"],
   ["activation-simulator", "flask", "Simulador", "manageLicenses"],
+  ["trial", "trial", "Trial / Avaliação", "manageTrial"],
   ["integration", "plug", "Integração", "viewIntegration"],
   ["logs", "logs", "Logs", "viewLogs"],
   ["project-settings", "settings", "Configurações", "manageProjectSettings"]
@@ -84,6 +85,7 @@ const ADMIN_PERMISSION_LABELS = {
   managePlans: "Gerenciar planos",
   manageCustomers: "Gerenciar clientes",
   manageLicenses: "Gerenciar licenças e usar o simulador",
+  manageTrial: "Gerenciar trial / avaliação gratuita",
   viewIntegration: "Visualizar material de integração",
   manageDevices: "Gerenciar dispositivos",
   viewActivations: "Visualizar ativações",
@@ -146,6 +148,7 @@ function iconSvg(name) {
     activity: '<path d="M3 12h4l2-7 4 14 2-7h6"/>',
     flask: '<path d="M9 3h6M10 3v6l-5 8a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-8V3"/><path d="M8 15h8"/>',
     plug: '<path d="M8 12h8"/><path d="M9 8V4M15 8V4"/><path d="M7 8h10v3a5 5 0 0 1-5 5v4"/><path d="M9 20h6"/>',
+    trial: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/><path d="M8 3.5 6.5 2M16 3.5 17.5 2"/>',
     logs: '<path d="M6 4h12M6 9h12M6 14h12M6 19h12"/><path d="M3 4h.01M3 9h.01M3 14h.01M3 19h.01"/>'
   };
   return `<svg ${common}>${paths[name] || paths.dashboard}</svg>`;
@@ -744,16 +747,16 @@ function projectForm(project = {}) {
         </select>
       </label>
       <label class="field">
-        ${fieldTitle("Dias de trial", "Quantidade de dias de avaliação gratuita. Use 0 para não oferecer trial.")}
-        <input name="trialDays" inputmode="numeric" data-mask="integer" data-max-digits="4" value="${e(project.trialDays ?? 0)}">
-      </label>
-      <label class="field">
         ${fieldTitle("Dias permitidos offline", "Período máximo que o aplicativo pode continuar funcionando sem conseguir validar a licença pela internet.")}
         <input name="offlineDays" inputmode="numeric" data-mask="integer" data-max-digits="4" value="${e(project.offlineDays ?? 7)}">
       </label>
       <label class="field">
         ${fieldTitle("Intervalo de validação (horas)", "Frequência com que o aplicativo deve consultar o servidor para confirmar se a licença continua válida.")}
         <input name="validationHours" inputmode="numeric" data-mask="integer" data-max-digits="4" value="${e(project.validationHours ?? 24)}">
+      </label>
+      <label class="field check-field">
+        <input name="publicCatalog" type="checkbox" value="true" ${project.publicCatalog ? "checked" : ""}>
+        ${fieldTitle("Disponível no portal do cliente", "Quando ativado, este produto poderá aparecer no futuro site GuiaSys Licensing Client. Somente planos marcados para venda serão exibidos.")}
       </label>
       <label class="field field-full">
         ${fieldTitle("Descrição", "Descrição interna para ajudar a identificar o projeto.")}
@@ -763,10 +766,10 @@ function projectForm(project = {}) {
   `;
 }
 
-function projectPayload(values) {
+function projectPayload(values, form = null) {
   return {
     ...values,
-    trialDays: Number(values.trialDays || 0),
+    publicCatalog: form ? form.elements.publicCatalog?.checked === true : Boolean(values.publicCatalog),
     offlineDays: Number(values.offlineDays || 0),
     validationHours: Math.max(1, Number(values.validationHours || 24))
   };
@@ -779,10 +782,10 @@ function openProjectCreate() {
     body: projectForm(),
     submitLabel: "Criar projeto",
     wide: true,
-    onSubmit: async values => {
+    onSubmit: async (values, form) => {
       const data = await api("/api/v1/admin/projects", {
         method: "POST",
-        body: JSON.stringify(projectPayload(values))
+        body: JSON.stringify(projectPayload(values, form))
       });
       state.projects.push(data.project);
       state.projects.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
@@ -804,10 +807,10 @@ function openProjectEdit(project) {
     body: projectForm(project),
     submitLabel: "Salvar alterações",
     wide: true,
-    onSubmit: async values => {
+    onSubmit: async (values, form) => {
       const data = await api(`/api/v1/admin/projects/${encodeURIComponent(project.id)}`, {
         method: "PATCH",
-        body: JSON.stringify(projectPayload(values))
+        body: JSON.stringify(projectPayload(values, form))
       });
       const index = state.projects.findIndex(item => item.id === project.id);
       state.projects[index] = data.project;
@@ -910,6 +913,10 @@ function planForm(plan = {}) {
         <input name="active" type="checkbox" value="true" ${plan.active !== false ? "checked" : ""}>
         ${fieldTitle("Plano ativo", "Planos inativos deixam de aparecer para novas emissões, mas licenças já emitidas continuam existindo.")}
       </label>
+      <label class="field check-field">
+        <input name="publicCatalog" type="checkbox" value="true" ${plan.publicCatalog ? "checked" : ""}>
+        ${fieldTitle("Disponível para venda no portal", "Quando ativado, este plano poderá ser exibido no GuiaSys Licensing Client se o projeto também estiver público.")}
+      </label>
       <label class="field field-full">
         ${fieldTitle("Descrição", "Informação interna sobre o plano.")}
         <textarea name="description" rows="3">${e(plan.description || "")}</textarea>
@@ -927,7 +934,7 @@ async function plansView() {
     <article class="card table-shell">
       <div class="table-toolbar"><h3>Planos cadastrados</h3><span class="badge">${plans.length} registro(s)</span></div>
       ${table(
-        ["Plano", "Preço", "Duração", "Dispositivos", "Status", ""],
+        ["Plano", "Preço", "Duração", "Dispositivos", "Status", "Portal", ""],
         plans.map(plan => `
           <tr>
             <td><strong>${e(plan.name)}</strong><small>${e(plan.description || "")}</small></td>
@@ -935,6 +942,7 @@ async function plansView() {
             <td>${plan.lifetime ? '<span class="badge badge-success">Vitalício</span>' : `${e(plan.durationDays)} dias`}</td>
             <td>${e(plan.deviceLimit)}</td>
             <td>${plan.active ? '<span class="badge badge-success">Ativo</span>' : '<span class="badge badge-muted">Inativo</span>'}</td>
+            <td>${plan.publicCatalog ? '<span class="badge badge-success">Venda</span>' : '<span class="badge badge-muted">Oculto</span>'}</td>
             <td class="table-actions"><button class="btn btn-ghost btn-sm edit-plan" data-id="${e(plan.id)}">Editar</button><button class="btn btn-ghost btn-sm delete-plan" data-id="${e(plan.id)}">Excluir</button></td>
           </tr>
         `),
@@ -971,7 +979,8 @@ function openPlan(plan = null) {
         deviceLimit: Number(values.deviceLimit || 1),
         startMode: values.startMode || "first_activation",
         lifetime: form.elements.lifetime.checked,
-        active: form.elements.active.checked
+        active: form.elements.active.checked,
+        publicCatalog: form.elements.publicCatalog.checked
       };
       const path = plan
         ? `/api/v1/admin/projects/${state.selectedProjectId}/plans/${plan.id}`
@@ -2071,10 +2080,11 @@ async function projectSettingsView() {
 
   document.querySelector("#project-settings-form").addEventListener("submit", async event => {
     event.preventDefault();
-    const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form).entries());
     const data = await api(`/api/v1/admin/projects/${project.id}`, {
       method: "PATCH",
-      body: JSON.stringify(projectPayload(values))
+      body: JSON.stringify(projectPayload(values, form))
     });
     state.projects[state.projects.findIndex(p => p.id === project.id)] = data.project;
     renderProjectSwitcher();
