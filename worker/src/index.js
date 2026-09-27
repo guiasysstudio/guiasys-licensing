@@ -1917,13 +1917,26 @@ async function handleAdmin(request, env, origin, url, admin) {
   return errorResponse(origin, 404, "not_found", "Rota administrativa não encontrada.");
 }
 
+function isPublicApiPath(pathname) {
+  return [
+    "/api/v1/catalog",
+    "/api/v1/project/config",
+    "/api/v1/trial/start",
+    "/api/v1/trial/validate",
+    "/api/v1/license/activate",
+    "/api/v1/license/validate",
+    "/api/v1/license/deactivate"
+  ].includes(pathname);
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const origin = request.headers.get("Origin") || "";
+    const publicApi = isPublicApiPath(url.pathname);
 
     if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: corsHeaders(origin) });
+      return new Response(null, { status: 204, headers: corsHeaders(origin, publicApi) });
     }
 
     try {
@@ -1944,24 +1957,32 @@ export default {
           protocolVersion: PROTOCOL_VERSION,
           firebaseProject: env.FIREBASE_PROJECT_ID || null,
           serviceAccountConfigured: Boolean(env.FIREBASE_SERVICE_ACCOUNT_JSON),
-          adminConfigured: Boolean(env.ADMIN_FIREBASE_UID)
+          adminConfigured: Boolean(env.ADMIN_FIREBASE_UID),
+          offlineEntitlements: "ES256"
         }, 200, origin);
       }
 
       if (request.method === "GET" && url.pathname === "/api/v1/catalog") {
-        return json({ ok: true, catalog: await publicCatalog(env) }, 200, origin);
+        await enforceRateLimit(env, request, "catalog", 120, 60);
+        return json({ ok: true, catalog: await publicCatalog(env) }, 200, origin, true);
       }
 
       if (request.method === "POST" && url.pathname === "/api/v1/project/config") {
-        return json({ ok: true, project: await publicProjectConfig(env, await readJson(request)) }, 200, origin);
+        await enforceRateLimit(env, request, "project-config", 120, 60);
+        const body = await readJson(request);
+        return json({ ok: true, project: await publicProjectConfig(env, body, origin) }, 200, origin, true);
       }
 
       if (request.method === "POST" && url.pathname === "/api/v1/trial/start") {
-        return json({ ok: true, trial: await publicTrialStart(env, await readJson(request)) }, 200, origin);
+        await enforceRateLimit(env, request, "trial-start", 20, 600);
+        const body = await readJson(request);
+        return json({ ok: true, trial: await publicTrialStart(env, body, origin) }, 200, origin, true);
       }
 
       if (request.method === "POST" && url.pathname === "/api/v1/trial/validate") {
-        return json({ ok: true, trial: await publicTrialValidate(env, await readJson(request)) }, 200, origin);
+        await enforceRateLimit(env, request, "trial-validate", 120, 300);
+        const body = await readJson(request);
+        return json({ ok: true, trial: await publicTrialValidate(env, body, origin) }, 200, origin, true);
       }
 
       if (url.pathname.startsWith("/api/v1/admin/")) {
@@ -1971,18 +1992,24 @@ export default {
       }
 
       if (request.method === "POST" && url.pathname === "/api/v1/license/activate") {
-        return json({ ok: true, license: await publicActivate(env, await readJson(request)) }, 200, origin);
+        await enforceRateLimit(env, request, "license-activate", 30, 600);
+        const body = await readJson(request);
+        return json({ ok: true, license: await publicActivate(env, body, origin) }, 200, origin, true);
       }
 
       if (request.method === "POST" && url.pathname === "/api/v1/license/validate") {
-        return json({ ok: true, license: await publicValidate(env, await readJson(request)) }, 200, origin);
+        await enforceRateLimit(env, request, "license-validate", 180, 300);
+        const body = await readJson(request);
+        return json({ ok: true, license: await publicValidate(env, body, origin) }, 200, origin, true);
       }
 
       if (request.method === "POST" && url.pathname === "/api/v1/license/deactivate") {
-        return json({ ok: true, result: await publicDeactivate(env, await readJson(request)) }, 200, origin);
+        await enforceRateLimit(env, request, "license-deactivate", 30, 600);
+        const body = await readJson(request);
+        return json({ ok: true, result: await publicDeactivate(env, body, origin) }, 200, origin, true);
       }
 
-      return errorResponse(origin, 404, "not_found", "Rota não encontrada.");
+      return errorResponse(origin, 404, "not_found", "Rota não encontrada.", null, publicApi);
     } catch (error) {
       console.error(error);
       return errorResponse(
@@ -1990,7 +2017,8 @@ export default {
         Number(error.status || 500),
         error.reason || "internal_error",
         error.message || "Erro interno do servidor.",
-        error.status >= 500 ? null : error.details || null
+        error.status >= 500 ? null : error.details || null,
+        publicApi
       );
     }
   }
