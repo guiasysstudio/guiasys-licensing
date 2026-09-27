@@ -1676,6 +1676,139 @@ async function activationSimulatorView() {
 }
 
 
+async function trialView() {
+  const project = selectedProject();
+  const trials = await loadEntity("trials", true);
+  const activeTrials = trials.filter(item => item.status !== "expired" && new Date(item.expiresAt).getTime() > Date.now());
+  const expiredTrials = trials.length - activeTrials.length;
+
+  el.content.innerHTML = `
+    ${pageHeader(
+      "Trial / Avaliação",
+      "Controle centralizado do período gratuito de " + project.name + ".",
+      '<span class="badge">' + trials.length + ' dispositivo(s)</span>'
+    )}
+
+    <section class="grid grid-4">
+      ${metric("Trial", project.trialEnabled && Number(project.trialDays || 0) > 0 ? "Ativo" : "Desativado", project.trialEnabled ? (project.trialDays || 0) + " dia(s) para novos trials" : "Não oferecer avaliação")}
+      ${metric("Em avaliação", activeTrials.length, "Trials ainda não expirados")}
+      ${metric("Expirados", expiredTrials, "Histórico preservado")}
+      ${metric("Validação", (project.trialValidationHours || project.validationHours || 24) + "h", "Contato periódico com o servidor")}
+    </section>
+
+    <article class="card card-section form-page" style="margin-top:18px">
+      <div class="section-heading">
+        <div>
+          <span class="eyebrow">POLÍTICA DE AVALIAÇÃO</span>
+          <h3>Regras para novos trials</h3>
+          <p>Alterações feitas aqui valem para novos trials. Um trial já iniciado mantém a duração e a data de expiração registradas no início.</p>
+        </div>
+      </div>
+
+      <form id="trial-settings-form">
+        <div class="form-grid form-grid-2">
+          <label class="field check-field">
+            <input name="trialEnabled" type="checkbox" value="true" ${project.trialEnabled ? "checked" : ""}>
+            ${fieldTitle("Ativar avaliação gratuita", "Quando desativado, novas instalações sem licença não recebem período grátis.")}
+          </label>
+
+          <label class="field">
+            ${fieldTitle("Duração do trial (dias)", "Quantidade de dias concedida no momento em que um NOVO dispositivo inicia o trial online.")}
+            <input name="trialDays" inputmode="numeric" data-mask="integer" data-max-digits="4" value="${e(project.trialDays ?? 7)}">
+          </label>
+
+          <label class="field">
+            ${fieldTitle("Validar online a cada (horas)", "Frequência recomendada para o produto confirmar no servidor se o trial continua válido.")}
+            <input name="trialValidationHours" inputmode="numeric" data-mask="integer" data-max-digits="4" value="${e(project.trialValidationHours ?? project.validationHours ?? 24)}">
+          </label>
+
+          <label class="field">
+            ${fieldTitle("Tolerância offline (horas)", "Tempo máximo sem uma validação online. O trial nunca pode ultrapassar a data expiresAt, mesmo offline.")}
+            <input name="trialOfflineHours" inputmode="numeric" data-mask="integer" data-max-digits="5" value="${e(project.trialOfflineHours ?? project.trialValidationHours ?? project.validationHours ?? 24)}">
+          </label>
+        </div>
+
+        <div class="notice" style="margin-top:16px">
+          A primeira ativação do trial sempre exige internet. Atualizar ou reinstalar o produto não reinicia o trial para o mesmo Device ID.
+        </div>
+
+        <div class="form-page-footer">
+          <button class="btn btn-primary" type="submit">Salvar política de trial</button>
+        </div>
+      </form>
+    </article>
+
+    <article class="card table-shell" style="margin-top:18px">
+      <div class="table-toolbar">
+        <div><span class="eyebrow">HISTÓRICO</span><h3>Dispositivos que usaram trial</h3></div>
+        <span class="badge">${trials.length} registro(s)</span>
+      </div>
+      ${table(
+        ["Dispositivo", "Início", "Expiração", "Duração", "Versão", "Último contato", "Status", ""],
+        trials.map(trial => {
+          const expired = trial.status === "expired" || new Date(trial.expiresAt).getTime() <= Date.now();
+          return `
+            <tr>
+              <td><strong>${e(trial.deviceName || "Dispositivo")}</strong><small>${e(trial.platform || "")}</small></td>
+              <td>${formatDate(trial.startedAt, true)}</td>
+              <td>${formatDate(trial.expiresAt, true)}</td>
+              <td>${e(trial.durationDays || 0)} dia(s)</td>
+              <td>${e(trial.appVersion || "—")}</td>
+              <td>${formatDate(trial.lastSeenAt, true)}</td>
+              <td>${expired ? '<span class="badge badge-danger">Expirado</span>' : '<span class="badge badge-success">Ativo</span>'}</td>
+              <td class="table-actions"><button class="btn btn-ghost btn-sm reset-trial" data-id="${e(trial.id)}" type="button">Redefinir</button></td>
+            </tr>
+          `;
+        }),
+        "Nenhum dispositivo iniciou um trial ainda."
+      )}
+    </article>
+  `;
+
+  bindInputEnhancements(el.content);
+
+  document.querySelector("#trial-settings-form").addEventListener("submit", async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form).entries());
+    const payload = {
+      trialEnabled: form.elements.trialEnabled.checked,
+      trialDays: Math.max(0, Number(values.trialDays || 0)),
+      trialValidationHours: Math.max(1, Number(values.trialValidationHours || 24)),
+      trialOfflineHours: Math.max(0, Number(values.trialOfflineHours || 0))
+    };
+
+    const data = await api(`/api/v1/admin/projects/${project.id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    });
+
+    state.projects[state.projects.findIndex(item => item.id === project.id)] = data.project;
+    invalidate(project.id);
+    toast("Política de trial atualizada.");
+    await renderContent();
+  });
+
+  document.querySelectorAll(".reset-trial").forEach(button => {
+    button.addEventListener("click", async () => {
+      const trial = trials.find(item => item.id === button.dataset.id);
+      if (!await confirmAction(
+        "Redefinir trial deste dispositivo?",
+        `O histórico de avaliação de "${trial?.deviceName || "Dispositivo"}" será removido e este Device ID poderá iniciar um NOVO trial usando a política atual. Use somente em suporte/testes.`,
+        "Redefinir"
+      )) return;
+
+      await api(`/api/v1/admin/projects/${project.id}/trials/${encodeURIComponent(button.dataset.id)}/reset`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      invalidate(project.id);
+      toast("Trial redefinido.");
+      await renderContent();
+    });
+  });
+}
+
 function integrationPlatformNotes(platform) {
   const notes = {
     universal: [
@@ -1983,6 +2116,10 @@ async function integrationView() {
     return text;
   };
 
+  const trialLabel = project.trialEnabled && Number(project.trialDays || 0) > 0
+    ? `${project.trialDays} dia(s)`
+    : "Desativado";
+
   el.content.innerHTML = `
     ${pageHeader(
       "Integração",
@@ -1992,16 +2129,25 @@ async function integrationView() {
 
     <section class="grid grid-4 integration-summary">
       ${metric("Protocolo", PROTOCOL_VERSION, "Contrato oficial")}
-      ${metric("Prefixo", project.prefix, "Formato das keys")}
-      ${metric("Validação", (project.validationHours || 24) + "h", "Intervalo online")}
-      ${metric("Offline", (project.offlineDays || 0) + " dia(s)", "Tolerância local")}
+      ${metric("Código de integração", project.integrationCode || "Gerando...", "Identificador permanente")}
+      ${metric("Trial", trialLabel, "Regra controlada pelo servidor")}
+      ${metric("Validação", (project.validationHours || 24) + "h", "Licença paga")}
     </section>
+
+    <article class="card card-section integration-code-card">
+      <div>
+        <span class="eyebrow">CÓDIGO DE INTEGRAÇÃO</span>
+        <h3>${e(project.integrationCode || "—")}</h3>
+        <p>Este código identifica ${e(project.name)} no GSL-v1. Ele pode ficar no programa, aplicativo ou site e não é uma credencial secreta.</p>
+      </div>
+      <button class="btn btn-primary" id="copy-integration-code" type="button">Copiar código</button>
+    </article>
 
     <article class="card card-section integration-controls">
       <div>
         <span class="eyebrow">GERADOR DE INTEGRAÇÃO</span>
         <h3>Instruções prontas para o projeto</h3>
-        <p>Escolha a tecnologia e copie o contrato completo. O outro projeto deve se adaptar a este documento.</p>
+        <p>Escolha a tecnologia e copie o contrato completo. O projeto de destino deve implementar exatamente estas regras.</p>
       </div>
       <div class="integration-actions">
         <label class="field integration-platform">
@@ -2022,7 +2168,7 @@ async function integrationView() {
       <div><span>Projeto</span><strong>${e(project.name)}</strong></div>
       <div><span>Project ID</span><code>${e(project.id)}</code></div>
       <div><span>API</span><code>${e(API_BASE)}</code></div>
-      <div><span>Regra de planos</span><strong>Dinâmica — definida pelo servidor</strong></div>
+      <div><span>Planos</span><strong>Dinâmicos — definidos pelo servidor</strong></div>
     </section>
 
     <article class="card integration-document-card">
@@ -2031,7 +2177,7 @@ async function integrationView() {
           <span class="eyebrow">DOCUMENTO GERADO</span>
           <h3>Contrato para copiar no chat/projeto de destino</h3>
         </div>
-        <span class="badge">Atualiza automaticamente com este projeto</span>
+        <span class="badge">Personalizado para este projeto</span>
       </div>
       <pre id="integration-contract" class="integration-contract"></pre>
     </article>
@@ -2044,6 +2190,11 @@ async function integrationView() {
     drawContract();
   });
 
+  document.querySelector("#copy-integration-code").addEventListener("click", async () => {
+    await navigator.clipboard.writeText(project.integrationCode || "");
+    toast("Código de integração copiado.");
+  });
+
   document.querySelector("#copy-integration").addEventListener("click", async () => {
     await navigator.clipboard.writeText(drawContract());
     toast("Integração completa copiada.");
@@ -2054,6 +2205,7 @@ async function integrationView() {
     toast("Configuração JSON copiada.");
   });
 }
+
 
 async function logsView() {
   const logs = await loadEntity("logs");
@@ -2381,6 +2533,7 @@ async function renderContent() {
       devices: devicesView,
       activations: activationsView,
       "activation-simulator": activationSimulatorView,
+      trial: trialView,
       integration: integrationView,
       logs: logsView,
       "project-settings": projectSettingsView
