@@ -1270,6 +1270,7 @@ function publicLicenseView(project, license, extra = {}) {
   return {
     protocolVersion: PROTOCOL_VERSION,
     valid: true,
+    type: "license",
     projectId: project.id,
     integrationCode: project.integrationCode,
     licenseId: license.id,
@@ -1291,8 +1292,8 @@ function publicLicenseView(project, license, extra = {}) {
   };
 }
 
-async function publicActivate(env, body) {
-  const { projectId, project } = await resolvePublicProject(env, body);
+async function publicActivate(env, body, origin = "") {
+  const { projectId, project } = await resolvePublicProject(env, body, origin);
   const licenseKey = normalizeLicenseKey(body.licenseKey);
   const deviceId = String(body.deviceId || "");
   if (!licenseKey || !deviceId) {
@@ -1364,14 +1365,29 @@ async function publicActivate(env, body) {
     deviceHash
   }, "api");
 
-  return publicLicenseView(project, license, {
+  const trialPath = `projects/${projectId}/trials/${deviceHash}`;
+  const existingTrial = await getDoc(env, trialPath);
+  if (existingTrial && !["expired", "converted"].includes(existingTrial.status)) {
+    await setDoc(env, trialPath, {
+      ...existingTrial,
+      status: "converted",
+      convertedAt: now,
+      convertedLicenseId: license.id,
+      lastSeenAt: now,
+      updatedAt: now
+    });
+    await writeLog(env, projectId, "trial.converted", { deviceHash, licenseId: license.id }, "api");
+  }
+
+  const view = publicLicenseView(project, license, {
     activeDevices: existingDevice?.active ? activeDevices.length : activeDevices.length + 1,
     serverTime: now
   });
+  return await attachSignedEntitlement(env, project, view, deviceHash);
 }
 
-async function publicValidate(env, body) {
-  const { projectId, project } = await resolvePublicProject(env, body);
+async function publicValidate(env, body, origin = "") {
+  const { projectId, project } = await resolvePublicProject(env, body, origin);
   const licenseKey = normalizeLicenseKey(body.licenseKey);
   const deviceId = String(body.deviceId || "");
   if (!licenseKey || !deviceId) {
@@ -1399,11 +1415,12 @@ async function publicValidate(env, body) {
     updatedAt: now
   });
 
-  return publicLicenseView(project, license, { serverTime: now });
+  const view = publicLicenseView(project, license, { serverTime: now });
+  return await attachSignedEntitlement(env, project, view, deviceHash);
 }
 
-async function publicDeactivate(env, body) {
-  const { projectId } = await resolvePublicProject(env, body);
+async function publicDeactivate(env, body, origin = "") {
+  const { projectId } = await resolvePublicProject(env, body, origin);
   const licenseKey = normalizeLicenseKey(body.licenseKey);
   const deviceId = String(body.deviceId || "");
   if (!licenseKey || !deviceId) {
@@ -1440,32 +1457,37 @@ async function publicDeactivate(env, body) {
 
 function publicTrialView(project, trial, extra = {}) {
   const now = nowIso();
+  const expired = isPast(trial.expiresAt) || trial.status === "expired";
+  const converted = trial.status === "converted";
   const remainingMs = Math.max(0, new Date(trial.expiresAt).getTime() - new Date(now).getTime());
+
   return {
     protocolVersion: PROTOCOL_VERSION,
-    valid: !isPast(trial.expiresAt) && trial.status !== "expired",
+    valid: !expired && !converted,
     type: "trial",
     projectId: project.id,
     integrationCode: project.integrationCode,
-    status: isPast(trial.expiresAt) ? "expired" : "active",
+    status: converted ? "converted" : (expired ? "expired" : "active"),
     startedAt: trial.startedAt,
     expiresAt: trial.expiresAt,
     durationDays: Number(trial.durationDays || 0),
-    remainingSeconds: Math.floor(remainingMs / 1000),
+    remainingSeconds: converted ? 0 : Math.floor(remainingMs / 1000),
     validationHours: Math.max(1, Number(trial.validationHours || project.trialValidationHours || project.validationHours || 24)),
-    offlineHours: Math.max(0, Number(trial.offlineHours ?? project.trialOfflineHours ?? (Number(project.offlineDays || 0) * 24))),
+    offlineHours: Math.max(0, Number(trial.offlineHours ?? project.trialOfflineHours ?? project.trialValidationHours ?? project.validationHours ?? 24)),
+    convertedAt: trial.convertedAt || null,
+    convertedLicenseId: trial.convertedLicenseId || null,
     serverTime: now,
     ...extra
   };
 }
 
-async function publicProjectConfig(env, body) {
-  const { project } = await resolvePublicProject(env, body);
+async function publicProjectConfig(env, body, origin = "") {
+  const { project } = await resolvePublicProject(env, body, origin);
   return publicProjectConfigView(project);
 }
 
-async function publicTrialStart(env, body) {
-  const { projectId, project } = await resolvePublicProject(env, body);
+async function publicTrialStart(env, body, origin = "") {
+  const { projectId, project } = await resolvePublicProject(env, body, origin);
   const deviceId = String(body.deviceId || "").trim();
   if (!deviceId) {
     throw Object.assign(new Error("deviceId é obrigatório para iniciar o trial."), { status: 400, reason: "invalid_request" });
@@ -1479,6 +1501,14 @@ async function publicTrialStart(env, body) {
   // A política atual vale para NOVOS trials. Um trial já iniciado mantém o snapshot original,
   // mesmo se o administrador reduzir a duração ou desativar novas avaliações depois.
   if (trial) {
+    if (trial.status === "converted") {
+      throw Object.assign(new Error("Este trial foi convertido em licença paga."), {
+        status: 403,
+        reason: "trial_converted",
+        details: { convertedAt: trial.convertedAt || null, licenseId: trial.convertedLicenseId || null }
+      });
+    }
+
     if (isPast(trial.expiresAt) || trial.status === "expired") {
       if (trial.status !== "expired") {
         trial = await setDoc(env, path, { ...trial, status: "expired", lastSeenAt: now, updatedAt: now });
@@ -1498,7 +1528,7 @@ async function publicTrialStart(env, body) {
       appVersion: String(body.appVersion || trial.appVersion || "").trim(),
       updatedAt: now
     });
-    return publicTrialView(project, trial);
+    return await attachSignedEntitlement(env, project, publicTrialView(project, trial), deviceHash);
   }
 
   if (!project.trialEnabled || Number(project.trialDays || 0) <= 0) {
@@ -1528,11 +1558,11 @@ async function publicTrialStart(env, body) {
     expiresAt: trial.expiresAt
   }, "api");
 
-  return publicTrialView(project, trial, { firstStart: true });
+  return await attachSignedEntitlement(env, project, publicTrialView(project, trial, { firstStart: true }), deviceHash);
 }
 
-async function publicTrialValidate(env, body) {
-  const { projectId, project } = await resolvePublicProject(env, body);
+async function publicTrialValidate(env, body, origin = "") {
+  const { projectId, project } = await resolvePublicProject(env, body, origin);
   const deviceId = String(body.deviceId || "").trim();
   if (!deviceId) {
     throw Object.assign(new Error("deviceId é obrigatório para validar o trial."), { status: 400, reason: "invalid_request" });
@@ -1546,6 +1576,14 @@ async function publicTrialValidate(env, body) {
   }
 
   const now = nowIso();
+  if (trial.status === "converted") {
+    throw Object.assign(new Error("Este trial foi convertido em licença paga."), {
+      status: 403,
+      reason: "trial_converted",
+      details: { convertedAt: trial.convertedAt || null, licenseId: trial.convertedLicenseId || null }
+    });
+  }
+
   if (isPast(trial.expiresAt) || trial.status === "expired") {
     if (trial.status !== "expired") {
       trial = await setDoc(env, path, { ...trial, status: "expired", lastSeenAt: now, updatedAt: now });
@@ -1565,7 +1603,7 @@ async function publicTrialValidate(env, body) {
     updatedAt: now
   });
 
-  return publicTrialView(project, trial);
+  return await attachSignedEntitlement(env, project, publicTrialView(project, trial), deviceHash);
 }
 
 async function publicCatalog(env) {
