@@ -1,6 +1,6 @@
 // GuiaSys Licensing API — deploy automático via Cloudflare Workers Builds
 const PROTOCOL_VERSION = "GSL-v1";
-const API_VERSION = "1.5.0";
+const API_VERSION = "1.6.0";
 const ALLOWED_ORIGINS = [
   "http://127.0.0.1:5500",
   "http://127.0.0.1:5501",
@@ -85,7 +85,7 @@ function permissionForEntity(entity) {
 let googleTokenCache = { token: null, expiresAt: 0 };
 let firebaseKeyCache = { keys: null, expiresAt: 0 };
 
-function corsHeaders(origin) {
+function corsHeaders(origin, publicCors = false) {
   const headers = {
     "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
@@ -93,26 +93,61 @@ function corsHeaders(origin) {
     "Vary": "Origin"
   };
 
-  if (ALLOWED_ORIGINS.includes(origin)) {
+  if (origin && (publicCors || ALLOWED_ORIGINS.includes(origin))) {
     headers["Access-Control-Allow-Origin"] = origin;
   }
 
   return headers;
 }
 
-function json(data, status = 200, origin = "") {
+function json(data, status = 200, origin = "", publicCors = false) {
   return new Response(JSON.stringify(data, null, 2), {
     status,
     headers: {
       "Content-Type": "application/json; charset=UTF-8",
       "Cache-Control": "no-store",
-      ...corsHeaders(origin)
+      ...corsHeaders(origin, publicCors)
     }
   });
 }
 
-function errorResponse(origin, status, error, message, details = null) {
-  return json({ ok: false, error, message, ...(details ? { details } : {}) }, status, origin);
+function errorResponse(origin, status, error, message, details = null, publicCors = false) {
+  return json({ ok: false, error, message, ...(details ? { details } : {}) }, status, origin, publicCors);
+}
+
+function normalizeAllowedOrigins(value) {
+  const source = Array.isArray(value)
+    ? value
+    : String(value || "").split(/[\n,;]+/);
+
+  const origins = [];
+  for (const item of source) {
+    const raw = String(item || "").trim();
+    if (!raw) continue;
+    try {
+      const url = new URL(raw);
+      if (!["http:", "https:"].includes(url.protocol)) continue;
+      const origin = url.origin;
+      if (!origins.includes(origin)) origins.push(origin);
+    } catch {
+      // Ignora entradas inválidas; o painel exibe somente as origens normalizadas salvas.
+    }
+  }
+
+  return origins.slice(0, 30);
+}
+
+function assertProjectOrigin(project, origin) {
+  if (!origin || ALLOWED_ORIGINS.includes(origin)) return;
+
+  const allowed = normalizeAllowedOrigins(project.allowedOrigins || []);
+  if (!allowed.includes(origin)) {
+    throw Object.assign(new Error("Origem web não autorizada para este projeto."), {
+      status: 403,
+      reason: "origin_not_allowed",
+      details: { origin }
+    });
+  }
 }
 
 async function readJson(request) {
@@ -191,6 +226,18 @@ function plusDays(iso, days) {
   const date = new Date(iso);
   date.setUTCDate(date.getUTCDate() + Number(days || 0));
   return date.toISOString();
+}
+
+function plusHours(iso, hours) {
+  const date = new Date(iso);
+  date.setTime(date.getTime() + Number(hours || 0) * 60 * 60 * 1000);
+  return date.toISOString();
+}
+
+function earliestIso(a, b) {
+  if (!a) return b || null;
+  if (!b) return a || null;
+  return new Date(a).getTime() <= new Date(b).getTime() ? a : b;
 }
 
 function isPast(iso) {
@@ -542,6 +589,153 @@ async function sha256Hex(value) {
   return Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
+async function enforceRateLimit(env, request, bucket, limit, windowSeconds) {
+  const forwarded = String(request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "")
+    .split(",")[0]
+    .trim();
+  const clientId = forwarded || "unknown";
+  const id = await sha256Hex(`${clientId}|${bucket}`);
+  const path = `rateLimits/${id}`;
+  const now = Date.now();
+  const current = await getDoc(env, path);
+  const windowStartedMs = current?.windowStartedAt ? new Date(current.windowStartedAt).getTime() : 0;
+  const sameWindow = current && Number.isFinite(windowStartedMs) && now - windowStartedMs < windowSeconds * 1000;
+  const count = sameWindow ? Number(current.count || 0) : 0;
+
+  if (count >= limit) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((windowSeconds * 1000 - (now - windowStartedMs)) / 1000));
+    throw Object.assign(new Error("Muitas requisições. Aguarde e tente novamente."), {
+      status: 429,
+      reason: "rate_limited",
+      details: { retryAfterSeconds }
+    });
+  }
+
+  await setDoc(env, path, {
+    bucket,
+    clientHash: await sha256Hex(clientId),
+    count: count + 1,
+    windowStartedAt: sameWindow ? current.windowStartedAt : new Date(now).toISOString(),
+    updatedAt: new Date(now).toISOString()
+  });
+}
+
+async function ensureProjectSigningKey(env, project) {
+  if (!project) return null;
+
+  const signingPath = `projects/${project.id}/internal/signing`;
+  let stored = await getDoc(env, signingPath);
+
+  if (stored?.privateJwk && stored?.publicJwk && stored?.keyId) {
+    if (project.signingKeyId === stored.keyId && project.signingPublicJwk?.x && project.signingPublicJwk?.y) {
+      return project;
+    }
+
+    return await setDoc(env, projectPath(project.id), {
+      ...project,
+      signingKeyId: stored.keyId,
+      signingAlgorithm: "ES256",
+      signingPublicJwk: stored.publicJwk,
+      updatedAt: nowIso()
+    });
+  }
+
+  const keyPair = await crypto.subtle.generateKey(
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign", "verify"]
+  );
+  const privateJwk = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
+  const publicJwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
+  const keyId = randomId("sig");
+  const createdAt = nowIso();
+
+  stored = await setDoc(env, signingPath, {
+    keyId,
+    algorithm: "ES256",
+    privateJwk,
+    publicJwk,
+    createdAt,
+    updatedAt: createdAt
+  });
+
+  return await setDoc(env, projectPath(project.id), {
+    ...project,
+    signingKeyId: stored.keyId,
+    signingAlgorithm: "ES256",
+    signingPublicJwk: stored.publicJwk,
+    updatedAt: createdAt
+  });
+}
+
+async function signProjectEntitlement(env, project, claims) {
+  project = await ensureProjectSigningKey(env, project);
+  const stored = await getDoc(env, `projects/${project.id}/internal/signing`);
+  if (!stored?.privateJwk || !stored?.keyId) {
+    throw Object.assign(new Error("Material de assinatura indisponível."), { status: 500, reason: "signing_unavailable" });
+  }
+
+  const privateKey = await crypto.subtle.importKey(
+    "jwk",
+    stored.privateJwk,
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["sign"]
+  );
+
+  const header = base64UrlEncode(JSON.stringify({
+    alg: "ES256",
+    typ: "GSL-ENT",
+    kid: stored.keyId
+  }));
+  const payload = base64UrlEncode(JSON.stringify(claims));
+  const signingInput = `${header}.${payload}`;
+  const signature = await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    privateKey,
+    new TextEncoder().encode(signingInput)
+  );
+
+  return {
+    format: "JWS",
+    algorithm: "ES256",
+    keyId: stored.keyId,
+    token: `${signingInput}.${base64UrlEncode(signature)}`
+  };
+}
+
+async function attachSignedEntitlement(env, project, view, deviceHash) {
+  const serverTime = view.serverTime || nowIso();
+  const offlineLimit = view.type === "trial"
+    ? plusHours(serverTime, Number(view.offlineHours || 0))
+    : plusDays(serverTime, Number(view.offlineDays || 0));
+  const offlineUntil = earliestIso(view.expiresAt || null, offlineLimit);
+
+  const claims = {
+    protocolVersion: PROTOCOL_VERSION,
+    type: view.type || "license",
+    projectId: project.id,
+    integrationCode: project.integrationCode,
+    deviceHash,
+    status: view.status,
+    licenseId: view.licenseId || null,
+    planName: view.planName || null,
+    lifetime: Boolean(view.lifetime),
+    issuedAt: view.issuedAt || null,
+    activatedAt: view.activatedAt || null,
+    startedAt: view.startedAt || null,
+    expiresAt: view.expiresAt || null,
+    serverTime,
+    offlineUntil
+  };
+
+  return {
+    ...view,
+    offlineUntil,
+    entitlement: await signProjectEntitlement(env, project, claims)
+  };
+}
+
 async function writeLog(env, projectId, action, details = {}, actor = "admin") {
   const id = randomId("log");
   await setDoc(env, `projects/${projectId}/logs/${id}`, {
@@ -562,29 +756,50 @@ function entityPath(projectId, entity) {
 
 async function ensureProjectIntegrationCode(env, project) {
   if (!project) return null;
-  if (project.integrationCode) return project;
 
-  const integrationCode = generateIntegrationCode();
-  const updated = await setDoc(env, projectPath(project.id), {
-    ...project,
-    integrationCode,
-    trialEnabled: Boolean(project.trialEnabled ?? Number(project.trialDays || 0) > 0),
-    trialDays: Math.max(0, Number(project.trialDays || 0)),
-    trialValidationHours: Math.max(1, Number(project.trialValidationHours || project.validationHours || 24)),
-    trialOfflineHours: Math.max(0, Number(project.trialOfflineHours ?? project.trialValidationHours ?? project.validationHours ?? 24)),
-    publicCatalog: Boolean(project.publicCatalog),
-    updatedAt: nowIso()
-  });
+  let next = project;
+  let changed = false;
+  let integrationCreated = false;
 
-  const lookupId = await sha256Hex(integrationCode);
-  await setDoc(env, `integrationCodes/${lookupId}`, {
-    projectId: project.id,
-    createdAt: nowIso()
-  });
-  return updated;
+  if (!next.integrationCode) {
+    next = { ...next, integrationCode: generateIntegrationCode() };
+    changed = true;
+    integrationCreated = true;
+  }
+
+  const defaults = {
+    trialEnabled: Boolean(next.trialEnabled ?? Number(next.trialDays || 0) > 0),
+    trialDays: Math.max(0, Number(next.trialDays || 0)),
+    trialValidationHours: Math.max(1, Number(next.trialValidationHours || next.validationHours || 24)),
+    trialOfflineHours: Math.max(0, Number(next.trialOfflineHours ?? next.trialValidationHours ?? next.validationHours ?? 24)),
+    publicCatalog: Boolean(next.publicCatalog),
+    allowedOrigins: normalizeAllowedOrigins(next.allowedOrigins || [])
+  };
+
+  for (const [key, value] of Object.entries(defaults)) {
+    if (JSON.stringify(next[key]) !== JSON.stringify(value)) {
+      next = { ...next, [key]: value };
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    next = await setDoc(env, projectPath(next.id), { ...next, updatedAt: nowIso() });
+  }
+
+  if (integrationCreated) {
+    const lookupId = await sha256Hex(next.integrationCode);
+    await setDoc(env, `integrationCodes/${lookupId}`, {
+      projectId: next.id,
+      createdAt: nowIso()
+    });
+  }
+
+  next = await ensureProjectSigningKey(env, next);
+  return next;
 }
 
-async function resolvePublicProject(env, body = {}) {
+async function resolvePublicProject(env, body = {}, origin = "") {
   const directProjectId = String(body.projectId || "").trim();
   const integrationCode = String(body.integrationCode || "").trim().toUpperCase();
 
@@ -609,6 +824,7 @@ async function resolvePublicProject(env, body = {}) {
     throw Object.assign(new Error("Projeto inativo."), { status: 403, reason: "project_inactive" });
   }
 
+  assertProjectOrigin(project, origin);
   return { projectId: project.id, project };
 }
 
@@ -619,6 +835,11 @@ function publicProjectConfigView(project) {
     integrationCode: project.integrationCode,
     name: project.name,
     prefix: project.prefix,
+    signing: {
+      algorithm: project.signingAlgorithm || "ES256",
+      keyId: project.signingKeyId,
+      publicJwk: project.signingPublicJwk
+    },
     trial: {
       enabled: Boolean(project.trialEnabled && Number(project.trialDays || 0) > 0),
       days: Math.max(0, Number(project.trialDays || 0)),
@@ -753,6 +974,7 @@ async function createProject(env, body, admin) {
     description: String(body.description || "").trim(),
     status: body.status === "inactive" ? "inactive" : "active",
     publicCatalog: Boolean(body.publicCatalog),
+    allowedOrigins: normalizeAllowedOrigins(body.allowedOrigins || []),
     trialEnabled: Boolean(body.trialEnabled ?? trialDays > 0),
     trialDays,
     trialValidationHours: Math.max(1, Number(body.trialValidationHours || validationHours)),
@@ -763,9 +985,10 @@ async function createProject(env, body, admin) {
     updatedAt: createdAt
   };
 
-  const saved = await setDoc(env, projectPath(id), project);
+  let saved = await setDoc(env, projectPath(id), project);
   const lookupId = await sha256Hex(integrationCode);
   await setDoc(env, `integrationCodes/${lookupId}`, { projectId: id, createdAt });
+  saved = await ensureProjectSigningKey(env, saved);
   await writeLog(env, id, "project.created", { name: saved.name, integrationCode }, admin.email || admin.uid);
   return saved;
 }
@@ -1518,6 +1741,7 @@ async function handleAdmin(request, env, origin, url, admin) {
           prefix: normalizePrefix(body.prefix ?? current.prefix),
           integrationCode: current.integrationCode || generateIntegrationCode(),
           publicCatalog: body.publicCatalog != null ? Boolean(body.publicCatalog) : Boolean(current.publicCatalog),
+          allowedOrigins: body.allowedOrigins != null ? normalizeAllowedOrigins(body.allowedOrigins) : normalizeAllowedOrigins(current.allowedOrigins || []),
           trialEnabled: body.trialEnabled != null
             ? Boolean(body.trialEnabled)
             : Boolean(current.trialEnabled ?? Number(body.trialDays ?? current.trialDays ?? 0) > 0),
