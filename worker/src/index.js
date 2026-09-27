@@ -571,7 +571,7 @@ async function ensureProjectIntegrationCode(env, project) {
     trialEnabled: Boolean(project.trialEnabled ?? Number(project.trialDays || 0) > 0),
     trialDays: Math.max(0, Number(project.trialDays || 0)),
     trialValidationHours: Math.max(1, Number(project.trialValidationHours || project.validationHours || 24)),
-    trialOfflineHours: Math.max(0, Number(project.trialOfflineHours ?? (Number(project.offlineDays || 0) * 24))),
+    trialOfflineHours: Math.max(0, Number(project.trialOfflineHours ?? project.trialValidationHours ?? project.validationHours ?? 24)),
     publicCatalog: Boolean(project.publicCatalog),
     updatedAt: nowIso()
   });
@@ -623,7 +623,7 @@ function publicProjectConfigView(project) {
       enabled: Boolean(project.trialEnabled && Number(project.trialDays || 0) > 0),
       days: Math.max(0, Number(project.trialDays || 0)),
       validationHours: Math.max(1, Number(project.trialValidationHours || project.validationHours || 24)),
-      offlineHours: Math.max(0, Number(project.trialOfflineHours ?? (Number(project.offlineDays || 0) * 24)))
+      offlineHours: Math.max(0, Number(project.trialOfflineHours ?? project.trialValidationHours ?? project.validationHours ?? 24))
     },
     license: {
       validationHours: Math.max(1, Number(project.validationHours || 24)),
@@ -756,7 +756,7 @@ async function createProject(env, body, admin) {
     trialEnabled: Boolean(body.trialEnabled ?? trialDays > 0),
     trialDays,
     trialValidationHours: Math.max(1, Number(body.trialValidationHours || validationHours)),
-    trialOfflineHours: Math.max(0, Number(body.trialOfflineHours ?? (offlineDays * 24))),
+    trialOfflineHours: Math.max(0, Number(body.trialOfflineHours ?? body.trialValidationHours ?? validationHours)),
     offlineDays,
     validationHours,
     createdAt,
@@ -1288,7 +1288,7 @@ async function publicTrialStart(env, body) {
     expiresAt: plusDays(now, durationDays),
     durationDays,
     validationHours: Math.max(1, Number(project.trialValidationHours || project.validationHours || 24)),
-    offlineHours: Math.max(0, Number(project.trialOfflineHours ?? (Number(project.offlineDays || 0) * 24))),
+    offlineHours: Math.max(0, Number(project.trialOfflineHours ?? project.trialValidationHours ?? project.validationHours ?? 24)),
     deviceName: String(body.deviceName || "Dispositivo").trim(),
     platform: String(body.platform || "").trim(),
     appVersion: String(body.appVersion || "").trim(),
@@ -1521,7 +1521,7 @@ async function handleAdmin(request, env, origin, url, admin) {
             : Boolean(current.trialEnabled ?? Number(body.trialDays ?? current.trialDays ?? 0) > 0),
           trialDays: Math.max(0, Number(body.trialDays ?? current.trialDays ?? 0)),
           trialValidationHours: Math.max(1, Number(body.trialValidationHours ?? current.trialValidationHours ?? body.validationHours ?? current.validationHours ?? 24)),
-          trialOfflineHours: Math.max(0, Number(body.trialOfflineHours ?? current.trialOfflineHours ?? (Number(body.offlineDays ?? current.offlineDays ?? 0) * 24))),
+          trialOfflineHours: Math.max(0, Number(body.trialOfflineHours ?? current.trialOfflineHours ?? body.trialValidationHours ?? current.trialValidationHours ?? body.validationHours ?? current.validationHours ?? 24)),
           offlineDays: Math.max(0, Number(body.offlineDays ?? current.offlineDays ?? 7)),
           validationHours: Math.max(1, Number(body.validationHours ?? current.validationHours ?? 24)),
           createdAt: current.createdAt,
