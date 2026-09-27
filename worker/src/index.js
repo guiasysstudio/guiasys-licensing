@@ -1069,19 +1069,11 @@ function publicLicenseView(project, license, extra = {}) {
 }
 
 async function publicActivate(env, body) {
-  const projectId = String(body.projectId || "");
+  const { projectId, project } = await resolvePublicProject(env, body);
   const licenseKey = normalizeLicenseKey(body.licenseKey);
   const deviceId = String(body.deviceId || "");
-  if (!projectId || !licenseKey || !deviceId) {
-    throw Object.assign(new Error("projectId, licenseKey e deviceId são obrigatórios."), { status: 400, reason: "invalid_request" });
-  }
-
-  const project = await getDoc(env, projectPath(projectId));
-  if (!project) {
-    throw Object.assign(new Error("Projeto não encontrado."), { status: 404, reason: "project_not_found" });
-  }
-  if (project.status !== "active") {
-    throw Object.assign(new Error("Projeto inativo."), { status: 403, reason: "project_inactive" });
+  if (!licenseKey || !deviceId) {
+    throw Object.assign(new Error("licenseKey e deviceId são obrigatórios."), { status: 400, reason: "invalid_request" });
   }
 
   let license = await findLicenseByKey(env, projectId, licenseKey);
@@ -1156,19 +1148,11 @@ async function publicActivate(env, body) {
 }
 
 async function publicValidate(env, body) {
-  const projectId = String(body.projectId || "");
+  const { projectId, project } = await resolvePublicProject(env, body);
   const licenseKey = normalizeLicenseKey(body.licenseKey);
   const deviceId = String(body.deviceId || "");
-  if (!projectId || !licenseKey || !deviceId) {
-    throw Object.assign(new Error("projectId, licenseKey e deviceId são obrigatórios."), { status: 400, reason: "invalid_request" });
-  }
-
-  const project = await getDoc(env, projectPath(projectId));
-  if (!project) {
-    throw Object.assign(new Error("Projeto não encontrado."), { status: 404, reason: "project_not_found" });
-  }
-  if (project.status !== "active") {
-    throw Object.assign(new Error("Projeto inativo."), { status: 403, reason: "project_inactive" });
+  if (!licenseKey || !deviceId) {
+    throw Object.assign(new Error("licenseKey e deviceId são obrigatórios."), { status: 400, reason: "invalid_request" });
   }
 
   const license = await findLicenseByKey(env, projectId, licenseKey);
@@ -1196,19 +1180,11 @@ async function publicValidate(env, body) {
 }
 
 async function publicDeactivate(env, body) {
-  const projectId = String(body.projectId || "");
+  const { projectId } = await resolvePublicProject(env, body);
   const licenseKey = normalizeLicenseKey(body.licenseKey);
   const deviceId = String(body.deviceId || "");
-  if (!projectId || !licenseKey || !deviceId) {
-    throw Object.assign(new Error("projectId, licenseKey e deviceId são obrigatórios."), { status: 400, reason: "invalid_request" });
-  }
-
-  const project = await getDoc(env, projectPath(projectId));
-  if (!project) {
-    throw Object.assign(new Error("Projeto não encontrado."), { status: 404, reason: "project_not_found" });
-  }
-  if (project.status !== "active") {
-    throw Object.assign(new Error("Projeto inativo."), { status: 403, reason: "project_inactive" });
+  if (!licenseKey || !deviceId) {
+    throw Object.assign(new Error("licenseKey e deviceId são obrigatórios."), { status: 400, reason: "invalid_request" });
   }
 
   const license = await findLicenseByKey(env, projectId, licenseKey);
@@ -1236,6 +1212,174 @@ async function publicDeactivate(env, body) {
   await writeLog(env, projectId, "device.deactivated", { licenseId: license.id, deviceHash }, "api");
 
   return { protocolVersion: PROTOCOL_VERSION, ok: true, deactivated: true, serverTime: now };
+}
+
+
+function publicTrialView(project, trial, extra = {}) {
+  const now = nowIso();
+  const remainingMs = Math.max(0, new Date(trial.expiresAt).getTime() - new Date(now).getTime());
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    valid: !isPast(trial.expiresAt) && trial.status !== "expired",
+    type: "trial",
+    projectId: project.id,
+    integrationCode: project.integrationCode,
+    status: isPast(trial.expiresAt) ? "expired" : "active",
+    startedAt: trial.startedAt,
+    expiresAt: trial.expiresAt,
+    durationDays: Number(trial.durationDays || 0),
+    remainingSeconds: Math.floor(remainingMs / 1000),
+    validationHours: Math.max(1, Number(trial.validationHours || project.trialValidationHours || project.validationHours || 24)),
+    offlineHours: Math.max(0, Number(trial.offlineHours ?? project.trialOfflineHours ?? (Number(project.offlineDays || 0) * 24))),
+    serverTime: now,
+    ...extra
+  };
+}
+
+async function publicProjectConfig(env, body) {
+  const { project } = await resolvePublicProject(env, body);
+  return publicProjectConfigView(project);
+}
+
+async function publicTrialStart(env, body) {
+  const { projectId, project } = await resolvePublicProject(env, body);
+  const deviceId = String(body.deviceId || "").trim();
+  if (!deviceId) {
+    throw Object.assign(new Error("deviceId é obrigatório para iniciar o trial."), { status: 400, reason: "invalid_request" });
+  }
+
+  if (!project.trialEnabled || Number(project.trialDays || 0) <= 0) {
+    throw Object.assign(new Error("Este projeto não oferece avaliação gratuita."), { status: 403, reason: "trial_unavailable" });
+  }
+
+  const deviceHash = await sha256Hex(deviceId);
+  const path = `projects/${projectId}/trials/${deviceHash}`;
+  let trial = await getDoc(env, path);
+  const now = nowIso();
+
+  if (trial) {
+    if (isPast(trial.expiresAt) || trial.status === "expired") {
+      if (trial.status !== "expired") {
+        trial = await setDoc(env, path, { ...trial, status: "expired", lastSeenAt: now, updatedAt: now });
+      }
+      throw Object.assign(new Error("O período de avaliação deste dispositivo já expirou."), {
+        status: 403,
+        reason: "trial_expired",
+        details: { startedAt: trial.startedAt, expiresAt: trial.expiresAt }
+      });
+    }
+
+    trial = await setDoc(env, path, {
+      ...trial,
+      lastSeenAt: now,
+      deviceName: String(body.deviceName || trial.deviceName || "Dispositivo").trim(),
+      platform: String(body.platform || trial.platform || "").trim(),
+      appVersion: String(body.appVersion || trial.appVersion || "").trim(),
+      updatedAt: now
+    });
+    return publicTrialView(project, trial);
+  }
+
+  const durationDays = Math.max(1, Number(project.trialDays || 0));
+  trial = await setDoc(env, path, {
+    deviceHash,
+    status: "active",
+    startedAt: now,
+    expiresAt: plusDays(now, durationDays),
+    durationDays,
+    validationHours: Math.max(1, Number(project.trialValidationHours || project.validationHours || 24)),
+    offlineHours: Math.max(0, Number(project.trialOfflineHours ?? (Number(project.offlineDays || 0) * 24))),
+    deviceName: String(body.deviceName || "Dispositivo").trim(),
+    platform: String(body.platform || "").trim(),
+    appVersion: String(body.appVersion || "").trim(),
+    lastSeenAt: now,
+    createdAt: now,
+    updatedAt: now
+  });
+
+  await writeLog(env, projectId, "trial.started", {
+    deviceHash,
+    durationDays,
+    expiresAt: trial.expiresAt
+  }, "api");
+
+  return publicTrialView(project, trial, { firstStart: true });
+}
+
+async function publicTrialValidate(env, body) {
+  const { projectId, project } = await resolvePublicProject(env, body);
+  const deviceId = String(body.deviceId || "").trim();
+  if (!deviceId) {
+    throw Object.assign(new Error("deviceId é obrigatório para validar o trial."), { status: 400, reason: "invalid_request" });
+  }
+
+  const deviceHash = await sha256Hex(deviceId);
+  const path = `projects/${projectId}/trials/${deviceHash}`;
+  let trial = await getDoc(env, path);
+  if (!trial) {
+    throw Object.assign(new Error("Nenhum trial foi iniciado para este dispositivo."), { status: 404, reason: "trial_not_started" });
+  }
+
+  const now = nowIso();
+  if (isPast(trial.expiresAt) || trial.status === "expired") {
+    if (trial.status !== "expired") {
+      trial = await setDoc(env, path, { ...trial, status: "expired", lastSeenAt: now, updatedAt: now });
+      await writeLog(env, projectId, "trial.expired", { deviceHash, expiresAt: trial.expiresAt }, "api");
+    }
+    throw Object.assign(new Error("O período de avaliação expirou."), {
+      status: 403,
+      reason: "trial_expired",
+      details: { startedAt: trial.startedAt, expiresAt: trial.expiresAt }
+    });
+  }
+
+  trial = await setDoc(env, path, {
+    ...trial,
+    lastSeenAt: now,
+    appVersion: String(body.appVersion || trial.appVersion || "").trim(),
+    updatedAt: now
+  });
+
+  return publicTrialView(project, trial);
+}
+
+async function publicCatalog(env) {
+  const projects = (await listCollection(env, "projects"))
+    .filter(project => project.status === "active" && project.publicCatalog === true);
+
+  const items = [];
+  for (let project of projects) {
+    project = await ensureProjectIntegrationCode(env, project);
+    const plans = (await listCollection(env, `projects/${project.id}/plans`))
+      .filter(plan => plan.active !== false && plan.publicCatalog === true)
+      .map(plan => ({
+        id: plan.id,
+        name: plan.name,
+        description: plan.description || "",
+        price: Number(plan.price || 0),
+        durationDays: Number(plan.durationDays || 0),
+        lifetime: Boolean(plan.lifetime),
+        deviceLimit: Number(plan.deviceLimit || 1),
+        startMode: plan.startMode || "first_activation"
+      }));
+
+    items.push({
+      projectId: project.id,
+      integrationCode: project.integrationCode,
+      name: project.name,
+      slug: project.slug,
+      prefix: project.prefix,
+      description: project.description || "",
+      trial: {
+        enabled: Boolean(project.trialEnabled && Number(project.trialDays || 0) > 0),
+        days: Number(project.trialDays || 0)
+      },
+      plans
+    });
+  }
+
+  items.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  return { protocolVersion: PROTOCOL_VERSION, projects: items, serverTime: nowIso() };
 }
 
 async function listAdminRecords(env) {
@@ -1516,6 +1660,22 @@ export default {
           serviceAccountConfigured: Boolean(env.FIREBASE_SERVICE_ACCOUNT_JSON),
           adminConfigured: Boolean(env.ADMIN_FIREBASE_UID)
         }, 200, origin);
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/v1/catalog") {
+        return json({ ok: true, catalog: await publicCatalog(env) }, 200, origin);
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/v1/project/config") {
+        return json({ ok: true, project: await publicProjectConfig(env, await readJson(request)) }, 200, origin);
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/v1/trial/start") {
+        return json({ ok: true, trial: await publicTrialStart(env, await readJson(request)) }, 200, origin);
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/v1/trial/validate") {
+        return json({ ok: true, trial: await publicTrialValidate(env, await readJson(request)) }, 200, origin);
       }
 
       if (url.pathname.startsWith("/api/v1/admin/")) {
