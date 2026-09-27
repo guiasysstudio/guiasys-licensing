@@ -18,7 +18,7 @@ const firebaseConfig = {
 };
 
 const API_BASE = "https://guiasys-licensing-api.lindolfoandrew0.workers.dev";
-const PANEL_VERSION = "0.8.1";
+const PANEL_VERSION = "0.9.0";
 const PROTOCOL_VERSION = "GSL-v1";
 
 const firebaseApp = initializeApp(firebaseConfig);
@@ -102,6 +102,7 @@ const statusMap = {
   expired: ["Expirada", "danger"],
   suspended: ["Suspensa", "warning"],
   revoked: ["Revogada", "danger"],
+  converted: ["Convertido em licença", "success"],
   none: ["Sem licença", "muted"]
 };
 
@@ -607,6 +608,7 @@ function logText(log) {
     "license.activated": "Licença ativada",
     "trial.started": "Trial iniciado",
     "trial.expired": "Trial expirado",
+    "trial.converted": "Trial convertido em licença",
     "trial.reset": "Trial redefinido",
     "device.deactivated": "Dispositivo desativado",
     "device.deactivated.admin": "Dispositivo removido pelo administrador"
@@ -760,6 +762,10 @@ function projectForm(project = {}) {
       <label class="field check-field">
         <input name="publicCatalog" type="checkbox" value="true" ${project.publicCatalog ? "checked" : ""}>
         ${fieldTitle("Disponível no portal do cliente", "Quando ativado, este produto poderá aparecer no futuro site GuiaSys Licensing Client. Somente planos marcados para venda serão exibidos.")}
+      </label>
+      <label class="field field-full">
+        ${fieldTitle("Domínios permitidos para integração Web", "Um domínio por linha. Sites JavaScript/TypeScript só poderão chamar a API pública deste projeto a partir destas origens. Aplicativos desktop/mobile não usam esta restrição de navegador.")}
+        <textarea name="allowedOrigins" rows="3" placeholder="https://app.exemplo.com&#10;https://www.exemplo.com">${e((project.allowedOrigins || []).join("\n"))}</textarea>
       </label>
       <label class="field field-full">
         ${fieldTitle("Descrição", "Descrição interna para ajudar a identificar o projeto.")}
@@ -1600,6 +1606,7 @@ async function activationSimulatorView() {
       <h3 style="margin-top:14px">Dados usados pelo simulador</h3>
       <div class="mini-info vertical">
         <div><span>Projeto</span><strong>${e(project.name)}</strong></div>
+        <div><span>Código de integração</span><code>${e(project.integrationCode || "—")}</code></div>
         <div><span>Project ID</span><code>${e(project.id)}</code></div>
         <div><span>Endpoints</span><code>/api/v1/license/activate · /validate · /deactivate</code></div>
       </div>
@@ -1660,7 +1667,7 @@ async function activationSimulatorView() {
 
       try {
         const payload = {
-          projectId: state.selectedProjectId,
+          integrationCode: project.integrationCode,
           licenseKey: values.licenseKey,
           deviceId: values.deviceId,
           deviceName: values.deviceName,
@@ -1760,8 +1767,9 @@ async function activationSimulatorView() {
 async function trialView() {
   const project = selectedProject();
   const trials = await loadEntity("trials", true);
-  const activeTrials = trials.filter(item => item.status !== "expired" && new Date(item.expiresAt).getTime() > Date.now());
-  const expiredTrials = trials.length - activeTrials.length;
+  const convertedTrials = trials.filter(item => item.status === "converted");
+  const activeTrials = trials.filter(item => item.status !== "converted" && item.status !== "expired" && new Date(item.expiresAt).getTime() > Date.now());
+  const expiredTrials = trials.filter(item => item.status === "expired" || (item.status !== "converted" && new Date(item.expiresAt).getTime() <= Date.now())).length;
 
   el.content.innerHTML = `
     ${pageHeader(
@@ -1772,9 +1780,9 @@ async function trialView() {
 
     <section class="grid grid-4">
       ${metric("Trial", project.trialEnabled && Number(project.trialDays || 0) > 0 ? "Ativo" : "Desativado", project.trialEnabled ? (project.trialDays || 0) + " dia(s) para novos trials" : "Não oferecer avaliação")}
-      ${metric("Em avaliação", activeTrials.length, "Trials ainda não expirados")}
+      ${metric("Em avaliação", activeTrials.length, "Trials ainda ativos")}
+      ${metric("Convertidos", convertedTrials.length, "Ativaram licença paga")}
       ${metric("Expirados", expiredTrials, "Histórico preservado")}
-      ${metric("Validação", (project.trialValidationHours || project.validationHours || 24) + "h", "Contato periódico com o servidor")}
     </section>
 
     <article class="card card-section form-page" style="margin-top:18px">
@@ -1827,7 +1835,8 @@ async function trialView() {
       ${table(
         ["Dispositivo", "Início", "Expiração", "Duração", "Versão", "Último contato", "Status", ""],
         trials.map(trial => {
-          const expired = trial.status === "expired" || new Date(trial.expiresAt).getTime() <= Date.now();
+          const converted = trial.status === "converted";
+          const expired = !converted && (trial.status === "expired" || new Date(trial.expiresAt).getTime() <= Date.now());
           return `
             <tr>
               <td><strong>${e(trial.deviceName || "Dispositivo")}</strong><small>${e(trial.platform || "")}</small></td>
@@ -1836,7 +1845,7 @@ async function trialView() {
               <td>${e(trial.durationDays || 0)} dia(s)</td>
               <td>${e(trial.appVersion || "—")}</td>
               <td>${formatDate(trial.lastSeenAt, true)}</td>
-              <td>${expired ? '<span class="badge badge-danger">Expirado</span>' : '<span class="badge badge-success">Ativo</span>'}</td>
+              <td>${converted ? '<span class="badge badge-success">Convertido</span>' : (expired ? '<span class="badge badge-danger">Expirado</span>' : '<span class="badge badge-success">Ativo</span>')}</td>
               <td class="table-actions"><button class="btn btn-ghost btn-sm reset-trial" data-id="${e(trial.id)}" type="button">Redefinir</button></td>
             </tr>
           `;
@@ -1952,6 +1961,14 @@ function buildIntegrationConfig(project) {
     protocol: PROTOCOL_VERSION,
     apiBaseUrl: API_BASE,
     integrationCode: project.integrationCode,
+    signing: {
+      algorithm: project.signingAlgorithm || "ES256",
+      keyId: project.signingKeyId || null,
+      publicJwk: project.signingPublicJwk || null
+    },
+    web: {
+      allowedOrigins: project.allowedOrigins || []
+    },
     project: {
       name: project.name,
       projectId: project.id,
