@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.1 — 2026-09-27
+
+### Integração
+- Removidas referências fixas a nomes de outros produtos no gerador; o contrato usa somente o nome do projeto atualmente aberto.
+- Exemplos de cadastro foram neutralizados para não sugerir outro produto dentro de um projeto.
+- Tecnologia Web ampliada para JavaScript/TypeScript.
+- Adicionadas tecnologias-alvo iOS/Swift e Flutter/Dart, com orientações específicas de armazenamento seguro, Device ID e rede.
+- Mantidas as opções Universal, .NET/Windows e Android/Kotlin.
+
+
 ## 0.8.0 — 2026-09-27
 
 ### Trial centralizado
