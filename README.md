@@ -4,7 +4,7 @@ Central universal de licenciamento multi-projeto da GuiaSys Studio.
 
 ## Estado
 
-**Painel:** v0.8.0  
+**Painel:** v0.8.1  
 **API:** v1.5.0  
 **Protocolo público:** GSL-v1
 
@@ -28,7 +28,7 @@ A aplicação já possui a estrutura funcional para:
 - administradores adicionais por e-mail Google, com projetos e permissões limitadas;
 - campos tipados, máscaras e ajuda contextual;
 - planos com regras imutáveis durante a emissão de licenças;
-- página de integração por projeto com contrato personalizado para Universal, .NET, Web e Android;
+- página de integração por projeto com contrato personalizado para Universal, .NET, Web, Android, iOS e Flutter;
 - protocolo público versionado `GSL-v1`;
 - código de integração permanente por projeto;
 - trial centralizado e dinâmico por projeto, com início/expiração registrados por dispositivo;
