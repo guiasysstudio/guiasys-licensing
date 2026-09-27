@@ -236,6 +236,49 @@ function e(value = "") {
     .replaceAll("'", "&#039;");
 }
 
+function base64UrlBytes(value) {
+  const padding = "=".repeat((4 - (String(value).length % 4)) % 4);
+  const base64 = (String(value) + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const binary = atob(base64);
+  return Uint8Array.from(binary, char => char.charCodeAt(0));
+}
+
+function decodeJwsJson(value) {
+  return JSON.parse(new TextDecoder().decode(base64UrlBytes(value)));
+}
+
+async function verifyEntitlementToken(token, publicJwk) {
+  if (!token || !publicJwk) return { signatureValid: false, error: "missing_token_or_public_key" };
+
+  const parts = String(token).split(".");
+  if (parts.length !== 3) return { signatureValid: false, error: "invalid_jws" };
+
+  const [headerPart, payloadPart, signaturePart] = parts;
+  const header = decodeJwsJson(headerPart);
+  const claims = decodeJwsJson(payloadPart);
+
+  if (header.alg !== "ES256") {
+    return { signatureValid: false, error: "unexpected_algorithm", header, claims };
+  }
+
+  const publicKey = await crypto.subtle.importKey(
+    "jwk",
+    publicJwk,
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["verify"]
+  );
+
+  const signatureValid = await crypto.subtle.verify(
+    { name: "ECDSA", hash: "SHA-256" },
+    publicKey,
+    base64UrlBytes(signaturePart),
+    new TextEncoder().encode(`${headerPart}.${payloadPart}`)
+  );
+
+  return { signatureValid, header, claims };
+}
+
 function initials(name = "") {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   return ((parts[0]?.[0] || "A") + (parts[1]?.[0] || "")).toUpperCase().slice(0, 2);
@@ -1653,6 +1696,24 @@ async function activationSimulatorView() {
     result.textContent = "Crie pelo menos uma licença antes de testar a ativação.";
   }
 
+  const withEntitlementVerification = async data => {
+    const entitlement = data?.license?.entitlement || data?.trial?.entitlement;
+    if (!entitlement?.token) return data;
+
+    try {
+      const verification = await verifyEntitlementToken(entitlement.token, project.signingPublicJwk);
+      return { ...data, clientVerification: verification };
+    } catch (error) {
+      return {
+        ...data,
+        clientVerification: {
+          signatureValid: false,
+          error: error.message
+        }
+      };
+    }
+  };
+
   document.querySelectorAll(".simulator-action").forEach(button => {
     button.addEventListener("click", async () => {
       if (!form.reportValidity()) return;
@@ -1683,9 +1744,10 @@ async function activationSimulatorView() {
         });
 
         const data = await response.json().catch(() => ({}));
+        const verifiedData = await withEntitlementVerification(data);
         result.textContent = JSON.stringify({
           httpStatus: response.status,
-          ...data
+          ...verifiedData
         }, null, 2);
 
         invalidate(state.selectedProjectId);
@@ -1738,9 +1800,10 @@ async function activationSimulatorView() {
         cache: "no-store"
       });
       const data = await response.json().catch(() => ({}));
+      const verifiedData = await withEntitlementVerification(data);
       result.textContent = JSON.stringify({
         httpStatus: response.status,
-        ...data
+        ...verifiedData
       }, null, 2);
       invalidate(project.id);
 
@@ -2279,7 +2342,7 @@ async function integrationView() {
       ${metric("Protocolo", PROTOCOL_VERSION, "Contrato oficial")}
       ${metric("Código de integração", project.integrationCode || "Gerando...", "Identificador permanente")}
       ${metric("Trial", trialLabel, "Regra controlada pelo servidor")}
-      ${metric("Validação", (project.validationHours || 24) + "h", "Licença paga")}
+      ${metric("Assinatura offline", project.signingAlgorithm || "ES256", project.signingKeyId ? "Chave pública pronta" : "Carregando chave")}
     </section>
 
     <article class="card card-section integration-code-card">
