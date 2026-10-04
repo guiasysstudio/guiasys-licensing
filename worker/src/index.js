@@ -7,6 +7,7 @@ import {
   decodeAdminPathSegments
 } from "./security.js";
 import { fetchWithTimeout } from "./network.js";
+import { createFirestoreAtomicClient } from "./firestore-atomic.js";
 import {
   readJsonBody,
   validateAdminPayload,
@@ -541,6 +542,17 @@ function docIdFromName(name) {
   return decodeURIComponent(String(name || "").split("/").pop() || "");
 }
 
+function decodeFirestoreDocument(data) {
+  if (!data) return null;
+  const decoded = { id: docIdFromName(data.name), ...fromFirestoreFields(data.fields || {}) };
+  Object.defineProperty(decoded, "__updateTime", {
+    value: data.updateTime || "",
+    enumerable: false,
+    configurable: false
+  });
+  return decoded;
+}
+
 async function firestoreRequest(env, path, options = {}) {
   const token = await getGoogleAccessToken(env);
   const safePath = assertFirestorePath(path);
@@ -571,8 +583,7 @@ async function firestoreRequest(env, path, options = {}) {
 
 async function getDoc(env, path) {
   const data = await firestoreRequest(env, path);
-  if (!data) return null;
-  return { id: docIdFromName(data.name), ...fromFirestoreFields(data.fields || {}) };
+  return decodeFirestoreDocument(data);
 }
 
 async function setDoc(env, path, value) {
@@ -631,13 +642,24 @@ async function listCollection(env, path) {
     }
 
     for (const doc of data.documents || []) {
-      result.push({ id: docIdFromName(doc.name), ...fromFirestoreFields(doc.fields || {}) });
+      result.push(decodeFirestoreDocument(doc));
     }
 
     pageToken = data.nextPageToken || "";
   } while (pageToken);
 
   return result;
+}
+
+function atomicClient(env) {
+  return createFirestoreAtomicClient({
+    projectId: env.FIREBASE_PROJECT_ID,
+    getAccessToken: () => getGoogleAccessToken(env),
+    encodeFields: toFirestoreFields,
+    encodeValue: toFirestoreValue,
+    decodeFields: fromFirestoreFields,
+    docIdFromName
+  });
 }
 
 async function sha256Hex(value) {
