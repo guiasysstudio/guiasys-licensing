@@ -791,7 +791,7 @@ async function dashboardView() {
     <section class="grid grid-4">
       ${metric("Projetos ativos", data.projectsActive, `${data.projectsTotal} projeto(s) no total`)}
       ${metric("Licenças ativas", data.activeLicenses, `${data.pendingLicenses} aguardando ativação`)}
-      ${metric("Ativações hoje", data.activationsToday, "Horário de Brasília")}
+      ${metric("Ativações hoje", data.activationsToday, `${data.validationsToday || 0} revalidação(ões) hoje`)}
       ${metric("Expiram em 30 dias", data.expiring30Days, "Licenças ativas")}
     </section>
 
@@ -1000,7 +1000,7 @@ async function projectDashboardView() {
 
     <section class="grid grid-4">
       ${metric("Licenças ativas", data.activeLicenses, `${data.pendingLicenses} aguardando ativação`)}
-      ${metric("Ativações hoje", data.activationsToday, "Horário de Brasília")}
+      ${metric("Ativações hoje", data.activationsToday, `${data.validationsToday || 0} revalidação(ões) hoje`)}
       ${metric("Expiram em 30 dias", data.expiring30Days, "Acompanhe renovações")}
       ${metric("Status", project.status === "active" ? "Ativo" : "Inativo", `Validação a cada ${project.validationHours}h`)}
     </section>
@@ -1679,7 +1679,13 @@ async function devicesView() {
 async function activationsView() {
   const [items, licenses] = await Promise.all([loadEntity("activations"), loadEntity("licenses")]);
   const licenseMap = new Map(licenses.map(item => [item.id, item]));
-  const typeMap = { activate: "Ativação", revalidate: "Revalidação", deactivate: "Desativação" };
+  const typeMap = {
+    activate: "Ativação",
+    reactivate_device: "Reativação do dispositivo",
+    rebind_license: "Vínculo a outra licença",
+    revalidate: "Revalidação",
+    deactivate: "Desativação"
+  };
 
   el.content.innerHTML = `
     ${pageHeader("Ativações", "Histórico técnico de ativações e desativações.")}
