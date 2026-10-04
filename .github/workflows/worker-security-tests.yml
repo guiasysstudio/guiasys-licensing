@@ -8,6 +8,7 @@ on:
     paths:
       - "worker/**"
       - "assets/js/app.js"
+      - "assets/js/entitlement-verifier.js"
       - "index.html"
       - ".github/workflows/worker-security-tests.yml"
   pull_request:
@@ -16,6 +17,7 @@ on:
     paths:
       - "worker/**"
       - "assets/js/app.js"
+      - "assets/js/entitlement-verifier.js"
       - "index.html"
       - ".github/workflows/worker-security-tests.yml"
 
@@ -41,4 +43,6 @@ jobs:
         run: npm test
 
       - name: Check frontend JavaScript syntax
-        run: node --experimental-default-type=module --check assets/js/app.js
+        run: |
+          node --experimental-default-type=module --check assets/js/app.js
+          node --experimental-default-type=module --check assets/js/entitlement-verifier.js
