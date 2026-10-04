@@ -1,5 +1,9 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
 import {
+  sha256HexText,
+  verifyEntitlementToken
+} from "./entitlement-verifier.js";
+import {
   browserSessionPersistence,
   getAuth,
   GoogleAuthProvider,
@@ -250,47 +254,16 @@ function e(value = "") {
     .replaceAll("'", "&#039;");
 }
 
-function base64UrlBytes(value) {
-  const padding = "=".repeat((4 - (String(value).length % 4)) % 4);
-  const base64 = (String(value) + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const binary = atob(base64);
-  return Uint8Array.from(binary, char => char.charCodeAt(0));
-}
-
-function decodeJwsJson(value) {
-  return JSON.parse(new TextDecoder().decode(base64UrlBytes(value)));
-}
-
-async function verifyEntitlementToken(token, publicJwk) {
-  if (!token || !publicJwk) return { signatureValid: false, error: "missing_token_or_public_key" };
-
-  const parts = String(token).split(".");
-  if (parts.length !== 3) return { signatureValid: false, error: "invalid_jws" };
-
-  const [headerPart, payloadPart, signaturePart] = parts;
-  const header = decodeJwsJson(headerPart);
-  const claims = decodeJwsJson(payloadPart);
-
-  if (header.alg !== "ES256") {
-    return { signatureValid: false, error: "unexpected_algorithm", header, claims };
-  }
-
-  const publicKey = await crypto.subtle.importKey(
-    "jwk",
-    publicJwk,
-    { name: "ECDSA", namedCurve: "P-256" },
-    false,
-    ["verify"]
-  );
-
-  const signatureValid = await crypto.subtle.verify(
-    { name: "ECDSA", hash: "SHA-256" },
-    publicKey,
-    base64UrlBytes(signaturePart),
-    new TextEncoder().encode(`${headerPart}.${payloadPart}`)
-  );
-
-  return { signatureValid, header, claims };
+function entitlementExpected(project, type, deviceHash) {
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    type,
+    projectId: project.id,
+    integrationCode: project.integrationCode,
+    deviceHash,
+    status: "active",
+    keyId: project.signingKeyId || null
+  };
 }
 
 function initials(name = "") {
@@ -1734,9 +1707,11 @@ async function activationsView() {
 
 
 async function activationSimulatorView() {
-  const licenses = await loadEntity("licenses");
+  const [licenses, project] = await Promise.all([
+    loadEntity("licenses"),
+    loadProjectDetail()
+  ]);
   const usable = licenses;
-  const project = selectedProject();
 
   el.content.innerHTML = `
     ${pageHeader("Simulador", "Teste os fluxos de licença e trial de " + project.name + " sem precisar integrar o produto ainda.")}
