@@ -389,21 +389,18 @@ function bearerToken(request) {
 }
 
 async function bindAdminIdentity(env, adminId, baseUser) {
+  const uidLookupId = await sha256Hex(baseUser.uid);
+
   return await atomicClient(env).runTransaction(async tx => {
     const path = `admins/${adminId}`;
+    const uidPath = `adminUids/${uidLookupId}`;
     const current = await tx.get(path);
+    const uidLookup = await tx.get(uidPath);
 
     if (!current || current.status !== "active") {
       throw Object.assign(new Error("Esta conta não possui acesso administrativo."), {
         status: 403,
         reason: "admin_required"
-      });
-    }
-
-    if (String(current.email || "").trim().toLowerCase() !== String(baseUser.email || "").trim().toLowerCase()) {
-      throw Object.assign(new Error("Identidade administrativa inconsistente."), {
-        status: 403,
-        reason: "admin_identity_mismatch"
       });
     }
 
@@ -414,15 +411,33 @@ async function bindAdminIdentity(env, adminId, baseUser) {
       });
     }
 
-    if (!current.firebaseUid) {
-      const now = nowIso();
-      const next = {
-        ...current,
-        firebaseUid: baseUser.uid,
-        identityBoundAt: now,
-        updatedAt: now
-      };
-      tx.set(path, next);
+    if (uidLookup?.adminId && uidLookup.adminId !== adminId) {
+      throw Object.assign(new Error("UID Firebase já vinculado a outro administrador."), {
+        status: 403,
+        reason: "admin_identity_mismatch"
+      });
+    }
+
+    const firstBinding = !current.firebaseUid;
+    const now = nowIso();
+    const next = firstBinding
+      ? {
+          ...current,
+          firebaseUid: baseUser.uid,
+          identityBoundAt: now,
+          updatedAt: now
+        }
+      : current;
+
+    if (firstBinding) tx.set(path, next);
+    if (!uidLookup) {
+      tx.create(uidPath, {
+        adminId,
+        createdAt: now
+      });
+    }
+
+    if (firstBinding || !uidLookup) {
       queuePlatformLogInTransaction(
         tx,
         "admin.identity_bound",
@@ -434,11 +449,44 @@ async function bindAdminIdentity(env, adminId, baseUser) {
         baseUser.email || baseUser.uid,
         now
       );
-      return next;
     }
 
-    return current;
+    return next;
   });
+}
+
+async function resolveAdminIdentity(env, baseUser) {
+  const uidLookupId = await sha256Hex(baseUser.uid);
+  const lookup = await getDoc(env, `adminUids/${uidLookupId}`);
+
+  if (lookup?.adminId) {
+    const adminId = assertAdminId(lookup.adminId);
+    const record = await getDoc(env, `admins/${adminId}`);
+
+    if (
+      !record ||
+      record.status !== "active" ||
+      record.firebaseUid !== baseUser.uid
+    ) {
+      throw Object.assign(new Error("Esta conta não possui acesso administrativo."), {
+        status: 403,
+        reason: "admin_required"
+      });
+    }
+
+    return { adminId, record };
+  }
+
+  if (!baseUser.email || !baseUser.emailVerified) {
+    throw Object.assign(new Error("Esta conta não possui e-mail verificado para acesso administrativo."), {
+      status: 403,
+      reason: "admin_required"
+    });
+  }
+
+  const adminId = await sha256Hex(baseUser.email.toLowerCase());
+  const record = await bindAdminIdentity(env, adminId, baseUser);
+  return { adminId, record };
 }
 
 async function requireAdmin(request, env) {
@@ -477,17 +525,7 @@ async function requireAdmin(request, env) {
       };
     }
 
-    if (!baseUser.email || !baseUser.emailVerified) {
-      return {
-        ok: false,
-        status: 403,
-        error: "admin_required",
-        message: "Esta conta não possui e-mail verificado para acesso administrativo."
-      };
-    }
-
-    const adminId = await sha256Hex(baseUser.email.toLowerCase());
-    const record = await bindAdminIdentity(env, adminId, baseUser);
+    const { adminId, record } = await resolveAdminIdentity(env, baseUser);
 
     return {
       ok: true,
