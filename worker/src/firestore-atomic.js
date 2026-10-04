@@ -132,10 +132,20 @@ export function createFirestoreAtomicClient({
   }
 
   async function getInTransaction(path, transaction) {
-    const url = new URL(`${documentsUrl}/${assertFirestorePath(path)}`);
-    url.searchParams.set("transaction", transaction);
-    const data = await request(url, {}, { notFoundNull: true });
-    return decodeDocument(data);
+    const safePath = assertFirestorePath(path);
+    const data = await request(`${documentsUrl}:batchGet`, {
+      method: "POST",
+      body: JSON.stringify({
+        documents: [documentName(safePath)],
+        transaction
+      })
+    });
+
+    const responses = Array.isArray(data) ? data : [data].filter(Boolean);
+    const result = responses.find(item => item?.found || item?.missing);
+
+    if (!result || result.missing) return null;
+    return decodeDocument(result.found);
   }
 
   async function queryByField(parentPath, collectionId, fieldPath, value, transaction) {
