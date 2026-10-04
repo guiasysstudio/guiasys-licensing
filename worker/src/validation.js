@@ -375,7 +375,7 @@ export function validatePublicProjectPayload(body) {
 export function validatePublicLicensePayload(body) {
   allowFields(body, new Set([
     "projectId", "integrationCode", "licenseKey", "deviceId",
-    "deviceName", "platform", "appVersion"
+    "deviceName", "platform", "appVersion", "requestId"
   ]));
 
   const result = selectorFields(body);
@@ -398,7 +398,7 @@ export function validatePublicLicensePayload(body) {
 
 export function validatePublicTrialPayload(body) {
   allowFields(body, new Set([
-    "projectId", "integrationCode", "deviceId", "deviceName", "platform", "appVersion"
+    "projectId", "integrationCode", "deviceId", "deviceName", "platform", "appVersion", "requestId"
   ]));
 
   const result = selectorFields(body);
