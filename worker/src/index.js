@@ -2361,22 +2361,35 @@ async function publicCatalog(env) {
   return { protocolVersion: PROTOCOL_VERSION, projects: items, serverTime: nowIso() };
 }
 
+function adminRecordView(record) {
+  if (!record) return null;
+  const {
+    firebaseUid: _firebaseUid,
+    ...safe
+  } = record;
+  return {
+    ...safe,
+    identityBound: Boolean(record.firebaseUid),
+    identityBoundAt: record.identityBoundAt || null
+  };
+}
+
 async function listAdminRecords(env) {
-  const items = await listCollection(env, "admins");
+  const items = (await listCollection(env, "admins")).map(adminRecordView);
   items.sort((a, b) => String(a.name || a.email || "").localeCompare(String(b.name || b.email || ""), "pt-BR"));
   return items;
 }
 
-async function saveAdminRecord(env, body, existing = null) {
-  body = validateAdminPayload(body, { partial: Boolean(existing) });
+function buildAdminRecord(body, existing = null, now = nowIso()) {
   const email = String(body.email ?? existing?.email ?? "").trim().toLowerCase();
   if (!email || !email.includes("@")) {
-    throw Object.assign(new Error("Informe um e-mail válido para o administrador."), { status: 400 });
+    throw Object.assign(new Error("Informe um e-mail válido para o administrador."), {
+      status: 400,
+      reason: "invalid_admin_email"
+    });
   }
 
-  const id = await sha256Hex(email);
-  const now = nowIso();
-  const record = {
+  return {
     name: String(body.name ?? existing?.name ?? "").trim(),
     email,
     status: body.status != null
@@ -2389,11 +2402,125 @@ async function saveAdminRecord(env, body, existing = null) {
       ? [...new Set(body.projectIds.map(String).filter(Boolean))]
       : (Array.isArray(existing?.projectIds) ? existing.projectIds : []),
     permissions: normalizeAdminPermissions(body.permissions ?? existing?.permissions ?? {}),
+    firebaseUid: existing?.firebaseUid || null,
+    identityBoundAt: existing?.identityBoundAt || null,
     createdAt: existing?.createdAt || now,
     updatedAt: now
   };
+}
 
-  return await setDoc(env, `admins/${id}`, record);
+async function createAdminRecord(env, body, actor) {
+  body = validateAdminPayload(body);
+  const email = String(body.email || "").trim().toLowerCase();
+  const id = await sha256Hex(email);
+
+  return await atomicClient(env).runTransaction(async tx => {
+    const path = `admins/${id}`;
+    const existing = await tx.get(path);
+    if (existing) {
+      throw Object.assign(new Error("Já existe um administrador cadastrado com este e-mail."), {
+        status: 409,
+        reason: "admin_exists"
+      });
+    }
+
+    const now = nowIso();
+    const record = buildAdminRecord(body, null, now);
+    tx.create(path, record);
+    queuePlatformLogInTransaction(
+      tx,
+      "admin.created",
+      {
+        adminId: id,
+        email: record.email,
+        status: record.status,
+        allProjects: record.allProjects,
+        projectIds: record.projectIds
+      },
+      actor,
+      now
+    );
+
+    return { id, ...adminRecordView(record) };
+  });
+}
+
+async function updateAdminRecord(env, adminId, body, actor) {
+  body = validateAdminPayload(body, { partial: true });
+
+  return await atomicClient(env).runTransaction(async tx => {
+    const path = `admins/${adminId}`;
+    const existing = await tx.get(path);
+    if (!existing) {
+      throw Object.assign(new Error("Administrador não encontrado."), {
+        status: 404,
+        reason: "admin_not_found"
+      });
+    }
+
+    if (body.email && String(body.email).trim().toLowerCase() !== existing.email) {
+      throw Object.assign(new Error("O e-mail do administrador não pode ser alterado. Exclua e cadastre novamente."), {
+        status: 400,
+        reason: "email_immutable"
+      });
+    }
+
+    const now = nowIso();
+    const next = buildAdminRecord(body, existing, now);
+    tx.set(path, next);
+    queuePlatformLogInTransaction(
+      tx,
+      "admin.updated",
+      {
+        adminId,
+        email: next.email,
+        status: next.status,
+        allProjects: next.allProjects,
+        projectIds: next.projectIds
+      },
+      actor,
+      now
+    );
+
+    return { id: adminId, ...adminRecordView(next) };
+  });
+}
+
+async function deleteAdminRecord(env, adminId, actor) {
+  return await atomicClient(env).runTransaction(async tx => {
+    const path = `admins/${adminId}`;
+    const existing = await tx.get(path);
+    if (!existing) {
+      throw Object.assign(new Error("Administrador não encontrado."), {
+        status: 404,
+        reason: "admin_not_found"
+      });
+    }
+
+    const now = nowIso();
+    tx.delete(path);
+
+    if (existing.firebaseUid) {
+      const uidLookupId = await sha256Hex(existing.firebaseUid);
+      const uidPath = `adminUids/${uidLookupId}`;
+      const lookup = await tx.get(uidPath);
+      if (lookup?.adminId === adminId) tx.delete(uidPath);
+    }
+
+    queuePlatformLogInTransaction(
+      tx,
+      "admin.deleted",
+      {
+        adminId,
+        email: existing.email,
+        identityBound: Boolean(existing.firebaseUid)
+      },
+      actor,
+      now
+    );
+
+    return true;
+  });
 }
 
 async function handleAdmin(request, env, origin, url, admin) {
