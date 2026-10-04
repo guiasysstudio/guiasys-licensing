@@ -2904,10 +2904,11 @@ async function enterApp(user) {
   state.user = user;
 
   try {
-    state.administrator = await verifyAdministrator(user);
+    state.administrator = await verifyAdministrator(user, true);
+    lastAuthorizationSyncAt = Date.now();
   } catch (error) {
-    pendingLoginMessage = error.status === 403
-      ? `Esta conta Google não está autorizada. UID Firebase detectado: ${user.uid}`
+    pendingLoginMessage = [401, 403].includes(Number(error?.status))
+      ? "Esta conta não está autorizada para acessar o painel administrativo."
       : "Não foi possível validar sua sessão administrativa. Verifique a API e tente novamente.";
     await signOut(auth);
     return;
@@ -2942,23 +2943,48 @@ async function enterApp(user) {
   }
 }
 
+function setLoginBusy(busy) {
+  el.loginButton.disabled = busy;
+  el.emailLoginButton.disabled = busy;
+  el.emailLoginInput.disabled = busy;
+  el.passwordLoginInput.disabled = busy;
+}
+
 el.loginButton.addEventListener("click", async () => {
   setLoginMessage("");
-  el.loginButton.disabled = true;
+  setLoginBusy(true);
   try {
     await signInWithPopup(auth, provider);
   } catch (error) {
     console.error(error);
     setLoginMessage("Não foi possível entrar com o Google. Tente novamente.");
   } finally {
-    el.loginButton.disabled = false;
+    setLoginBusy(false);
+  }
+});
+
+el.emailLoginForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  setLoginMessage("");
+  setLoginBusy(true);
+
+  try {
+    await signInWithEmailAndPassword(
+      auth,
+      el.emailLoginInput.value.trim(),
+      el.passwordLoginInput.value
+    );
+    el.passwordLoginInput.value = "";
+  } catch (error) {
+    console.error(error);
+    setLoginMessage("Não foi possível entrar com e-mail e senha. Confira os dados e tente novamente.");
+  } finally {
+    setLoginBusy(false);
   }
 });
 
 el.logoutButton.addEventListener("click", async () => {
-  state.cache.clear();
-  state.projects = [];
-  state.selectedProjectId = "";
+  resetAdministrativeState();
   await signOut(auth);
 });
 
@@ -2975,6 +3001,18 @@ el.mobileMenuButton.addEventListener("click", () => {
   document.body.classList.toggle("sidebar-open");
 });
 
+window.addEventListener("focus", () => {
+  syncAuthorization(false);
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) syncAuthorization(false);
+});
+
+window.setInterval(() => {
+  syncAuthorization(false);
+}, 60_000);
+
 onAuthStateChanged(auth, async user => {
   if (user) {
     await enterApp(user);
@@ -2982,8 +3020,7 @@ onAuthStateChanged(auth, async user => {
   }
 
   state.user = null;
-  state.administrator = null;
-  state.cache.clear();
+  resetAdministrativeState();
   showScreen("login");
   setLoginMessage(pendingLoginMessage);
   pendingLoginMessage = "";
