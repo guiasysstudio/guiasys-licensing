@@ -1005,6 +1005,7 @@ async function dashboardView() {
 async function projectsView() {
   const canCreate = canCreateProjects();
   const canEdit = hasPermission("manageProjectSettings");
+  const canRestore = hasPermission("manageProjects");
 
   el.content.innerHTML = `
     ${pageHeader(
@@ -1029,8 +1030,13 @@ async function projectsView() {
               <span><small>Validação</small><strong>${e(project.validationHours)}h</strong></span>
             </div>
             <div class="project-actions">
-              <button class="btn btn-primary open-project" type="button">Abrir projeto</button>
+              ${project.status === "archived"
+                ? '<button class="btn btn-ghost open-project" type="button" disabled>Projeto arquivado</button>'
+                : '<button class="btn btn-primary open-project" type="button">Abrir projeto</button>'}
               ${canEdit ? '<button class="btn btn-ghost edit-project" type="button">Editar</button>' : ""}
+              ${project.status === "archived" && canRestore
+                ? '<button class="btn btn-primary restore-project" type="button">Restaurar</button>'
+                : ""}
             </div>
           </article>
         `).join("")
@@ -1049,15 +1055,33 @@ async function projectsView() {
 
   document.querySelectorAll(".project-card").forEach(card => {
     const id = card.dataset.project;
-    card.querySelector(".open-project").onclick = async () => {
-      state.selectedProjectId = id;
-      state.route = defaultProjectRoute();
-      renderProjectSwitcher();
-      renderNavigation();
-      await renderContent();
-    };
+    const project = state.projects.find(item => item.id === id);
+
+    if (project?.status !== "archived") {
+      card.querySelector(".open-project").onclick = async () => {
+        state.selectedProjectId = id;
+        state.route = defaultProjectRoute();
+        renderProjectSwitcher();
+        renderNavigation();
+        await renderContent();
+      };
+    }
+
     card.querySelector(".edit-project")?.addEventListener("click", async () => {
       openProjectEdit(await loadProjectDetail(id, true));
+    });
+
+    card.querySelector(".restore-project")?.addEventListener("click", async () => {
+      if (!await confirmAction("Restaurar projeto", `Restaurar "${project.name}" e voltar a permitir operações?`, "Restaurar", "primary")) return;
+
+      await api(`/api/v1/admin/projects/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "active" })
+      });
+      invalidate(id);
+      await loadProjects(true);
+      toast("Projeto restaurado.");
+      await renderContent();
     });
   });
 }
@@ -1079,10 +1103,12 @@ function projectForm(project = {}) {
       </label>
       <label class="field">
         ${fieldTitle("Status", "Projetos inativos não aceitam novas ativações de licença.")}
-        <select name="status">
-          <option value="active" ${project.status !== "inactive" ? "selected" : ""}>Ativo</option>
+        <select name="status" ${project.status === "archived" ? "disabled" : ""}>
+          ${project.status === "archived" ? '<option value="archived" selected>Arquivado</option>' : ""}
+          <option value="active" ${project.status === "active" || !project.status ? "selected" : ""}>Ativo</option>
           <option value="inactive" ${project.status === "inactive" ? "selected" : ""}>Inativo</option>
         </select>
+        ${project.status === "archived" ? '<small>Use o botão Restaurar na lista de projetos para reativar este projeto.</small>' : ""}
       </label>
       <label class="field">
         ${fieldTitle("Dias permitidos offline", "Período máximo que o aplicativo pode continuar funcionando sem conseguir validar a licença pela internet.")}
@@ -2861,7 +2887,8 @@ async function projectSettingsView() {
   document.querySelector("#archive-project").onclick = async () => {
     if (!await confirmAction("Arquivar projeto", "O projeto deixará de aparecer no seletor principal e não aceitará novas ativações.", "Arquivar")) return;
     await api(`/api/v1/admin/projects/${project.id}`, { method: "DELETE" });
-    await loadProjects();
+    invalidate(project.id);
+    await loadProjects(true);
     state.selectedProjectId = "";
     state.route = "projects";
     renderProjectSwitcher();
