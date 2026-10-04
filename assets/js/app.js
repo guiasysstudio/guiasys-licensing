@@ -1703,35 +1703,46 @@ function openLicenseActions(license) {
       </div>
     `,
     submitLabel: "Copiar key",
+    onOpen: (backdrop, controller) => {
+      backdrop.querySelectorAll(".do-license-action").forEach(button => {
+        button.onclick = async () => {
+          const action = button.dataset.action;
+
+          try {
+            if (action === "renew") {
+              controller.close({ restoreFocus: false });
+              openRenewLicense(license);
+              return;
+            }
+
+            if (
+              action === "revoke" &&
+              !await confirmAction("Revogar licença", "A próxima validação do cliente será recusada.", "Revogar")
+            ) {
+              return;
+            }
+
+            button.disabled = true;
+            await api(`/api/v1/admin/projects/${state.selectedProjectId}/licenses/${license.id}/${action}`, {
+              method: "POST",
+              body: JSON.stringify({})
+            });
+            controller.close();
+            invalidate(state.selectedProjectId);
+            toast(`Licença: ${action} concluído.`);
+            await renderContent();
+          } catch (error) {
+            button.disabled = false;
+            toast(clientErrorMessage(error), "danger");
+          }
+        };
+      });
+    },
     onSubmit: async () => {
       await navigator.clipboard.writeText(license.key);
       toast("Key copiada.");
     }
   });
-
-  setTimeout(() => {
-    document.querySelectorAll(".do-license-action").forEach(button => button.onclick = async () => {
-      const action = button.dataset.action;
-      if (action === "renew") {
-        openRenewLicense(license);
-        document.querySelector(".modal-backdrop")?.remove();
-        document.body.classList.remove("modal-open");
-        return;
-      }
-
-      if (action === "revoke" && !await confirmAction("Revogar licença", "A próxima validação do cliente será recusada.", "Revogar")) return;
-
-      await api(`/api/v1/admin/projects/${state.selectedProjectId}/licenses/${license.id}/${action}`, {
-        method: "POST",
-        body: JSON.stringify({})
-      });
-      document.querySelector(".modal-backdrop")?.remove();
-      document.body.classList.remove("modal-open");
-      invalidate(state.selectedProjectId);
-      toast(`Licença: ${action} concluído.`);
-      await renderContent();
-    });
-  }, 0);
 }
 
 function openRenewLicense(license) {
