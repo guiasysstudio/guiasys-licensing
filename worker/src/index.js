@@ -2298,6 +2298,9 @@ async function publicTrialStart(env, body, origin = "") {
       deviceName: String(body.deviceName || "Dispositivo").trim(),
       platform: String(body.platform || "").trim(),
       appVersion: String(body.appVersion || "").trim(),
+      validationCount: 0,
+      lastValidatedAt: null,
+      lastValidationRequestId: null,
       lastSeenAt: now,
       createdAt: now,
       updatedAt: now
@@ -2392,14 +2395,21 @@ async function publicTrialValidate(env, body, origin = "") {
       return { expired: true, trial };
     }
 
+    const validation = validationMutation(trial, body.requestId, now);
     trial = {
       ...trial,
+      ...validation.patch,
       lastSeenAt: now,
       appVersion: String(body.appVersion || trial.appVersion || "").trim(),
       updatedAt: now
     };
     tx.set(path, trial);
-    return { expired: false, trial };
+    return {
+      expired: false,
+      trial,
+      revalidationReplay: validation.replay,
+      validationCount: validation.validationCount
+    };
   });
 
   if (outcome.expired) {
@@ -2416,7 +2426,10 @@ async function publicTrialValidate(env, body, origin = "") {
   return await attachSignedEntitlement(
     env,
     project,
-    publicTrialView(project, outcome.trial),
+    publicTrialView(project, outcome.trial, {
+      revalidationReplay: outcome.revalidationReplay,
+      validationCount: outcome.validationCount
+    }),
     deviceHash
   );
 }
