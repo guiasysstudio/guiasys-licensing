@@ -1315,6 +1315,11 @@ function projectDetailView(project, admin) {
   const canSettings = Boolean(admin?.master || permissions.manageProjectSettings);
   const canTrial = Boolean(admin?.master || permissions.manageTrial || canSettings);
   const canIntegration = Boolean(admin?.master || permissions.viewIntegration);
+  const canUsePublicEntitlement = Boolean(
+    canIntegration ||
+    permissions.manageLicenses ||
+    permissions.manageTrial
+  );
 
   if (canSettings || canIntegration) {
     view.allowedOrigins = normalizeAllowedOrigins(project.allowedOrigins || []);
@@ -1325,7 +1330,7 @@ function projectDetailView(project, admin) {
     view.trialOfflineHours = Math.max(0, Number(project.trialOfflineHours ?? project.trialValidationHours ?? project.validationHours ?? 24));
   }
 
-  if (canIntegration) {
+  if (canUsePublicEntitlement) {
     view.integrationCode = project.integrationCode || "";
     view.signingKeyId = project.signingKeyId || null;
     view.signingAlgorithm = project.signingAlgorithm || "ES256";
@@ -2751,7 +2756,12 @@ async function handleAdmin(request, env, origin, url, admin) {
     if (parts.length === 2) {
       if (method === "GET") {
         const rawProject = await getDoc(env, projectPath(projectId));
-        const needsIntegration = Boolean(admin.master || admin.permissions?.viewIntegration);
+        const needsIntegration = Boolean(
+          admin.master ||
+          admin.permissions?.viewIntegration ||
+          admin.permissions?.manageLicenses ||
+          admin.permissions?.manageTrial
+        );
         const project = needsIntegration
           ? await ensureProjectIntegrationCode(env, rawProject)
           : rawProject;
