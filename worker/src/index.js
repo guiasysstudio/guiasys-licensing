@@ -15,6 +15,10 @@ import {
   transitionLicense
 } from "./license-policy.js";
 import {
+  summarizeActivity,
+  validationMutation
+} from "./activity-policy.js";
+import {
   assertAccountTokenStillValid,
   assertRecentAuthentication,
   parseCacheMaxAge,
@@ -1737,6 +1741,8 @@ async function dashboard(env, projectId = "", admin = null) {
   let pendingLicenses = 0;
   let expiring = 0;
   let activationsToday = 0;
+  let validationsToday = 0;
+  let deactivationsToday = 0;
   const recentLogs = [];
   const now = Date.now();
   const in30Days = now + 30 * 86400000;
@@ -1758,7 +1764,10 @@ async function dashboard(env, projectId = "", admin = null) {
       }
     }
 
-    activationsToday += activations.filter(item => todayInBrazil(item.createdAt) === today).length;
+    const activity = summarizeActivity(activations, todayInBrazil, today);
+    activationsToday += activity.activations;
+    validationsToday += activity.revalidations;
+    deactivationsToday += activity.deactivations;
 
     recentLogs.push(
       ...logs.map(log => ({
@@ -1777,6 +1786,8 @@ async function dashboard(env, projectId = "", admin = null) {
     activeLicenses,
     pendingLicenses,
     activationsToday,
+    validationsToday,
+    deactivationsToday,
     expiring30Days: expiring,
     recentLogs: recentLogs.slice(0, 12)
   };
