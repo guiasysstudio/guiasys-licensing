@@ -389,6 +389,10 @@ export function validatePublicLicensePayload(body) {
   assignIfDefined(result, "deviceName", readString(body, "deviceName", { max: 120 }));
   assignIfDefined(result, "platform", readString(body, "platform", { max: 64 }));
   assignIfDefined(result, "appVersion", readString(body, "appVersion", { max: 64 }));
+  assignIfDefined(result, "requestId", readString(body, "requestId", {
+    max: 80,
+    pattern: /^[A-Za-z0-9._:-]+$/
+  }));
   return result;
 }
 
@@ -402,5 +406,9 @@ export function validatePublicTrialPayload(body) {
   assignIfDefined(result, "deviceName", readString(body, "deviceName", { max: 120 }));
   assignIfDefined(result, "platform", readString(body, "platform", { max: 64 }));
   assignIfDefined(result, "appVersion", readString(body, "appVersion", { max: 64 }));
+  assignIfDefined(result, "requestId", readString(body, "requestId", {
+    max: 80,
+    pattern: /^[A-Za-z0-9._:-]+$/
+  }));
   return result;
 }
