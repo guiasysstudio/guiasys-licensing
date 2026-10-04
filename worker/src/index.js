@@ -1278,6 +1278,50 @@ async function projectExists(env, projectId) {
   return Boolean(await getDoc(env, projectPath(projectId)));
 }
 
+function projectSummaryView(project) {
+  return {
+    id: project.id,
+    name: project.name,
+    slug: project.slug || "",
+    prefix: project.prefix || "",
+    description: project.description || "",
+    status: project.status || "inactive",
+    publicCatalog: Boolean(project.publicCatalog),
+    trialEnabled: Boolean(project.trialEnabled),
+    trialDays: Math.max(0, Number(project.trialDays || 0)),
+    offlineDays: Math.max(0, Number(project.offlineDays || 0)),
+    validationHours: Math.max(1, Number(project.validationHours || 24)),
+    createdAt: project.createdAt || null,
+    updatedAt: project.updatedAt || null
+  };
+}
+
+function projectDetailView(project, admin) {
+  const view = projectSummaryView(project);
+  const permissions = admin?.permissions || {};
+  const canSettings = Boolean(admin?.master || permissions.manageProjectSettings);
+  const canTrial = Boolean(admin?.master || permissions.manageTrial || canSettings);
+  const canIntegration = Boolean(admin?.master || permissions.viewIntegration);
+
+  if (canSettings || canIntegration) {
+    view.allowedOrigins = normalizeAllowedOrigins(project.allowedOrigins || []);
+  }
+
+  if (canTrial || canIntegration) {
+    view.trialValidationHours = Math.max(1, Number(project.trialValidationHours || project.validationHours || 24));
+    view.trialOfflineHours = Math.max(0, Number(project.trialOfflineHours ?? project.trialValidationHours ?? project.validationHours ?? 24));
+  }
+
+  if (canIntegration) {
+    view.integrationCode = project.integrationCode || "";
+    view.signingKeyId = project.signingKeyId || null;
+    view.signingAlgorithm = project.signingAlgorithm || "ES256";
+    view.signingPublicJwk = project.signingPublicJwk || null;
+  }
+
+  return view;
+}
+
 async function createProject(env, body, admin) {
   body = validateProjectPayload(body);
   const name = String(body.name || "").trim();
@@ -2600,7 +2644,7 @@ async function handleAdmin(request, env, origin, url, admin) {
         if (!admin.master && !admin.allProjects) {
           projects = projects.filter(project => admin.projectIds.includes(project.id));
         }
-        projects = await Promise.all(projects.map(project => ensureProjectIntegrationCode(env, project)));
+        projects = projects.map(projectSummaryView);
         projects.sort((a, b) => String(a.name).localeCompare(String(b.name), "pt-BR"));
         return json({ ok: true, projects }, 200, origin);
       }
@@ -2624,8 +2668,12 @@ async function handleAdmin(request, env, origin, url, admin) {
 
     if (parts.length === 2) {
       if (method === "GET") {
-        const project = await ensureProjectIntegrationCode(env, await getDoc(env, projectPath(projectId)));
-        return json({ ok: true, project }, 200, origin);
+        const rawProject = await getDoc(env, projectPath(projectId));
+        const needsIntegration = Boolean(admin.master || admin.permissions?.viewIntegration);
+        const project = needsIntegration
+          ? await ensureProjectIntegrationCode(env, rawProject)
+          : rawProject;
+        return json({ ok: true, project: projectDetailView(project, admin) }, 200, origin);
       }
       if (method === "PATCH") {
         requirePermission(admin, "manageProjectSettings", "Você não possui permissão para alterar as configurações deste projeto.");
