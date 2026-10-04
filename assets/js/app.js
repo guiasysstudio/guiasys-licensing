@@ -340,7 +340,89 @@ function invalidate(projectId = "") {
   }
 }
 
+function resetAdministrativeState() {
+  state.administrator = null;
+  state.cache.clear();
+  state.projects = [];
+  state.dashboard = null;
+  state.selectedProjectId = "";
+  lastAuthorizationSyncAt = 0;
+}
+
+async function endAdministrativeSession(message) {
+  pendingLoginMessage = message || "Sua sessão administrativa foi encerrada.";
+  resetAdministrativeState();
+  if (auth.currentUser) {
+    await signOut(auth);
+  } else {
+    showScreen("login");
+    setLoginMessage(pendingLoginMessage);
+  }
+}
+
+function authorizationFingerprint(admin) {
+  return JSON.stringify({
+    master: Boolean(admin?.master),
+    allProjects: Boolean(admin?.allProjects),
+    projectIds: [...(admin?.projectIds || [])].sort(),
+    permissions: admin?.permissions || {}
+  });
+}
+
+async function syncAuthorization(force = false) {
+  if (!state.user || document.hidden) return;
+  if (!force && Date.now() - lastAuthorizationSyncAt < 30_000) return;
+  if (authorizationSyncPromise) return await authorizationSyncPromise;
+
+  authorizationSyncPromise = (async () => {
+    const before = authorizationFingerprint(state.administrator);
+    const administrator = await verifyAdministrator(state.user, false);
+    const after = authorizationFingerprint(administrator);
+    state.administrator = administrator;
+    lastAuthorizationSyncAt = Date.now();
+
+    if (before !== after) {
+      state.cache.clear();
+      await loadProjects();
+
+      if (!routeAllowed(state.route)) {
+        state.route = state.selectedProjectId ? defaultProjectRoute() : "projects";
+      }
+
+      if (state.selectedProjectId && !selectedProject()) {
+        state.selectedProjectId = "";
+        state.route = hasPermission("viewDashboard") ? "dashboard" : "projects";
+      }
+
+      renderUser();
+      renderProjectSwitcher();
+      renderNavigation();
+      await renderContent();
+      toast("Permissões administrativas atualizadas.", "success");
+    }
+  })();
+
+  try {
+    await authorizationSyncPromise;
+  } catch (error) {
+    console.error(error);
+    if ([401, 403].includes(Number(error?.status))) {
+      await endAdministrativeSession("Seu acesso administrativo foi alterado. Entre novamente se ainda possuir autorização.");
+      return;
+    }
+  } finally {
+    authorizationSyncPromise = null;
+  }
+}
+
 async function api(path, options = {}, retry = true) {
+  if (!state.user) {
+    const error = new Error("Sessão administrativa não disponível.");
+    error.status = 401;
+    error.code = "authentication_required";
+    throw error;
+  }
+
   const token = await state.user.getIdToken(false);
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
@@ -367,6 +449,23 @@ async function api(path, options = {}, retry = true) {
     const error = new Error(data.message || `Erro HTTP ${response.status}`);
     error.status = response.status;
     error.code = data.error;
+
+    if (
+      response.status === 401 ||
+      ["admin_required", "admin_identity_mismatch", "provider_not_allowed", "recent_auth_required"].includes(data.error)
+    ) {
+      const message = data.error === "recent_auth_required"
+        ? "Por segurança, esta ação exige login recente. Entre novamente e repita a operação."
+        : "Sua sessão administrativa não é mais válida. Entre novamente.";
+      await endAdministrativeSession(message);
+    } else if (
+      response.status === 403 &&
+      ["permission_denied", "project_access_denied"].includes(data.error)
+    ) {
+      state.cache.clear();
+      lastAuthorizationSyncAt = 0;
+    }
+
     throw error;
   }
 
