@@ -15,6 +15,12 @@ import {
   transitionLicense
 } from "./license-policy.js";
 import {
+  assertAccountTokenStillValid,
+  assertRecentAuthentication,
+  parseCacheMaxAge,
+  validateFirebaseClaims
+} from "./auth-policy.js";
+import {
   readJsonBody,
   validateAdminPayload,
   validateCustomerPayload,
@@ -112,7 +118,8 @@ function permissionForEntity(entity) {
   }[entity] || null;
 }
 
-let googleTokenCache = { token: null, expiresAt: 0 };
+const googleTokenCache = new Map();
+const firebaseAccountCache = new Map();
 let firebaseKeyCache = { keys: null, expiresAt: 0 };
 
 function corsHeaders(origin, publicCors = false) {
