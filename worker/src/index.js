@@ -1168,7 +1168,10 @@ function publicProjectConfigView(project) {
       enabled: Boolean(project.trialEnabled && Number(project.trialDays || 0) > 0),
       days: Math.max(0, Number(project.trialDays || 0)),
       validationHours: Math.max(1, Number(project.trialValidationHours || project.validationHours || 24)),
-      offlineHours: Math.max(0, Number(project.trialOfflineHours ?? project.trialValidationHours ?? project.validationHours ?? 24))
+      offlineHours: Math.max(0, Number(project.trialOfflineHours ?? project.trialValidationHours ?? project.validationHours ?? 24)),
+      deviceIdentity: "stable_installation_id",
+      restartPolicy: "same_project_device_hash_never_restarts",
+      requestIdSupported: true
     },
     license: {
       validationHours: Math.max(1, Number(project.validationHours || 24)),
@@ -2210,6 +2213,8 @@ function publicTrialView(project, trial, extra = {}) {
     offlineHours: Math.max(0, Number(trial.offlineHours ?? project.trialOfflineHours ?? project.trialValidationHours ?? project.validationHours ?? 24)),
     convertedAt: trial.convertedAt || null,
     convertedLicenseId: trial.convertedLicenseId || null,
+    validationCount: Math.max(0, Number(trial.validationCount || 0)),
+    lastValidatedAt: trial.lastValidatedAt || null,
     serverTime: now,
     ...extra
   };
@@ -3117,7 +3122,8 @@ export default {
       }
 
       if (request.method === "POST" && url.pathname === "/api/v1/trial/start") {
-        await enforceRateLimit(env, request, "trial-start", 20, 600);
+        await enforceRateLimit(env, request, "trial-start-burst", 10, 600);
+        await enforceRateLimit(env, request, "trial-start-hourly", 30, 3600);
         const body = await readJson(request);
         return json({ ok: true, trial: await publicTrialStart(env, body, origin) }, 200, origin, true);
       }
