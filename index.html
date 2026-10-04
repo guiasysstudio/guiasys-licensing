@@ -33,12 +33,27 @@
           <p>Gerencie projetos, planos, clientes, licenças, dispositivos, ativações e auditoria em ambientes isolados por produto.</p>
         </div>
 
-        <button id="google-login-button" class="btn btn-primary btn-lg" type="button">
+        <button id="google-login-button" class="btn btn-primary btn-lg login-primary-action" type="button">
           <span class="google-g" aria-hidden="true">G</span>
           Entrar com Google
         </button>
 
-        <p id="login-message" class="form-message" role="status"></p>
+        <div class="login-divider" aria-hidden="true"><span>ou</span></div>
+
+        <form id="email-login-form" class="email-login-form" autocomplete="on">
+          <label class="login-field">
+            <span>E-mail</span>
+            <input id="email-login-input" name="email" type="email" autocomplete="username" required maxlength="160" placeholder="admin@exemplo.com">
+          </label>
+          <label class="login-field">
+            <span>Senha</span>
+            <input id="password-login-input" name="password" type="password" autocomplete="current-password" required minlength="6" maxlength="256" placeholder="Sua senha">
+          </label>
+          <button id="email-login-button" class="btn btn-ghost btn-lg login-primary-action" type="submit">Entrar com e-mail e senha</button>
+        </form>
+
+        <p class="login-security-note">Acesso administrativo. A conta precisa existir no Firebase Authentication e estar autorizada no painel.</p>
+        <p id="login-message" class="form-message" role="status" aria-live="polite"></p>
       </div>
 
       <aside class="login-aside">
