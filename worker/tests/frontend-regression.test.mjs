@@ -17,14 +17,16 @@ test("simulador registra cada listener de trial uma única vez", () => {
 
 test("listeners de trial ficam fora do forEach das ações de licença", () => {
   const loopStart = source.indexOf("simulatorButtons.forEach(button =>");
+  const loopEnd = source.indexOf("let trialBusy = false;", loopStart);
   const trialHandler = source.indexOf('document.querySelector("#trial-test-start").addEventListener');
   const trialView = source.indexOf("async function trialView()", loopStart);
 
   assert.ok(loopStart >= 0);
-  assert.ok(trialHandler > loopStart);
+  assert.ok(loopEnd > loopStart);
+  assert.ok(trialHandler > loopEnd);
   assert.ok(trialView > trialHandler);
 
-  const loopRegion = source.slice(loopStart, trialHandler);
+  const loopRegion = source.slice(loopStart, loopEnd);
   assert.equal(loopRegion.includes("#trial-test-start"), false);
   assert.equal(loopRegion.includes("#trial-test-validate"), false);
 });
