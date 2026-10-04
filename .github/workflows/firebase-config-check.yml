@@ -12,6 +12,10 @@ on:
       - "firestore.indexes.json"
       - "storage.rules"
       - "scripts/verify-firebase-config.mjs"
+      - "scripts/test-firestore-transactions.mjs"
+      - "scripts/firestore-test.rules"
+      - "firebase.transaction-test.json"
+      - "worker/src/firestore-atomic.js"
       - ".github/workflows/firebase-config-check.yml"
   pull_request:
     branches:
@@ -23,6 +27,10 @@ on:
       - "firestore.indexes.json"
       - "storage.rules"
       - "scripts/verify-firebase-config.mjs"
+      - "scripts/test-firestore-transactions.mjs"
+      - "scripts/firestore-test.rules"
+      - "firebase.transaction-test.json"
+      - "worker/src/firestore-atomic.js"
       - ".github/workflows/firebase-config-check.yml"
 
 permissions:
