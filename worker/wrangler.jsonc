@@ -11,5 +11,10 @@
     "required": [
       "FIREBASE_SERVICE_ACCOUNT_JSON"
     ]
+  },
+  "previews": {
+    "vars": {
+      "FIREBASE_PROJECT_ID": "guiasys-licensing"
+    }
   }
 }
