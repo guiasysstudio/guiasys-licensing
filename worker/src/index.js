@@ -525,6 +525,15 @@ async function requireAdmin(request, env) {
       };
     }
 
+    if (!baseUser.email || !baseUser.emailVerified) {
+      return {
+        ok: false,
+        status: 403,
+        error: "admin_required",
+        message: "Esta conta não possui e-mail verificado para acesso administrativo."
+      };
+    }
+
     const { adminId, record } = await resolveAdminIdentity(env, baseUser);
 
     return {
