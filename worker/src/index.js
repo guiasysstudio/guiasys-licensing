@@ -854,6 +854,16 @@ async function writeLog(env, projectId, action, details = {}, actor = "admin") {
   });
 }
 
+function queueLogInTransaction(tx, projectId, action, details = {}, actor = "admin", createdAt = nowIso()) {
+  const id = randomId("log");
+  tx.create(`projects/${projectId}/logs/${id}`, {
+    action,
+    actor,
+    details,
+    createdAt
+  });
+}
+
 function projectPath(projectId) {
   return `projects/${assertProjectId(projectId)}`;
 }
@@ -869,46 +879,58 @@ function entityPath(projectId, entity) {
 async function ensureProjectIntegrationCode(env, project) {
   if (!project) return null;
 
-  let next = project;
-  let changed = false;
-  let integrationCreated = false;
-
-  if (!next.integrationCode) {
-    next = { ...next, integrationCode: generateIntegrationCode() };
-    changed = true;
-    integrationCreated = true;
-  }
-
-  const defaults = {
-    trialEnabled: Boolean(next.trialEnabled ?? Number(next.trialDays || 0) > 0),
-    trialDays: Math.max(0, Number(next.trialDays || 0)),
-    trialValidationHours: Math.max(1, Number(next.trialValidationHours || next.validationHours || 24)),
-    trialOfflineHours: Math.max(0, Number(next.trialOfflineHours ?? next.trialValidationHours ?? next.validationHours ?? 24)),
-    publicCatalog: Boolean(next.publicCatalog),
-    allowedOrigins: normalizeAllowedOrigins(next.allowedOrigins || [])
-  };
-
-  for (const [key, value] of Object.entries(defaults)) {
-    if (JSON.stringify(next[key]) !== JSON.stringify(value)) {
-      next = { ...next, [key]: value };
-      changed = true;
+  const next = await atomicClient(env).runTransaction(async tx => {
+    const current = await tx.get(projectPath(project.id));
+    if (!current) {
+      throw Object.assign(new Error("Projeto não encontrado."), {
+        status: 404,
+        reason: "project_not_found"
+      });
     }
-  }
 
-  if (changed) {
-    next = await setDoc(env, projectPath(next.id), { ...next, updatedAt: nowIso() });
-  }
+    let updated = current;
+    let changed = false;
+    let integrationCreated = false;
 
-  if (integrationCreated) {
-    const lookupId = await sha256Hex(next.integrationCode);
-    await setDoc(env, `integrationCodes/${lookupId}`, {
-      projectId: next.id,
-      createdAt: nowIso()
-    });
-  }
+    if (!updated.integrationCode) {
+      updated = { ...updated, integrationCode: generateIntegrationCode() };
+      changed = true;
+      integrationCreated = true;
+    }
 
-  next = await ensureProjectSigningKey(env, next);
-  return next;
+    const defaults = {
+      trialEnabled: Boolean(updated.trialEnabled ?? Number(updated.trialDays || 0) > 0),
+      trialDays: Math.max(0, Number(updated.trialDays || 0)),
+      trialValidationHours: Math.max(1, Number(updated.trialValidationHours || updated.validationHours || 24)),
+      trialOfflineHours: Math.max(0, Number(updated.trialOfflineHours ?? updated.trialValidationHours ?? updated.validationHours ?? 24)),
+      publicCatalog: Boolean(updated.publicCatalog),
+      allowedOrigins: normalizeAllowedOrigins(updated.allowedOrigins || [])
+    };
+
+    for (const [key, value] of Object.entries(defaults)) {
+      if (JSON.stringify(updated[key]) !== JSON.stringify(value)) {
+        updated = { ...updated, [key]: value };
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      updated = { ...updated, updatedAt: nowIso() };
+      tx.set(projectPath(updated.id), updated);
+    }
+
+    if (integrationCreated) {
+      const lookupId = await sha256Hex(updated.integrationCode);
+      tx.create(`integrationCodes/${lookupId}`, {
+        projectId: updated.id,
+        createdAt: updated.updatedAt || nowIso()
+      });
+    }
+
+    return updated;
+  });
+
+  return await ensureProjectSigningKey(env, next);
 }
 
 async function resolvePublicProject(env, body = {}, origin = "") {
@@ -1066,6 +1088,19 @@ async function findLicenseByKey(env, projectId, licenseKey) {
   return license ? normalizeLicenseStatus(license) : null;
 }
 
+async function transactionFindLicenseByKey(tx, projectId, licenseKey) {
+  const normalizedKey = normalizeLicenseKey(licenseKey);
+  if (!normalizedKey) return null;
+
+  const lookupId = await sha256Hex(normalizedKey);
+  const lookup = await tx.get(`projects/${projectId}/licenseKeys/${lookupId}`);
+  if (!lookup?.licenseId) return null;
+
+  const licenseId = assertEntityId("licenses", lookup.licenseId);
+  const license = await tx.get(`${entityPath(projectId, "licenses")}/${licenseId}`);
+  return license ? normalizeLicenseStatus(license) : null;
+}
+
 async function projectExists(env, projectId) {
   return Boolean(await getDoc(env, projectPath(projectId)));
 }
@@ -1075,38 +1110,52 @@ async function createProject(env, body, admin) {
   const name = String(body.name || "").trim();
   if (!name) throw Object.assign(new Error("Informe o nome do projeto."), { status: 400 });
 
-  const id = randomId("prj");
-  const createdAt = nowIso();
-  const validationHours = Math.max(1, Number(body.validationHours || 24));
-  const offlineDays = Math.max(0, Number(body.offlineDays ?? 7));
-  const trialDays = Math.max(0, Number(body.trialDays || 0));
-  const integrationCode = generateIntegrationCode();
+  return await atomicClient(env).runTransaction(async tx => {
+    const id = randomId("prj");
+    const createdAt = nowIso();
+    const validationHours = Math.max(1, Number(body.validationHours || 24));
+    const offlineDays = Math.max(0, Number(body.offlineDays ?? 7));
+    const trialDays = Math.max(0, Number(body.trialDays || 0));
+    const integrationCode = generateIntegrationCode();
+    const signing = await generateSigningMaterial();
 
-  const project = {
-    name,
-    slug: slugify(body.slug || name) || id,
-    prefix: normalizePrefix(body.prefix || name.slice(0, 4)) || "GSS",
-    integrationCode,
-    description: String(body.description || "").trim(),
-    status: body.status === "inactive" ? "inactive" : "active",
-    publicCatalog: Boolean(body.publicCatalog),
-    allowedOrigins: normalizeAllowedOrigins(body.allowedOrigins || []),
-    trialEnabled: Boolean(body.trialEnabled ?? trialDays > 0),
-    trialDays,
-    trialValidationHours: Math.max(1, Number(body.trialValidationHours || validationHours)),
-    trialOfflineHours: Math.max(0, Number(body.trialOfflineHours ?? body.trialValidationHours ?? validationHours)),
-    offlineDays,
-    validationHours,
-    createdAt,
-    updatedAt: createdAt
-  };
+    const project = {
+      name,
+      slug: slugify(body.slug || name) || id,
+      prefix: normalizePrefix(body.prefix || name.slice(0, 4)) || "GSS",
+      integrationCode,
+      description: String(body.description || "").trim(),
+      status: body.status === "inactive" ? "inactive" : "active",
+      publicCatalog: Boolean(body.publicCatalog),
+      allowedOrigins: normalizeAllowedOrigins(body.allowedOrigins || []),
+      trialEnabled: Boolean(body.trialEnabled ?? trialDays > 0),
+      trialDays,
+      trialValidationHours: Math.max(1, Number(body.trialValidationHours || validationHours)),
+      trialOfflineHours: Math.max(0, Number(body.trialOfflineHours ?? body.trialValidationHours ?? validationHours)),
+      offlineDays,
+      validationHours,
+      signingKeyId: signing.keyId,
+      signingAlgorithm: "ES256",
+      signingPublicJwk: signing.publicJwk,
+      createdAt,
+      updatedAt: createdAt
+    };
 
-  let saved = await setDoc(env, projectPath(id), project);
-  const lookupId = await sha256Hex(integrationCode);
-  await setDoc(env, `integrationCodes/${lookupId}`, { projectId: id, createdAt });
-  saved = await ensureProjectSigningKey(env, saved);
-  await writeLog(env, id, "project.created", { name: saved.name, integrationCode }, admin.email || admin.uid);
-  return saved;
+    const lookupId = await sha256Hex(integrationCode);
+    tx.create(projectPath(id), project);
+    tx.create(`integrationCodes/${lookupId}`, { projectId: id, createdAt });
+    tx.create(`projects/${id}/internal/signing`, signing);
+    queueLogInTransaction(
+      tx,
+      id,
+      "project.created",
+      { name: project.name, integrationCode },
+      admin.email || admin.uid,
+      createdAt
+    );
+
+    return { id, ...project };
+  });
 }
 
 async function createPlan(env, projectId, body, admin) {
@@ -1167,83 +1216,80 @@ async function createCustomer(env, projectId, body, admin) {
 async function createLicense(env, projectId, body, admin) {
   body = validateLicenseCreatePayload(body);
   const customerId = assertEntityId("customers", body.customerId);
-  if (!customerId) throw Object.assign(new Error("Selecione um cliente."), { status: 400 });
 
-  const customer = await getDoc(env, `${entityPath(projectId, "customers")}/${customerId}`);
-  if (!customer) throw Object.assign(new Error("Cliente não encontrado."), { status: 404 });
+  return await atomicClient(env).runTransaction(async tx => {
+    const customer = await tx.get(`${entityPath(projectId, "customers")}/${customerId}`);
+    if (!customer) throw Object.assign(new Error("Cliente não encontrado."), { status: 404 });
 
-  const project = await getDoc(env, projectPath(projectId));
-  if (!project) throw Object.assign(new Error("Projeto não encontrado."), { status: 404 });
+    const project = await tx.get(projectPath(projectId));
+    if (!project) throw Object.assign(new Error("Projeto não encontrado."), { status: 404 });
 
-  let plan = null;
-  if (body.planId) {
-    const planId = assertEntityId("plans", body.planId);
-    plan = await getDoc(env, `${entityPath(projectId, "plans")}/${planId}`);
-    if (!plan) throw Object.assign(new Error("Plano não encontrado."), { status: 404 });
-  }
+    let plan = null;
+    if (body.planId) {
+      const planId = assertEntityId("plans", body.planId);
+      plan = await tx.get(`${entityPath(projectId, "plans")}/${planId}`);
+      if (!plan) throw Object.assign(new Error("Plano não encontrado."), { status: 404 });
+    }
 
-  const id = randomId("lic");
-  const createdAt = nowIso();
+    const id = randomId("lic");
+    const createdAt = nowIso();
+    const lifetime = plan ? Boolean(plan.lifetime) : Boolean(body.lifetime);
+    const durationDays = lifetime
+      ? 0
+      : Math.max(1, Number(plan ? plan.durationDays : (body.durationDays || 30)));
+    const maxDevices = Math.max(1, Number(plan ? plan.deviceLimit : (body.maxDevices || 1)));
+    const requestedStartMode = plan ? plan.startMode : body.startMode;
+    const startMode = ["first_activation", "immediate"].includes(requestedStartMode)
+      ? requestedStartMode
+      : "first_activation";
+    const key = generateLicenseKey(project.prefix);
 
-  // Quando um plano cadastrado é usado, as regras comerciais vêm exclusivamente do plano.
-  // O cliente web não pode sobrescrever duração, vitalício, dispositivos ou início da validade.
-  const lifetime = plan ? Boolean(plan.lifetime) : Boolean(body.lifetime);
-  const durationDays = lifetime
-    ? 0
-    : Math.max(1, Number(plan ? plan.durationDays : (body.durationDays || 30)));
-  const maxDevices = Math.max(1, Number(plan ? plan.deviceLimit : (body.maxDevices || 1)));
-  const requestedStartMode = plan ? plan.startMode : body.startMode;
-  const startMode = ["first_activation", "immediate"].includes(requestedStartMode)
-    ? requestedStartMode
-    : "first_activation";
-  const key = generateLicenseKey(project.prefix);
+    let activatedAt = null;
+    let expiresAt = null;
+    let status = "pending";
 
-  let activatedAt = null;
-  let expiresAt = null;
-  let status = "pending";
+    if (startMode === "immediate") {
+      activatedAt = createdAt;
+      expiresAt = lifetime ? null : plusDays(createdAt, durationDays);
+      status = "active";
+    }
 
-  if (startMode === "immediate") {
-    activatedAt = createdAt;
-    expiresAt = lifetime ? null : plusDays(createdAt, durationDays);
-    status = "active";
-  }
+    const license = {
+      key,
+      customerId,
+      customerName: customer.name,
+      customerEmail: customer.email,
+      planId: plan?.id || "",
+      planName: plan?.name || String(body.planName || "Personalizada"),
+      durationDays,
+      lifetime,
+      maxDevices,
+      startMode,
+      status,
+      activatedAt,
+      expiresAt,
+      notes: String(body.notes || "").trim(),
+      createdAt,
+      updatedAt: createdAt
+    };
 
-  const license = {
-    key,
-    customerId,
-    customerName: customer.name,
-    customerEmail: customer.email,
-    planId: plan?.id || "",
-    planName: plan?.name || String(body.planName || "Personalizada"),
-    durationDays,
-    lifetime,
-    maxDevices,
-    startMode,
-    status,
-    activatedAt,
-    expiresAt,
-    notes: String(body.notes || "").trim(),
-    createdAt,
-    updatedAt: createdAt
-  };
+    const lookupId = await sha256Hex(normalizeLicenseKey(key));
+    tx.create(`${entityPath(projectId, "licenses")}/${id}`, license);
+    tx.create(`projects/${projectId}/licenseKeys/${lookupId}`, {
+      licenseId: id,
+      createdAt
+    });
+    queueLogInTransaction(tx, projectId, "license.created", {
+      licenseId: id,
+      customerId,
+      planId: plan?.id || null,
+      lifetime,
+      durationDays,
+      maxDevices
+    }, admin.email || admin.uid, createdAt);
 
-  const saved = await setDoc(env, `${entityPath(projectId, "licenses")}/${id}`, license);
-  const lookupId = await sha256Hex(normalizeLicenseKey(key));
-  await setDoc(env, `projects/${projectId}/licenseKeys/${lookupId}`, {
-    licenseId: id,
-    createdAt
+    return { id, ...license };
   });
-
-  await writeLog(env, projectId, "license.created", {
-    licenseId: id,
-    customerId,
-    planId: plan?.id || null,
-    lifetime,
-    durationDays,
-    maxDevices
-  }, admin.email || admin.uid);
-
-  return saved;
 }
 
 async function updateEntity(env, projectId, entity, id, body, admin) {
