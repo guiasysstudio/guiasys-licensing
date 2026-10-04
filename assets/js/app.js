@@ -1375,11 +1375,21 @@ async function licensesView() {
 }
 
 function openLicenseActions(license) {
-  const actions = [
-    ["renew", "Renovar", "primary"],
-    ...(license.status === "suspended" ? [["reactivate", "Reativar", "primary"]] : [["suspend", "Suspender", "ghost"]]),
-    ...(license.status === "revoked" ? [["reactivate", "Reativar", "primary"]] : [["revoke", "Revogar", "danger"]])
-  ];
+  const actions = [];
+
+  if (!license.lifetime && license.status !== "revoked") {
+    actions.push(["renew", "Renovar", "primary"]);
+  }
+
+  if (license.status === "suspended") {
+    actions.push(["reactivate", "Reativar", "primary"]);
+  } else if (["active", "pending"].includes(license.status)) {
+    actions.push(["suspend", "Suspender", "ghost"]);
+  }
+
+  if (license.status !== "revoked") {
+    actions.push(["revoke", "Revogar", "danger"]);
+  }
 
   openModal({
     title: "Ações da licença",
