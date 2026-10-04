@@ -1917,7 +1917,7 @@ async function activationSimulatorView() {
               ? (data.license?.alreadyActive ? "Dispositivo já estava ativo; nenhuma ativação duplicada foi criada." : "Ativação simulada com sucesso.")
               : action === "validate"
                 ? (data.license?.revalidationReplay ? "Revalidação repetida reconhecida sem evento duplicado." : "Revalidação concluída com sucesso.")
-                : (data.alreadyInactive ? "Dispositivo já estava desativado." : "Dispositivo desativado com sucesso.")
+                : (data.result?.alreadyInactive ? "Dispositivo já estava desativado." : "Dispositivo desativado com sucesso.")
           );
         } else {
           toast(data.message || "A API recusou a operação.", "danger");
