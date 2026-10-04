@@ -2142,51 +2142,86 @@ async function handleAdmin(request, env, origin, url, admin) {
       }
       if (method === "PATCH") {
         requirePermission(admin, "manageProjectSettings", "Você não possui permissão para alterar as configurações deste projeto.");
-        const current = await getDoc(env, projectPath(projectId));
         const body = validateProjectPayload(await readJson(request), { partial: true });
-        const next = {
-          ...current,
-          ...body,
-          id: projectId,
-          name: String(body.name ?? current.name).trim(),
-          slug: slugify(body.slug ?? current.slug),
-          prefix: normalizePrefix(body.prefix ?? current.prefix),
-          status: body.status != null
-            ? (body.status === "inactive" ? "inactive" : "active")
-            : (current.status === "inactive" ? "inactive" : "active"),
-          integrationCode: current.integrationCode || generateIntegrationCode(),
-          signingKeyId: current.signingKeyId || null,
-          signingAlgorithm: current.signingAlgorithm || "ES256",
-          signingPublicJwk: current.signingPublicJwk || null,
-          publicCatalog: body.publicCatalog != null ? Boolean(body.publicCatalog) : Boolean(current.publicCatalog),
-          allowedOrigins: body.allowedOrigins != null ? normalizeAllowedOrigins(body.allowedOrigins) : normalizeAllowedOrigins(current.allowedOrigins || []),
-          trialEnabled: body.trialEnabled != null
-            ? Boolean(body.trialEnabled)
-            : Boolean(current.trialEnabled ?? Number(body.trialDays ?? current.trialDays ?? 0) > 0),
-          trialDays: Math.max(0, Number(body.trialDays ?? current.trialDays ?? 0)),
-          trialValidationHours: Math.max(1, Number(body.trialValidationHours ?? current.trialValidationHours ?? body.validationHours ?? current.validationHours ?? 24)),
-          trialOfflineHours: Math.max(0, Number(body.trialOfflineHours ?? current.trialOfflineHours ?? body.trialValidationHours ?? current.trialValidationHours ?? body.validationHours ?? current.validationHours ?? 24)),
-          offlineDays: Math.max(0, Number(body.offlineDays ?? current.offlineDays ?? 7)),
-          validationHours: Math.max(1, Number(body.validationHours ?? current.validationHours ?? 24)),
-          createdAt: current.createdAt,
-          updatedAt: nowIso()
-        };
-        const saved = await setDoc(env, projectPath(projectId), next);
-        const integrationLookupId = await sha256Hex(saved.integrationCode);
-        await setDoc(env, `integrationCodes/${integrationLookupId}`, { projectId, createdAt: current.createdAt || nowIso() });
-        await writeLog(env, projectId, "project.updated", { name: saved.name }, admin.email || admin.uid);
+        const saved = await atomicClient(env).runTransaction(async tx => {
+          const current = await tx.get(projectPath(projectId));
+          if (!current) {
+            throw Object.assign(new Error("Projeto não encontrado."), {
+              status: 404,
+              reason: "project_not_found"
+            });
+          }
+
+          const integrationCreated = !current.integrationCode;
+          const next = {
+            ...current,
+            ...body,
+            id: projectId,
+            name: String(body.name ?? current.name).trim(),
+            slug: slugify(body.slug ?? current.slug),
+            prefix: normalizePrefix(body.prefix ?? current.prefix),
+            status: body.status != null
+              ? (body.status === "inactive" ? "inactive" : "active")
+              : (current.status === "inactive" ? "inactive" : "active"),
+            integrationCode: current.integrationCode || generateIntegrationCode(),
+            signingKeyId: current.signingKeyId || null,
+            signingAlgorithm: current.signingAlgorithm || "ES256",
+            signingPublicJwk: current.signingPublicJwk || null,
+            publicCatalog: body.publicCatalog != null ? Boolean(body.publicCatalog) : Boolean(current.publicCatalog),
+            allowedOrigins: body.allowedOrigins != null ? normalizeAllowedOrigins(body.allowedOrigins) : normalizeAllowedOrigins(current.allowedOrigins || []),
+            trialEnabled: body.trialEnabled != null
+              ? Boolean(body.trialEnabled)
+              : Boolean(current.trialEnabled ?? Number(body.trialDays ?? current.trialDays ?? 0) > 0),
+            trialDays: Math.max(0, Number(body.trialDays ?? current.trialDays ?? 0)),
+            trialValidationHours: Math.max(1, Number(body.trialValidationHours ?? current.trialValidationHours ?? body.validationHours ?? current.validationHours ?? 24)),
+            trialOfflineHours: Math.max(0, Number(body.trialOfflineHours ?? current.trialOfflineHours ?? body.trialValidationHours ?? current.trialValidationHours ?? body.validationHours ?? current.validationHours ?? 24)),
+            offlineDays: Math.max(0, Number(body.offlineDays ?? current.offlineDays ?? 7)),
+            validationHours: Math.max(1, Number(body.validationHours ?? current.validationHours ?? 24)),
+            createdAt: current.createdAt,
+            updatedAt: nowIso()
+          };
+
+          tx.set(projectPath(projectId), next);
+          if (integrationCreated) {
+            const integrationLookupId = await sha256Hex(next.integrationCode);
+            tx.create(`integrationCodes/${integrationLookupId}`, {
+              projectId,
+              createdAt: current.createdAt || next.updatedAt
+            });
+          }
+          queueLogInTransaction(
+            tx,
+            projectId,
+            "project.updated",
+            { name: next.name },
+            admin.email || admin.uid,
+            next.updatedAt
+          );
+          return { id: projectId, ...next };
+        });
         return json({ ok: true, project: saved }, 200, origin);
       }
       if (method === "DELETE") {
         requirePermission(admin, "manageProjects", "Você não possui permissão para arquivar projetos.");
-        const current = await getDoc(env, projectPath(projectId));
-        const saved = await setDoc(env, projectPath(projectId), {
-          ...current,
-          status: "archived",
-          archivedAt: nowIso(),
-          updatedAt: nowIso()
+        const saved = await atomicClient(env).runTransaction(async tx => {
+          const current = await tx.get(projectPath(projectId));
+          if (!current) {
+            throw Object.assign(new Error("Projeto não encontrado."), {
+              status: 404,
+              reason: "project_not_found"
+            });
+          }
+          const now = nowIso();
+          const next = {
+            ...current,
+            status: "archived",
+            archivedAt: now,
+            updatedAt: now
+          };
+          tx.set(projectPath(projectId), next);
+          queueLogInTransaction(tx, projectId, "project.archived", {}, admin.email || admin.uid, now);
+          return { id: projectId, ...next };
         });
-        await writeLog(env, projectId, "project.archived", {}, admin.email || admin.uid);
         return json({ ok: true, project: saved }, 200, origin);
       }
 
@@ -2239,19 +2274,47 @@ async function handleAdmin(request, env, origin, url, admin) {
 
     if (entity === "trials" && parts.length === 5 && parts[4] === "reset" && method === "POST") {
       const path = `${entityPath(projectId, "trials")}/${entityId}`;
-      const trial = await getDoc(env, path);
-      if (!trial) return errorResponse(origin, 404, "trial_not_found", "Trial não encontrado.");
-      await deleteDoc(env, path);
-      await writeLog(env, projectId, "trial.reset", { deviceHash: entityId }, admin.email || admin.uid);
-      return json({ ok: true, reset: true }, 200, origin);
+      const reset = await atomicClient(env).runTransaction(async tx => {
+        const trial = await tx.get(path);
+        if (!trial) {
+          throw Object.assign(new Error("Trial não encontrado."), {
+            status: 404,
+            reason: "trial_not_found"
+          });
+        }
+        const now = nowIso();
+        tx.delete(path);
+        queueLogInTransaction(tx, projectId, "trial.reset", { deviceHash: entityId }, admin.email || admin.uid, now);
+        return true;
+      });
+      return json({ ok: true, reset }, 200, origin);
     }
 
     if (entity === "devices" && parts.length === 5 && parts[4] === "deactivate" && method === "POST") {
       const path = `${entityPath(projectId, "devices")}/${entityId}`;
-      const device = await getDoc(env, path);
-      if (!device) return errorResponse(origin, 404, "device_not_found", "Dispositivo não encontrado.");
-      const saved = await setDoc(env, path, { ...device, active: false, deactivatedAt: nowIso(), updatedAt: nowIso() });
-      await writeLog(env, projectId, "device.deactivated.admin", { deviceId: entityId, licenseId: device.licenseId }, admin.email || admin.uid);
+      const saved = await atomicClient(env).runTransaction(async tx => {
+        const device = await tx.get(path);
+        if (!device) {
+          throw Object.assign(new Error("Dispositivo não encontrado."), {
+            status: 404,
+            reason: "device_not_found"
+          });
+        }
+        if (device.active === false) return device;
+
+        const now = nowIso();
+        const next = { ...device, active: false, deactivatedAt: now, updatedAt: now };
+        tx.set(path, next);
+        queueLogInTransaction(
+          tx,
+          projectId,
+          "device.deactivated.admin",
+          { deviceId: entityId, licenseId: device.licenseId },
+          admin.email || admin.uid,
+          now
+        );
+        return { id: entityId, ...next };
+      });
       return json({ ok: true, device: saved }, 200, origin);
     }
 
@@ -2276,24 +2339,47 @@ async function handleAdmin(request, env, origin, url, admin) {
           return errorResponse(origin, 405, "method_not_allowed", "Este recurso não pode ser excluído diretamente.");
         }
 
-        if (entity === "customers") {
-          const licenses = (await listCollection(env, entityPath(projectId, "licenses")))
-            .map(normalizeLicenseStatus)
-            .filter(license => license.customerId === entityId);
-
-          if (licenses.length > 0) {
-            return errorResponse(
-              origin,
-              409,
-              "customer_has_licenses",
-              "Este cliente possui licença(s) vinculada(s) e não pode ser excluído. Desative o cadastro para preservar o histórico.",
-              { licenseCount: licenses.length }
-            );
+        await atomicClient(env).runTransaction(async tx => {
+          const current = await tx.get(path);
+          if (!current) {
+            throw Object.assign(new Error("Registro não encontrado."), {
+              status: 404,
+              reason: "not_found"
+            });
           }
-        }
 
-        await deleteDoc(env, path);
-        await writeLog(env, projectId, `${entity.slice(0, -1)}.deleted`, { id: entityId }, admin.email || admin.uid);
+          if (entity === "customers") {
+            const licenses = await tx.queryByField(
+              `projects/${projectId}`,
+              "licenses",
+              "customerId",
+              entityId
+            );
+
+            if (licenses.length > 0) {
+              throw Object.assign(
+                new Error("Este cliente possui licença(s) vinculada(s) e não pode ser excluído. Desative o cadastro para preservar o histórico."),
+                {
+                  status: 409,
+                  reason: "customer_has_licenses",
+                  details: { licenseCount: licenses.length }
+                }
+              );
+            }
+          }
+
+          const now = nowIso();
+          tx.delete(path);
+          queueLogInTransaction(
+            tx,
+            projectId,
+            `${entity.slice(0, -1)}.deleted`,
+            { id: entityId },
+            admin.email || admin.uid,
+            now
+          );
+        });
+
         return json({ ok: true, deleted: true }, 200, origin);
       }
 
