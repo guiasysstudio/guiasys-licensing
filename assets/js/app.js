@@ -1823,33 +1823,58 @@ async function activationSimulatorView() {
     result.textContent = "Crie pelo menos uma licença antes de testar a ativação.";
   }
 
-  const withEntitlementVerification = async data => {
+  const withEntitlementVerification = async (data, type, deviceId) => {
     const entitlement = data?.license?.entitlement || data?.trial?.entitlement;
     if (!entitlement?.token) return data;
 
     try {
-      const verification = await verifyEntitlementToken(entitlement.token, project.signingPublicJwk);
-      return { ...data, clientVerification: verification };
+      const deviceHash = await sha256HexText(deviceId);
+      const verification = await verifyEntitlementToken(
+        entitlement.token,
+        project.signingPublicJwk,
+        entitlementExpected(project, type, deviceHash)
+      );
+
+      const envelopeErrors = [];
+      if (entitlement.format !== "JWS") envelopeErrors.push("unexpected_entitlement_format");
+      if (entitlement.algorithm !== "ES256") envelopeErrors.push("unexpected_entitlement_algorithm");
+      if (project.signingKeyId && entitlement.keyId !== project.signingKeyId) {
+        envelopeErrors.push("entitlement_key_id_mismatch");
+      }
+
+      return {
+        ...data,
+        clientVerification: {
+          ...verification,
+          valid: verification.valid && envelopeErrors.length === 0,
+          errors: [...new Set([...(verification.errors || []), ...envelopeErrors])]
+        }
+      };
     } catch (error) {
       return {
         ...data,
         clientVerification: {
+          valid: false,
           signatureValid: false,
+          claimsValid: false,
+          errors: ["verification_error"],
           error: error.message
         }
       };
     }
   };
 
-  document.querySelectorAll(".simulator-action").forEach(button => {
+  const simulatorButtons = [...document.querySelectorAll(".simulator-action")];
+
+  simulatorButtons.forEach(button => {
     button.addEventListener("click", async () => {
-      if (!form.reportValidity()) return;
+      if (button.disabled || !form.reportValidity()) return;
 
       const values = Object.fromEntries(new FormData(form).entries());
       const action = button.dataset.action;
       const original = button.textContent;
 
-      document.querySelectorAll(".simulator-action").forEach(item => item.disabled = true);
+      simulatorButtons.forEach(item => { item.disabled = true; });
       button.textContent = "Processando...";
       result.textContent = "Enviando requisição...";
 
@@ -1860,7 +1885,8 @@ async function activationSimulatorView() {
           deviceId: values.deviceId,
           deviceName: values.deviceName,
           platform: values.platform,
-          appVersion: values.appVersion
+          appVersion: values.appVersion,
+          requestId: crypto.randomUUID()
         };
 
         const response = await fetch(`${API_BASE}/api/v1/license/${action}`, {
@@ -1871,7 +1897,7 @@ async function activationSimulatorView() {
         });
 
         const data = await response.json().catch(() => ({}));
-        const verifiedData = await withEntitlementVerification(data);
+        const verifiedData = await withEntitlementVerification(data, "license", payload.deviceId);
         result.textContent = JSON.stringify({
           httpStatus: response.status,
           ...verifiedData
@@ -1882,10 +1908,10 @@ async function activationSimulatorView() {
         if (response.ok && data.ok !== false) {
           toast(
             action === "activate"
-              ? "Ativação simulada com sucesso."
+              ? (data.license?.alreadyActive ? "Dispositivo já estava ativo; nenhuma ativação duplicada foi criada." : "Ativação simulada com sucesso.")
               : action === "validate"
-                ? "Validação concluída com sucesso."
-                : "Dispositivo desativado com sucesso."
+                ? (data.license?.revalidationReplay ? "Revalidação repetida reconhecida sem evento duplicado." : "Revalidação concluída com sucesso.")
+                : (data.alreadyInactive ? "Dispositivo já estava desativado." : "Dispositivo desativado com sucesso.")
           );
         } else {
           toast(data.message || "A API recusou a operação.", "danger");
@@ -1897,28 +1923,41 @@ async function activationSimulatorView() {
         }, null, 2);
         toast(error.message, "danger");
       } finally {
-        document.querySelectorAll(".simulator-action").forEach(item => item.disabled = false);
+        simulatorButtons.forEach(item => { item.disabled = false; });
         button.textContent = original;
       }
     });
+  });
 
+  let trialBusy = false;
 
   const runTrialTest = async action => {
-    const result = document.querySelector("#trial-test-result");
+    if (trialBusy) return;
+
+    const trialResult = document.querySelector("#trial-test-result");
+    const trialButtons = [
+      document.querySelector("#trial-test-start"),
+      document.querySelector("#trial-test-validate")
+    ].filter(Boolean);
+
     const payload = {
       integrationCode: project.integrationCode,
       deviceId: document.querySelector("#trial-test-device-id").value.trim(),
       deviceName: document.querySelector("#trial-test-device-name").value.trim(),
       platform: document.querySelector("#trial-test-platform").value.trim(),
-      appVersion: document.querySelector("#trial-test-version").value.trim()
+      appVersion: document.querySelector("#trial-test-version").value.trim(),
+      requestId: crypto.randomUUID()
     };
 
     if (!payload.deviceId) {
-      result.textContent = "Informe um Device ID de teste.";
+      trialResult.textContent = "Informe um Device ID de teste.";
       return;
     }
 
-    result.textContent = "Consultando...";
+    trialBusy = true;
+    trialButtons.forEach(item => { item.disabled = true; });
+    trialResult.textContent = "Consultando...";
+
     try {
       const response = await fetch(`${API_BASE}/api/v1/trial/${action}`, {
         method: "POST",
@@ -1927,30 +1966,36 @@ async function activationSimulatorView() {
         cache: "no-store"
       });
       const data = await response.json().catch(() => ({}));
-      const verifiedData = await withEntitlementVerification(data);
-      result.textContent = JSON.stringify({
+      const verifiedData = await withEntitlementVerification(data, "trial", payload.deviceId);
+      trialResult.textContent = JSON.stringify({
         httpStatus: response.status,
         ...verifiedData
       }, null, 2);
       invalidate(project.id);
 
       if (response.ok && data.ok !== false) {
-        toast(action === "start" ? "Trial consultado com sucesso." : "Trial validado com sucesso.");
+        toast(
+          action === "start"
+            ? (data.trial?.firstStart ? "Trial iniciado com sucesso." : "Trial existente consultado sem reiniciar o período.")
+            : (data.trial?.revalidationReplay ? "Revalidação do trial repetida sem duplicar contagem." : "Trial revalidado com sucesso.")
+        );
       } else {
         toast(data.message || "A API recusou a operação.", "danger");
       }
     } catch (error) {
-      result.textContent = JSON.stringify({
+      trialResult.textContent = JSON.stringify({
         error: "network_error",
         message: error.message
       }, null, 2);
       toast(error.message, "danger");
+    } finally {
+      trialBusy = false;
+      trialButtons.forEach(item => { item.disabled = false; });
     }
   };
 
   document.querySelector("#trial-test-start").addEventListener("click", () => runTrialTest("start"));
   document.querySelector("#trial-test-validate").addEventListener("click", () => runTrialTest("validate"));
-  });
 }
 
 
