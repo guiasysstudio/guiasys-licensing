@@ -753,43 +753,67 @@ function table(headers, rows, emptyText = "Nenhum registro encontrado.") {
   `;
 }
 
-async function loadProjects() {
-  const data = await api("/api/v1/admin/projects");
-  state.projects = data.projects || [];
+async function loadProjects(force = false) {
+  const projects = await cachedLoad(
+    "projects",
+    async () => {
+      const data = await api("/api/v1/admin/projects");
+      return data.projects || [];
+    },
+    { force, ttlMs: CACHE_TTL_MS }
+  );
+
+  state.projects = projects;
   renderProjectSwitcher();
+  return projects;
 }
 
 async function loadProjectDetail(projectId = state.selectedProjectId, force = false) {
   if (!projectId) throw new Error("Projeto não selecionado.");
 
   const key = `${projectId}:project-detail`;
-  if (!force && state.cache.has(key)) return state.cache.get(key);
+  const project = await cachedLoad(
+    key,
+    async () => {
+      const data = await api(`/api/v1/admin/projects/${encodeURIComponent(projectId)}`);
+      const summary = state.projects.find(item => item.id === projectId) || {};
+      return { ...summary, ...(data.project || {}) };
+    },
+    { force, ttlMs: CACHE_TTL_MS }
+  );
 
-  const data = await api(`/api/v1/admin/projects/${encodeURIComponent(projectId)}`);
-  const summary = state.projects.find(project => project.id === projectId) || {};
-  const project = { ...summary, ...(data.project || {}) };
   const index = state.projects.findIndex(item => item.id === projectId);
-
   if (index >= 0) state.projects[index] = project;
-  state.cache.set(key, project);
   renderProjectSwitcher();
   return project;
 }
 
-async function loadDashboard(projectId = "") {
-  const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
-  const data = await api(`/api/v1/admin/dashboard${query}`);
-  return data.dashboard;
+async function loadDashboard(projectId = "", force = false) {
+  const key = projectId ? `${projectId}:dashboard` : "dashboard";
+  return await cachedLoad(
+    key,
+    async () => {
+      const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+      const data = await api(`/api/v1/admin/dashboard${query}`);
+      return data.dashboard;
+    },
+    { force, ttlMs: DASHBOARD_CACHE_TTL_MS }
+  );
 }
 
 async function loadEntity(entity, force = false) {
   const projectId = state.selectedProjectId;
+  if (!projectId) throw new Error("Projeto não selecionado.");
+
   const key = `${projectId}:${entity}`;
-  if (!force && state.cache.has(key)) return state.cache.get(key);
-  const data = await api(`/api/v1/admin/projects/${encodeURIComponent(projectId)}/${entity}`);
-  const items = data[entity] || [];
-  state.cache.set(key, items);
-  return items;
+  return await cachedLoad(
+    key,
+    async () => {
+      const data = await api(`/api/v1/admin/projects/${encodeURIComponent(projectId)}/${entity}`);
+      return data[entity] || [];
+    },
+    { force, ttlMs: CACHE_TTL_MS }
+  );
 }
 
 function logText(log) {
