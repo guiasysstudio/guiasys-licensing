@@ -246,6 +246,67 @@ button { cursor: pointer; }
   font-weight: 900;
 }
 
+.login-primary-action {
+  width: min(100%, 420px);
+  align-self: stretch;
+}
+
+.login-divider {
+  width: min(100%, 420px);
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0;
+  color: var(--muted-2);
+  font-size: 12px;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: "";
+  height: 1px;
+  background: var(--line);
+}
+
+.email-login-form {
+  width: min(100%, 420px);
+  display: grid;
+  gap: 12px;
+}
+
+.login-field {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.login-field input {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(15, 27, 46, 0.72);
+  color: var(--text);
+  padding: 0 14px;
+  outline: none;
+}
+
+.login-field input:focus {
+  border-color: rgba(91, 124, 250, 0.8);
+  box-shadow: 0 0 0 3px rgba(91, 124, 250, 0.12);
+}
+
+.login-security-note {
+  width: min(100%, 420px);
+  margin: 14px 0 0;
+  color: var(--muted-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .form-message {
   min-height: 22px;
   color: #fecaca;
