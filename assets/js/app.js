@@ -1,8 +1,11 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
 import {
+  browserSessionPersistence,
   getAuth,
   GoogleAuthProvider,
   onAuthStateChanged,
+  setPersistence,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signOut
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
@@ -23,6 +26,11 @@ const PROTOCOL_VERSION = "GSL-v1";
 
 const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
+try {
+  await setPersistence(auth, browserSessionPersistence);
+} catch (error) {
+  console.error("Não foi possível configurar a persistência da sessão Firebase.", error);
+}
 const provider = new GoogleAuthProvider();
 provider.setCustomParameters({ prompt: "select_account" });
 
@@ -42,6 +50,10 @@ const el = {
   login: document.querySelector("#login-screen"),
   shell: document.querySelector("#app-shell"),
   loginButton: document.querySelector("#google-login-button"),
+  emailLoginForm: document.querySelector("#email-login-form"),
+  emailLoginButton: document.querySelector("#email-login-button"),
+  emailLoginInput: document.querySelector("#email-login-input"),
+  passwordLoginInput: document.querySelector("#password-login-input"),
   loginMessage: document.querySelector("#login-message"),
   logoutButton: document.querySelector("#logout-button"),
   userName: document.querySelector("#user-name"),
