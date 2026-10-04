@@ -9,7 +9,8 @@ import {
   validateLicenseCreatePayload,
   validatePlanPayload,
   validateProjectPayload,
-  validatePublicLicensePayload
+  validatePublicLicensePayload,
+  validatePublicTrialPayload
 } from "../src/validation.js";
 
 function assertApiError(fn, status = 400, reason = "invalid_request") {
@@ -126,9 +127,24 @@ test("API pública limita device metadata e rejeita campo extra", () => {
     deviceId: "DEVICE-001",
     deviceName: "PC Principal",
     platform: "Windows",
-    appVersion: "1.0.0"
+    appVersion: "1.0.0",
+    requestId: "req-1234.abc"
   });
   assert.equal(payload.deviceId, "DEVICE-001");
+  assert.equal(payload.requestId, "req-1234.abc");
+
+  const trial = validatePublicTrialPayload({
+    integrationCode: "GSLI-ABCD-EFGH-JKLM",
+    deviceId: "DEVICE-001",
+    requestId: "trial:req-001"
+  });
+  assert.equal(trial.requestId, "trial:req-001");
+
+  assertApiError(() => validatePublicTrialPayload({
+    integrationCode: "GSLI-ABCD-EFGH-JKLM",
+    deviceId: "DEVICE-001",
+    requestId: "request com espaços"
+  }));
 
   assertApiError(() => validatePublicLicensePayload({
     integrationCode: "GSLI-ABCD-EFGH-JKLM",
