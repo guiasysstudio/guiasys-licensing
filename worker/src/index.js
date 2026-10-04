@@ -920,6 +920,16 @@ function queueLogInTransaction(tx, projectId, action, details = {}, actor = "adm
   });
 }
 
+function queuePlatformLogInTransaction(tx, action, details = {}, actor = "admin", createdAt = nowIso()) {
+  const id = randomId("plog");
+  tx.create(`platformLogs/${id}`, {
+    action,
+    actor,
+    details,
+    createdAt
+  });
+}
+
 function projectPath(projectId) {
   return `projects/${assertProjectId(projectId)}`;
 }
