@@ -784,7 +784,11 @@ function logText(log) {
     "trial.converted": "Trial convertido em licença",
     "trial.reset": "Trial redefinido",
     "device.deactivated": "Dispositivo desativado",
-    "device.deactivated.admin": "Dispositivo removido pelo administrador"
+    "device.deactivated.admin": "Dispositivo removido pelo administrador",
+    "admin.created": "Administrador cadastrado",
+    "admin.updated": "Administrador atualizado",
+    "admin.deleted": "Administrador removido",
+    "admin.identity_bound": "Identidade Firebase vinculada"
   };
   return map[log.action] || log.action;
 }
@@ -2822,6 +2826,25 @@ async function administratorsView() {
           `;
         }),
         "Nenhum administrador adicional cadastrado."
+      )}
+    </article>
+
+    <article class="card table-shell" style="margin-top:18px">
+      <div class="table-toolbar">
+        <h3>Auditoria administrativa</h3>
+        <span class="badge">${platformLogs.length} evento(s) recente(s)</span>
+      </div>
+      ${table(
+        ["Evento", "Origem", "Data", "Detalhes"],
+        platformLogs.map(log => `
+          <tr>
+            <td><strong>${e(logText(log))}</strong><small><code>${e(log.action)}</code></small></td>
+            <td>${e(log.actor || "—")}</td>
+            <td>${formatDate(log.createdAt, true)}</td>
+            <td><code class="details-code">${e(JSON.stringify(log.details || {}))}</code></td>
+          </tr>
+        `),
+        "Nenhuma alteração administrativa registrada."
       )}
     </article>
   `;
