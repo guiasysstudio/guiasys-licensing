@@ -7,3 +7,8 @@ node_modules/
 .dev.vars
 serviceAccount*.json
 firebase-service-account*.json
+.firebase/
+firebase-debug.log*
+firestore-debug.log*
+storage-debug.log*
+ui-debug.log*

@@ -1,0 +1,57 @@
+name: Firebase Config Check
+
+on:
+  push:
+    branches:
+      - main
+      - "fix/**"
+    paths:
+      - ".firebaserc"
+      - "firebase.json"
+      - "firestore.rules"
+      - "firestore.indexes.json"
+      - "storage.rules"
+      - "scripts/verify-firebase-config.mjs"
+      - ".github/workflows/firebase-config-check.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".firebaserc"
+      - "firebase.json"
+      - "firestore.rules"
+      - "firestore.indexes.json"
+      - "storage.rules"
+      - "scripts/verify-firebase-config.mjs"
+      - ".github/workflows/firebase-config-check.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-firebase:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "21"
+
+      - name: Validate versioned config
+        run: node scripts/verify-firebase-config.mjs
+
+      - name: Compile Firestore and Storage rules in emulators
+        env:
+          CI: "true"
+        run: npx --yes firebase-tools@15.32.1 emulators:exec --project guiasys-licensing --only firestore,storage "node scripts/verify-firebase-config.mjs"
