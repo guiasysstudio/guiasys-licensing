@@ -2626,6 +2626,19 @@ async function handleAdmin(request, env, origin, url, admin) {
     return errorResponse(origin, 404, "not_found", "Rota de administradores não encontrada.");
   }
 
+  if (parts.length === 1 && parts[0] === "platform-logs") {
+    if (!admin.master) {
+      return errorResponse(origin, 403, "master_required", "Somente o administrador master pode visualizar a auditoria da plataforma.");
+    }
+    if (method !== "GET") {
+      return errorResponse(origin, 405, "method_not_allowed", "Use GET para esta rota.", { expectedMethods: ["GET"] });
+    }
+
+    const logs = await listCollection(env, "platformLogs");
+    logs.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+    return json({ ok: true, logs: logs.slice(0, 100) }, 200, origin);
+  }
+
   if (parts.length === 1 && parts[0] === "dashboard") {
     if (method !== "GET") {
       return errorResponse(origin, 405, "method_not_allowed", "Use GET para esta rota.", { expectedMethods: ["GET"] });
