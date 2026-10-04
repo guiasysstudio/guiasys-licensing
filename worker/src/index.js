@@ -2545,11 +2545,13 @@ async function handleAdmin(request, env, origin, url, admin) {
     }
 
     if (parts.length === 1 && method === "POST") {
+      assertRecentAuthentication(admin);
       const body = await readJson(request);
       if (String(body.email || "").trim().toLowerCase() === String(admin.email || "").trim().toLowerCase()) {
         return errorResponse(origin, 409, "master_account", "A conta master não precisa ser cadastrada novamente.");
       }
-      return json({ ok: true, admin: await saveAdminRecord(env, body) }, 201, origin);
+      const actor = admin.email || admin.uid;
+      return json({ ok: true, admin: await createAdminRecord(env, body, actor) }, 201, origin);
     }
 
     if (parts.length === 1) {
@@ -2558,20 +2560,19 @@ async function handleAdmin(request, env, origin, url, admin) {
 
     const adminId = parts[1] ? assertAdminId(parts[1]) : "";
     if (adminId && parts.length === 2) {
-      const path = `admins/${adminId}`;
-      const existing = await getDoc(env, path);
-      if (!existing) return errorResponse(origin, 404, "admin_not_found", "Administrador não encontrado.");
+      const actor = admin.email || admin.uid;
 
       if (method === "PATCH") {
-        const body = await readJson(request);
-        if (body.email && String(body.email).trim().toLowerCase() !== existing.email) {
-          return errorResponse(origin, 400, "email_immutable", "O e-mail do administrador não pode ser alterado. Exclua e cadastre novamente.");
-        }
-        return json({ ok: true, admin: await saveAdminRecord(env, body, existing) }, 200, origin);
+        assertRecentAuthentication(admin);
+        return json({
+          ok: true,
+          admin: await updateAdminRecord(env, adminId, await readJson(request), actor)
+        }, 200, origin);
       }
 
       if (method === "DELETE") {
-        await deleteDoc(env, path);
+        assertRecentAuthentication(admin);
+        await deleteAdminRecord(env, adminId, actor);
         return json({ ok: true, deleted: true }, 200, origin);
       }
 
