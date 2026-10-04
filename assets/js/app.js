@@ -595,14 +595,62 @@ function toast(message, tone = "success") {
   }, 3200);
 }
 
+const modalStack = [];
+let modalSequence = 0;
+
+function syncModalBodyState() {
+  document.body.classList.toggle("modal-open", modalStack.length > 0);
+}
+
+function registerModal(backdrop, { onEscape = null } = {}) {
+  const opener = document.activeElement;
+  const entry = { backdrop, opener, onEscape };
+  modalStack.push(entry);
+  syncModalBodyState();
+
+  return {
+    backdrop,
+    close({ restoreFocus = true } = {}) {
+      const index = modalStack.indexOf(entry);
+      if (index >= 0) modalStack.splice(index, 1);
+      backdrop.remove();
+      syncModalBodyState();
+
+      if (
+        restoreFocus &&
+        opener instanceof HTMLElement &&
+        opener.isConnected &&
+        modalStack.length === 0
+      ) {
+        opener.focus({ preventScroll: true });
+      }
+    }
+  };
+}
+
+function topModal() {
+  return modalStack.at(-1) || null;
+}
+
+document.addEventListener("keydown", event => {
+  if (event.key !== "Escape") return;
+  const current = topModal();
+  if (!current) return;
+  event.preventDefault();
+  if (typeof current.onEscape === "function") {
+    current.onEscape();
+  }
+});
+
 function openModal({ title, subtitle = "", body, submitLabel = "Salvar", onSubmit, onOpen = null, wide = false }) {
   const backdrop = document.createElement("div");
+  const titleId = `modal-title-${++modalSequence}`;
   backdrop.className = "modal-backdrop";
   backdrop.innerHTML = `
-    <div class="modal-card ${wide ? "modal-wide" : ""}" role="dialog" aria-modal="true">
+    <div class="modal-card ${wide ? "modal-wide" : ""}" role="dialog" aria-modal="true" aria-labelledby="${titleId}">
       <div class="modal-header">
         <div>
-          <h2>${e(title)}</h2>
+          <h2 id="${titleId}">${e(title)}</h2>
           ${subtitle ? `<p>${e(subtitle)}</p>` : ""}
         </div>
         <button class="icon-button modal-close" type="button" aria-label="Fechar">×</button>
@@ -618,12 +666,10 @@ function openModal({ title, subtitle = "", body, submitLabel = "Salvar", onSubmi
   `;
 
   document.body.appendChild(backdrop);
-  document.body.classList.add("modal-open");
 
-  const close = () => {
-    backdrop.remove();
-    document.body.classList.remove("modal-open");
-  };
+  let controller;
+  const close = () => controller.close();
+  controller = registerModal(backdrop, { onEscape: close });
 
   backdrop.querySelector(".modal-close").addEventListener("click", close);
   backdrop.querySelector(".modal-cancel").addEventListener("click", close);
@@ -642,26 +688,28 @@ function openModal({ title, subtitle = "", body, submitLabel = "Salvar", onSubmi
       await onSubmit(values, event.currentTarget);
       close();
     } catch (error) {
-      toast(error.message, "danger");
+      toast(clientErrorMessage(error), "danger");
       button.disabled = false;
       button.textContent = submitLabel;
     }
   });
 
   bindInputEnhancements(backdrop);
-  if (typeof onOpen === "function") onOpen(backdrop);
-  setTimeout(() => backdrop.querySelector("input, select, textarea")?.focus(), 50);
+  if (typeof onOpen === "function") onOpen(backdrop, controller);
+  setTimeout(() => backdrop.querySelector("input, select, textarea, button")?.focus(), 50);
+  return controller;
 }
 
 function confirmAction(title, message, confirmLabel = "Confirmar", tone = "danger") {
   return new Promise(resolve => {
     const backdrop = document.createElement("div");
+    const titleId = `modal-title-${++modalSequence}`;
     backdrop.className = "modal-backdrop";
     backdrop.innerHTML = `
-      <div class="modal-card modal-confirm" role="dialog" aria-modal="true">
+      <div class="modal-card modal-confirm" role="dialog" aria-modal="true" aria-labelledby="${titleId}">
         <div class="modal-header">
           <div>
-            <h2>${e(title)}</h2>
+            <h2 id="${titleId}">${e(title)}</h2>
             <p>${e(message)}</p>
           </div>
         </div>
@@ -672,16 +720,24 @@ function confirmAction(title, message, confirmLabel = "Confirmar", tone = "dange
       </div>
     `;
     document.body.appendChild(backdrop);
-    document.body.classList.add("modal-open");
+
+    let settled = false;
+    let controller;
 
     const finish = value => {
-      backdrop.remove();
-      document.body.classList.remove("modal-open");
+      if (settled) return;
+      settled = true;
+      controller.close();
       resolve(value);
     };
 
+    controller = registerModal(backdrop, { onEscape: () => finish(false) });
     backdrop.querySelector(".cancel").onclick = () => finish(false);
     backdrop.querySelector(".confirm").onclick = () => finish(true);
+    backdrop.addEventListener("click", event => {
+      if (event.target === backdrop) finish(false);
+    });
+    setTimeout(() => backdrop.querySelector(".confirm")?.focus(), 30);
   });
 }
 
