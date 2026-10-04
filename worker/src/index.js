@@ -1846,75 +1846,118 @@ async function publicTrialStart(env, body, origin = "") {
   const { projectId, project } = await resolvePublicProject(env, body, origin);
   const deviceId = String(body.deviceId || "").trim();
   if (!deviceId) {
-    throw Object.assign(new Error("deviceId é obrigatório para iniciar o trial."), { status: 400, reason: "invalid_request" });
+    throw Object.assign(new Error("deviceId é obrigatório para iniciar o trial."), {
+      status: 400,
+      reason: "invalid_request"
+    });
   }
 
   const deviceHash = await sha256Hex(deviceId);
   const path = `projects/${projectId}/trials/${deviceHash}`;
-  let trial = await getDoc(env, path);
-  const now = nowIso();
 
-  // A política atual vale para NOVOS trials. Um trial já iniciado mantém o snapshot original,
-  // mesmo se o administrador reduzir a duração ou desativar novas avaliações depois.
-  if (trial) {
-    if (trial.status === "converted") {
-      throw Object.assign(new Error("Este trial foi convertido em licença paga."), {
-        status: 403,
-        reason: "trial_converted",
-        details: { convertedAt: trial.convertedAt || null, licenseId: trial.convertedLicenseId || null }
-      });
-    }
+  const outcome = await atomicClient(env).runTransaction(async tx => {
+    let trial = await tx.get(path);
+    const now = nowIso();
 
-    if (isPast(trial.expiresAt) || trial.status === "expired") {
-      if (trial.status !== "expired") {
-        trial = await setDoc(env, path, { ...trial, status: "expired", lastSeenAt: now, updatedAt: now });
+    if (trial) {
+      if (trial.status === "converted") {
+        throw Object.assign(new Error("Este trial foi convertido em licença paga."), {
+          status: 403,
+          reason: "trial_converted",
+          details: {
+            convertedAt: trial.convertedAt || null,
+            licenseId: trial.convertedLicenseId || null
+          }
+        });
       }
-      throw Object.assign(new Error("O período de avaliação deste dispositivo já expirou."), {
+
+      if (isPast(trial.expiresAt) || trial.status === "expired") {
+        if (trial.status !== "expired") {
+          trial = {
+            ...trial,
+            status: "expired",
+            lastSeenAt: now,
+            updatedAt: now
+          };
+          tx.set(path, trial);
+          queueLogInTransaction(
+            tx,
+            projectId,
+            "trial.expired",
+            { deviceHash, expiresAt: trial.expiresAt },
+            "api",
+            now
+          );
+        }
+        return { expired: true, trial };
+      }
+
+      trial = {
+        ...trial,
+        lastSeenAt: now,
+        deviceName: String(body.deviceName || trial.deviceName || "Dispositivo").trim(),
+        platform: String(body.platform || trial.platform || "").trim(),
+        appVersion: String(body.appVersion || trial.appVersion || "").trim(),
+        updatedAt: now
+      };
+      tx.set(path, trial);
+      return { expired: false, firstStart: false, trial };
+    }
+
+    if (!project.trialEnabled || Number(project.trialDays || 0) <= 0) {
+      throw Object.assign(new Error("Este projeto não oferece avaliação gratuita."), {
         status: 403,
-        reason: "trial_expired",
-        details: { startedAt: trial.startedAt, expiresAt: trial.expiresAt }
+        reason: "trial_unavailable"
       });
     }
 
-    trial = await setDoc(env, path, {
-      ...trial,
+    const durationDays = Math.max(1, Number(project.trialDays || 0));
+    trial = {
+      deviceHash,
+      status: "active",
+      startedAt: now,
+      expiresAt: plusDays(now, durationDays),
+      durationDays,
+      validationHours: Math.max(1, Number(project.trialValidationHours || project.validationHours || 24)),
+      offlineHours: Math.max(0, Number(project.trialOfflineHours ?? project.trialValidationHours ?? project.validationHours ?? 24)),
+      deviceName: String(body.deviceName || "Dispositivo").trim(),
+      platform: String(body.platform || "").trim(),
+      appVersion: String(body.appVersion || "").trim(),
       lastSeenAt: now,
-      deviceName: String(body.deviceName || trial.deviceName || "Dispositivo").trim(),
-      platform: String(body.platform || trial.platform || "").trim(),
-      appVersion: String(body.appVersion || trial.appVersion || "").trim(),
+      createdAt: now,
       updatedAt: now
-    });
-    return await attachSignedEntitlement(env, project, publicTrialView(project, trial), deviceHash);
-  }
+    };
 
-  if (!project.trialEnabled || Number(project.trialDays || 0) <= 0) {
-    throw Object.assign(new Error("Este projeto não oferece avaliação gratuita."), { status: 403, reason: "trial_unavailable" });
-  }
+    tx.create(path, trial);
+    queueLogInTransaction(
+      tx,
+      projectId,
+      "trial.started",
+      { deviceHash, durationDays, expiresAt: trial.expiresAt },
+      "api",
+      now
+    );
 
-  const durationDays = Math.max(1, Number(project.trialDays || 0));
-  trial = await setDoc(env, path, {
-    deviceHash,
-    status: "active",
-    startedAt: now,
-    expiresAt: plusDays(now, durationDays),
-    durationDays,
-    validationHours: Math.max(1, Number(project.trialValidationHours || project.validationHours || 24)),
-    offlineHours: Math.max(0, Number(project.trialOfflineHours ?? project.trialValidationHours ?? project.validationHours ?? 24)),
-    deviceName: String(body.deviceName || "Dispositivo").trim(),
-    platform: String(body.platform || "").trim(),
-    appVersion: String(body.appVersion || "").trim(),
-    lastSeenAt: now,
-    createdAt: now,
-    updatedAt: now
+    return { expired: false, firstStart: true, trial };
   });
 
-  await writeLog(env, projectId, "trial.started", {
-    deviceHash,
-    durationDays,
-    expiresAt: trial.expiresAt
-  }, "api");
+  if (outcome.expired) {
+    throw Object.assign(new Error("O período de avaliação deste dispositivo já expirou."), {
+      status: 403,
+      reason: "trial_expired",
+      details: {
+        startedAt: outcome.trial.startedAt,
+        expiresAt: outcome.trial.expiresAt
+      }
+    });
+  }
 
-  return await attachSignedEntitlement(env, project, publicTrialView(project, trial, { firstStart: true }), deviceHash);
+  return await attachSignedEntitlement(
+    env,
+    project,
+    publicTrialView(project, outcome.trial, { firstStart: outcome.firstStart }),
+    deviceHash
+  );
 }
 
 async function publicTrialValidate(env, body, origin = "") {
@@ -1922,45 +1965,85 @@ async function publicTrialValidate(env, body, origin = "") {
   const { projectId, project } = await resolvePublicProject(env, body, origin);
   const deviceId = String(body.deviceId || "").trim();
   if (!deviceId) {
-    throw Object.assign(new Error("deviceId é obrigatório para validar o trial."), { status: 400, reason: "invalid_request" });
+    throw Object.assign(new Error("deviceId é obrigatório para validar o trial."), {
+      status: 400,
+      reason: "invalid_request"
+    });
   }
 
   const deviceHash = await sha256Hex(deviceId);
   const path = `projects/${projectId}/trials/${deviceHash}`;
-  let trial = await getDoc(env, path);
-  if (!trial) {
-    throw Object.assign(new Error("Nenhum trial foi iniciado para este dispositivo."), { status: 404, reason: "trial_not_started" });
-  }
 
-  const now = nowIso();
-  if (trial.status === "converted") {
-    throw Object.assign(new Error("Este trial foi convertido em licença paga."), {
-      status: 403,
-      reason: "trial_converted",
-      details: { convertedAt: trial.convertedAt || null, licenseId: trial.convertedLicenseId || null }
-    });
-  }
-
-  if (isPast(trial.expiresAt) || trial.status === "expired") {
-    if (trial.status !== "expired") {
-      trial = await setDoc(env, path, { ...trial, status: "expired", lastSeenAt: now, updatedAt: now });
-      await writeLog(env, projectId, "trial.expired", { deviceHash, expiresAt: trial.expiresAt }, "api");
+  const outcome = await atomicClient(env).runTransaction(async tx => {
+    let trial = await tx.get(path);
+    if (!trial) {
+      throw Object.assign(new Error("Nenhum trial foi iniciado para este dispositivo."), {
+        status: 404,
+        reason: "trial_not_started"
+      });
     }
+
+    const now = nowIso();
+
+    if (trial.status === "converted") {
+      throw Object.assign(new Error("Este trial foi convertido em licença paga."), {
+        status: 403,
+        reason: "trial_converted",
+        details: {
+          convertedAt: trial.convertedAt || null,
+          licenseId: trial.convertedLicenseId || null
+        }
+      });
+    }
+
+    if (isPast(trial.expiresAt) || trial.status === "expired") {
+      if (trial.status !== "expired") {
+        trial = {
+          ...trial,
+          status: "expired",
+          lastSeenAt: now,
+          updatedAt: now
+        };
+        tx.set(path, trial);
+        queueLogInTransaction(
+          tx,
+          projectId,
+          "trial.expired",
+          { deviceHash, expiresAt: trial.expiresAt },
+          "api",
+          now
+        );
+      }
+      return { expired: true, trial };
+    }
+
+    trial = {
+      ...trial,
+      lastSeenAt: now,
+      appVersion: String(body.appVersion || trial.appVersion || "").trim(),
+      updatedAt: now
+    };
+    tx.set(path, trial);
+    return { expired: false, trial };
+  });
+
+  if (outcome.expired) {
     throw Object.assign(new Error("O período de avaliação expirou."), {
       status: 403,
       reason: "trial_expired",
-      details: { startedAt: trial.startedAt, expiresAt: trial.expiresAt }
+      details: {
+        startedAt: outcome.trial.startedAt,
+        expiresAt: outcome.trial.expiresAt
+      }
     });
   }
 
-  trial = await setDoc(env, path, {
-    ...trial,
-    lastSeenAt: now,
-    appVersion: String(body.appVersion || trial.appVersion || "").trim(),
-    updatedAt: now
-  });
-
-  return await attachSignedEntitlement(env, project, publicTrialView(project, trial), deviceHash);
+  return await attachSignedEntitlement(
+    env,
+    project,
+    publicTrialView(project, outcome.trial),
+    deviceHash
+  );
 }
 
 async function publicCatalog(env) {
