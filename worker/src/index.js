@@ -2065,14 +2065,35 @@ async function publicValidate(env, body, origin = "") {
       });
     }
 
+    const validation = validationMutation(device, body.requestId, now);
+
     tx.set(devicePath, {
       ...device,
+      ...validation.patch,
       lastSeenAt: now,
       appVersion: String(body.appVersion || device.appVersion || "").trim(),
       updatedAt: now
     });
 
-    return { expired: false, license, serverTime: now };
+    if (!validation.replay) {
+      const activationId = randomId("act");
+      tx.create(`projects/${projectId}/activations/${activationId}`, {
+        licenseId: license.id,
+        customerId: license.customerId,
+        deviceHash,
+        type: "revalidate",
+        requestId: body.requestId || null,
+        createdAt: now
+      });
+    }
+
+    return {
+      expired: false,
+      license,
+      serverTime: now,
+      revalidationReplay: validation.replay,
+      validationCount: validation.validationCount
+    };
   });
 
   if (outcome.expired) {
@@ -2083,7 +2104,9 @@ async function publicValidate(env, body, origin = "") {
   }
 
   const view = publicLicenseView(project, outcome.license, {
-    serverTime: outcome.serverTime
+    serverTime: outcome.serverTime,
+    revalidationReplay: outcome.revalidationReplay,
+    validationCount: outcome.validationCount
   });
   return await attachSignedEntitlement(env, project, view, deviceHash);
 }
