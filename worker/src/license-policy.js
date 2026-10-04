@@ -130,8 +130,11 @@ export function transitionLicense(current, action, body = {}, now = new Date().t
       apiError("Informe days ou lifetime=true para renovar.", 400, "invalid_renewal");
     }
 
-    if (current.lifetime && !makeLifetime) {
-      apiError("Licença vitalícia não pode ser convertida novamente em temporária.", 409, "lifetime_immutable");
+    if (current.lifetime) {
+      if (!makeLifetime) {
+        apiError("Licença vitalícia não pode ser convertida novamente em temporária.", 409, "lifetime_immutable");
+      }
+      return { changed: false, license: next, event: "license.renew.noop" };
     }
 
     next.renewalCount = Math.max(0, Number(current.renewalCount || 0)) + 1;
