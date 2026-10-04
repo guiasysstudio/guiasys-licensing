@@ -399,6 +399,40 @@ function authorizationFingerprint(admin) {
   });
 }
 
+async function fetchWithClientTimeout(url, options = {}, timeoutMs = API_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort("timeout"), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      const timeoutError = new Error("A operação demorou demais e foi cancelada. Tente novamente.");
+      timeoutError.status = 504;
+      timeoutError.code = "client_timeout";
+      throw timeoutError;
+    }
+
+    const networkError = new Error("Não foi possível conectar à API. Verifique sua conexão e tente novamente.");
+    networkError.status = 503;
+    networkError.code = "network_error";
+    networkError.cause = error;
+    throw networkError;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function clientErrorMessage(error) {
+  if (error?.code === "client_timeout") return "A API demorou demais para responder. Tente novamente.";
+  if (error?.code === "network_error") return "Não foi possível conectar à API.";
+  if (error?.code === "rate_limited") return "Muitas solicitações em sequência. Aguarde um pouco e tente novamente.";
+  return error?.message || "Ocorreu um erro inesperado.";
+}
+
 async function syncAuthorization(force = false) {
   if (!state.user || document.hidden) return;
   if (!force && Date.now() - lastAuthorizationSyncAt < 30_000) return;
@@ -454,7 +488,7 @@ async function api(path, options = {}, retry = true) {
   }
 
   const token = await state.user.getIdToken(false);
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetchWithClientTimeout(`${API_BASE}${path}`, {
     ...options,
     headers: {
       "Authorization": `Bearer ${token}`,
@@ -504,7 +538,7 @@ async function api(path, options = {}, retry = true) {
 
 async function checkApi() {
   try {
-    const response = await fetch(`${API_BASE}/health`, { cache: "no-store" });
+    const response = await fetchWithClientTimeout(`${API_BASE}/health`, { cache: "no-store" }, 6_000);
     const data = await response.json();
     state.apiOnline = Boolean(response.ok && data.ok);
   } catch {
@@ -517,7 +551,7 @@ async function checkApi() {
 
 async function verifyAdministrator(user, forceTokenRefresh = false) {
   const token = await user.getIdToken(forceTokenRefresh);
-  const response = await fetch(`${API_BASE}/api/v1/admin/me`, {
+  const response = await fetchWithClientTimeout(`${API_BASE}/api/v1/admin/me`, {
     headers: { "Authorization": `Bearer ${token}` },
     cache: "no-store"
   });
@@ -1976,7 +2010,7 @@ async function activationSimulatorView() {
           requestId: crypto.randomUUID()
         };
 
-        const response = await fetch(`${API_BASE}/api/v1/license/${action}`, {
+        const response = await fetchWithClientTimeout(`${API_BASE}/api/v1/license/${action}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
@@ -2046,7 +2080,7 @@ async function activationSimulatorView() {
     trialResult.textContent = "Consultando...";
 
     try {
-      const response = await fetch(`${API_BASE}/api/v1/trial/${action}`, {
+      const response = await fetchWithClientTimeout(`${API_BASE}/api/v1/trial/${action}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
