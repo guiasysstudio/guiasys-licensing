@@ -729,6 +729,23 @@ async function loadProjects() {
   renderProjectSwitcher();
 }
 
+async function loadProjectDetail(projectId = state.selectedProjectId, force = false) {
+  if (!projectId) throw new Error("Projeto não selecionado.");
+
+  const key = `${projectId}:project-detail`;
+  if (!force && state.cache.has(key)) return state.cache.get(key);
+
+  const data = await api(`/api/v1/admin/projects/${encodeURIComponent(projectId)}`);
+  const summary = state.projects.find(project => project.id === projectId) || {};
+  const project = { ...summary, ...(data.project || {}) };
+  const index = state.projects.findIndex(item => item.id === projectId);
+
+  if (index >= 0) state.projects[index] = project;
+  state.cache.set(key, project);
+  renderProjectSwitcher();
+  return project;
+}
+
 async function loadDashboard(projectId = "") {
   const query = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
   const data = await api(`/api/v1/admin/dashboard${query}`);
@@ -881,7 +898,9 @@ async function projectsView() {
       renderNavigation();
       await renderContent();
     };
-    card.querySelector(".edit-project")?.addEventListener("click", () => openProjectEdit(state.projects.find(p => p.id === id)));
+    card.querySelector(".edit-project")?.addEventListener("click", async () => {
+      openProjectEdit(await loadProjectDetail(id, true));
+    });
   });
 }
 
@@ -1957,7 +1976,7 @@ async function activationSimulatorView() {
 
 
 async function trialView() {
-  const project = selectedProject();
+  const project = await loadProjectDetail();
   const trials = await loadEntity("trials", true);
   const convertedTrials = trials.filter(item => item.status === "converted");
   const activeTrials = trials.filter(item => item.status !== "converted" && item.status !== "expired" && new Date(item.expiresAt).getTime() > Date.now());
@@ -2446,7 +2465,7 @@ function buildIntegrationContract(project, platform = "universal") {
 }
 
 async function integrationView() {
-  const project = selectedProject();
+  const project = await loadProjectDetail();
   let platform = "universal";
 
   const drawContract = () => {
@@ -2572,7 +2591,7 @@ async function logsView() {
 }
 
 async function projectSettingsView() {
-  const project = selectedProject();
+  const project = await loadProjectDetail();
   el.content.innerHTML = `
     ${pageHeader("Configurações", "Definições exclusivas de " + project.name)}
     <article class="card card-section form-page">
@@ -2629,7 +2648,7 @@ function adminForm(admin = {}) {
         <input name="name" maxlength="120" value="${e(admin.name || "")}" placeholder="Nome do administrador">
       </label>
       <label class="field">
-        ${fieldTitle("E-mail Google *", "A pessoa deve entrar no site usando exatamente esta conta Google.")}
+        ${fieldTitle("E-mail Firebase *", "A pessoa poderá entrar com Google ou e-mail/senha, mas deverá usar uma conta Firebase com exatamente este e-mail no primeiro acesso.")}
         <input name="email" type="email" required maxlength="160" value="${e(admin.email || "")}" ${admin.id ? "readonly" : ""} placeholder="usuario@gmail.com">
       </label>
       <label class="field">
@@ -2681,7 +2700,7 @@ function adminForm(admin = {}) {
 function openAdmin(admin = null, onSaved = null) {
   openModal({
     title: admin ? "Editar administrador" : "Novo administrador",
-    subtitle: admin ? admin.email : "Controle o acesso ao GuiaSys Licensing por e-mail Google.",
+    subtitle: admin ? admin.email : "Controle o acesso ao GuiaSys Licensing por conta Firebase autorizada.",
     body: adminForm(admin || {}),
     submitLabel: admin ? "Salvar permissões" : "Cadastrar administrador",
     wide: true,
