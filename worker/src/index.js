@@ -1459,93 +1459,161 @@ async function publicActivate(env, body, origin = "") {
   const licenseKey = normalizeLicenseKey(body.licenseKey);
   const deviceId = String(body.deviceId || "");
   if (!licenseKey || !deviceId) {
-    throw Object.assign(new Error("licenseKey e deviceId são obrigatórios."), { status: 400, reason: "invalid_request" });
-  }
-
-  let license = await findLicenseByKey(env, projectId, licenseKey);
-  if (!license) throw Object.assign(new Error("Licença inválida."), { status: 404, reason: "license_invalid" });
-
-  if (["revoked", "suspended", "expired"].includes(license.status)) {
-    throw Object.assign(new Error(`Licença ${license.status}.`), { status: 403, reason: license.status });
+    throw Object.assign(new Error("licenseKey e deviceId são obrigatórios."), {
+      status: 400,
+      reason: "invalid_request"
+    });
   }
 
   const deviceHash = await sha256Hex(deviceId);
-  const devicePath = `projects/${projectId}/devices/${deviceHash}`;
-  const existingDevice = await getDoc(env, devicePath);
-  const devices = await listCollection(env, `projects/${projectId}/devices`);
-  const activeDevices = devices.filter(device => device.licenseId === license.id && device.active !== false);
-  const sameActiveDevice = Boolean(existingDevice?.active && existingDevice.licenseId === license.id);
+  const outcome = await atomicClient(env).runTransaction(async tx => {
+    let license = await transactionFindLicenseByKey(tx, projectId, licenseKey);
+    if (!license) {
+      throw Object.assign(new Error("Licença inválida."), {
+        status: 404,
+        reason: "license_invalid"
+      });
+    }
 
-  if (!sameActiveDevice && activeDevices.length >= Number(license.maxDevices || 1)) {
-    throw Object.assign(new Error("Limite de dispositivos atingido."), { status: 409, reason: "device_limit" });
-  }
+    if (["revoked", "suspended"].includes(license.status)) {
+      throw Object.assign(new Error(`Licença ${license.status}.`), {
+        status: 403,
+        reason: license.status
+      });
+    }
 
-  const now = nowIso();
-  if (license.status === "pending") {
-    license = {
-      ...license,
-      status: "active",
-      activatedAt: now,
-      expiresAt: license.lifetime ? null : plusDays(now, license.durationDays),
-      updatedAt: now
-    };
-    await setDoc(env, `projects/${projectId}/licenses/${license.id}`, license);
-  }
+    const now = nowIso();
+    const licensePath = `projects/${projectId}/licenses/${license.id}`;
 
-  if (license.expiresAt && isPast(license.expiresAt)) {
-    await setDoc(env, `projects/${projectId}/licenses/${license.id}`, {
-      ...license,
-      status: "expired",
-      updatedAt: now
-    });
-    throw Object.assign(new Error("Licença expirada."), { status: 403, reason: "expired" });
-  }
+    if (license.status === "expired" || (license.expiresAt && isPast(license.expiresAt))) {
+      const expiredLicense = {
+        ...license,
+        status: "expired",
+        updatedAt: now
+      };
+      tx.set(licensePath, expiredLicense);
+      return { expired: true };
+    }
 
-  await setDoc(env, devicePath, {
-    licenseId: license.id,
-    customerId: license.customerId,
-    deviceHash,
-    name: String(body.deviceName || "Dispositivo").trim(),
-    platform: String(body.platform || "").trim(),
-    appVersion: String(body.appVersion || "").trim(),
-    active: true,
-    firstActivatedAt: sameActiveDevice ? (existingDevice?.firstActivatedAt || now) : now,
-    lastSeenAt: now,
-    updatedAt: now
-  });
+    const devicePath = `projects/${projectId}/devices/${deviceHash}`;
+    const trialPath = `projects/${projectId}/trials/${deviceHash}`;
 
-  const activationId = randomId("act");
-  await setDoc(env, `projects/${projectId}/activations/${activationId}`, {
-    licenseId: license.id,
-    customerId: license.customerId,
-    deviceHash,
-    type: sameActiveDevice ? "revalidate" : (existingDevice?.active ? "switch_license" : "activate"),
-    createdAt: now
-  });
+    const existingDevice = await tx.get(devicePath);
+    const devicesForLicense = await tx.queryByField(
+      `projects/${projectId}`,
+      "devices",
+      "licenseId",
+      license.id
+    );
+    const existingTrial = await tx.get(trialPath);
 
-  await writeLog(env, projectId, existingDevice?.active && existingDevice.licenseId !== license.id ? "device.license_reassigned" : "license.activated", {
-    licenseId: license.id,
-    previousLicenseId: existingDevice?.active && existingDevice.licenseId !== license.id ? existingDevice.licenseId : null,
-    deviceHash
-  }, "api");
+    const activeDevices = devicesForLicense.filter(device => device.active !== false);
+    const sameActiveDevice = Boolean(
+      existingDevice?.active &&
+      existingDevice.licenseId === license.id
+    );
 
-  const trialPath = `projects/${projectId}/trials/${deviceHash}`;
-  const existingTrial = await getDoc(env, trialPath);
-  if (existingTrial && !["expired", "converted"].includes(existingTrial.status)) {
-    await setDoc(env, trialPath, {
-      ...existingTrial,
-      status: "converted",
-      convertedAt: now,
-      convertedLicenseId: license.id,
+    if (!sameActiveDevice && activeDevices.length >= Number(license.maxDevices || 1)) {
+      throw Object.assign(new Error("Limite de dispositivos atingido."), {
+        status: 409,
+        reason: "device_limit"
+      });
+    }
+
+    if (license.status === "pending") {
+      license = {
+        ...license,
+        status: "active",
+        activatedAt: now,
+        expiresAt: license.lifetime ? null : plusDays(now, license.durationDays),
+        updatedAt: now
+      };
+      tx.set(licensePath, license);
+    }
+
+    const sameLicenseBefore = existingDevice?.licenseId === license.id;
+    const switchedLicense = Boolean(
+      existingDevice?.active &&
+      existingDevice.licenseId &&
+      existingDevice.licenseId !== license.id
+    );
+
+    tx.set(devicePath, {
+      licenseId: license.id,
+      customerId: license.customerId,
+      deviceHash,
+      name: String(body.deviceName || existingDevice?.name || "Dispositivo").trim(),
+      platform: String(body.platform || existingDevice?.platform || "").trim(),
+      appVersion: String(body.appVersion || existingDevice?.appVersion || "").trim(),
+      active: true,
+      firstActivatedAt: sameLicenseBefore
+        ? (existingDevice?.firstActivatedAt || now)
+        : now,
       lastSeenAt: now,
+      deactivatedAt: null,
       updatedAt: now
     });
-    await writeLog(env, projectId, "trial.converted", { deviceHash, licenseId: license.id }, "api");
+
+    const activationId = randomId("act");
+    tx.create(`projects/${projectId}/activations/${activationId}`, {
+      licenseId: license.id,
+      customerId: license.customerId,
+      deviceHash,
+      type: sameActiveDevice ? "revalidate" : (switchedLicense ? "switch_license" : "activate"),
+      createdAt: now
+    });
+
+    queueLogInTransaction(
+      tx,
+      projectId,
+      switchedLicense ? "device.license_reassigned" : "license.activated",
+      {
+        licenseId: license.id,
+        previousLicenseId: switchedLicense ? existingDevice.licenseId : null,
+        deviceHash
+      },
+      "api",
+      now
+    );
+
+    if (existingTrial && !["expired", "converted"].includes(existingTrial.status)) {
+      tx.set(trialPath, {
+        ...existingTrial,
+        status: "converted",
+        convertedAt: now,
+        convertedLicenseId: license.id,
+        lastSeenAt: now,
+        updatedAt: now
+      });
+
+      queueLogInTransaction(
+        tx,
+        projectId,
+        "trial.converted",
+        { deviceHash, licenseId: license.id },
+        "api",
+        now
+      );
+    }
+
+    return {
+      expired: false,
+      license,
+      activeDevices: sameActiveDevice ? activeDevices.length : activeDevices.length + 1,
+      serverTime: now
+    };
+  });
+
+  if (outcome.expired) {
+    throw Object.assign(new Error("Licença expirada."), {
+      status: 403,
+      reason: "expired"
+    });
   }
 
-  const view = publicLicenseView(project, license, {
-    activeDevices: sameActiveDevice ? activeDevices.length : activeDevices.length + 1,
-    serverTime: now
+  const view = publicLicenseView(project, outcome.license, {
+    activeDevices: outcome.activeDevices,
+    serverTime: outcome.serverTime
   });
   return await attachSignedEntitlement(env, project, view, deviceHash);
 }
@@ -1556,31 +1624,70 @@ async function publicValidate(env, body, origin = "") {
   const licenseKey = normalizeLicenseKey(body.licenseKey);
   const deviceId = String(body.deviceId || "");
   if (!licenseKey || !deviceId) {
-    throw Object.assign(new Error("licenseKey e deviceId são obrigatórios."), { status: 400, reason: "invalid_request" });
-  }
-
-  const license = await findLicenseByKey(env, projectId, licenseKey);
-  if (!license) throw Object.assign(new Error("Licença inválida."), { status: 404, reason: "license_invalid" });
-
-  if (["revoked", "suspended", "expired", "pending"].includes(license.status)) {
-    throw Object.assign(new Error(`Licença ${license.status}.`), { status: 403, reason: license.status });
+    throw Object.assign(new Error("licenseKey e deviceId são obrigatórios."), {
+      status: 400,
+      reason: "invalid_request"
+    });
   }
 
   const deviceHash = await sha256Hex(deviceId);
-  const device = await getDoc(env, `projects/${projectId}/devices/${deviceHash}`);
-  if (!device || device.licenseId !== license.id || device.active === false) {
-    throw Object.assign(new Error("Dispositivo não autorizado."), { status: 403, reason: "device_not_authorized" });
-  }
+  const outcome = await atomicClient(env).runTransaction(async tx => {
+    const license = await transactionFindLicenseByKey(tx, projectId, licenseKey);
+    if (!license) {
+      throw Object.assign(new Error("Licença inválida."), {
+        status: 404,
+        reason: "license_invalid"
+      });
+    }
 
-  const now = nowIso();
-  await setDoc(env, `projects/${projectId}/devices/${deviceHash}`, {
-    ...device,
-    lastSeenAt: now,
-    appVersion: String(body.appVersion || device.appVersion || "").trim(),
-    updatedAt: now
+    const now = nowIso();
+    const licensePath = `projects/${projectId}/licenses/${license.id}`;
+
+    if (license.status === "expired" || (license.expiresAt && isPast(license.expiresAt))) {
+      tx.set(licensePath, {
+        ...license,
+        status: "expired",
+        updatedAt: now
+      });
+      return { expired: true };
+    }
+
+    if (["revoked", "suspended", "pending"].includes(license.status)) {
+      throw Object.assign(new Error(`Licença ${license.status}.`), {
+        status: 403,
+        reason: license.status
+      });
+    }
+
+    const devicePath = `projects/${projectId}/devices/${deviceHash}`;
+    const device = await tx.get(devicePath);
+    if (!device || device.licenseId !== license.id || device.active === false) {
+      throw Object.assign(new Error("Dispositivo não autorizado."), {
+        status: 403,
+        reason: "device_not_authorized"
+      });
+    }
+
+    tx.set(devicePath, {
+      ...device,
+      lastSeenAt: now,
+      appVersion: String(body.appVersion || device.appVersion || "").trim(),
+      updatedAt: now
+    });
+
+    return { expired: false, license, serverTime: now };
   });
 
-  const view = publicLicenseView(project, license, { serverTime: now });
+  if (outcome.expired) {
+    throw Object.assign(new Error("Licença expirada."), {
+      status: 403,
+      reason: "expired"
+    });
+  }
+
+  const view = publicLicenseView(project, outcome.license, {
+    serverTime: outcome.serverTime
+  });
   return await attachSignedEntitlement(env, project, view, deviceHash);
 }
 
@@ -1590,36 +1697,72 @@ async function publicDeactivate(env, body, origin = "") {
   const licenseKey = normalizeLicenseKey(body.licenseKey);
   const deviceId = String(body.deviceId || "");
   if (!licenseKey || !deviceId) {
-    throw Object.assign(new Error("licenseKey e deviceId são obrigatórios."), { status: 400, reason: "invalid_request" });
+    throw Object.assign(new Error("licenseKey e deviceId são obrigatórios."), {
+      status: 400,
+      reason: "invalid_request"
+    });
   }
-
-  const license = await findLicenseByKey(env, projectId, licenseKey);
-  if (!license) throw Object.assign(new Error("Licença inválida."), { status: 404, reason: "license_invalid" });
 
   const deviceHash = await sha256Hex(deviceId);
-  const path = `projects/${projectId}/devices/${deviceHash}`;
-  const device = await getDoc(env, path);
-  if (!device || device.licenseId !== license.id) {
-    throw Object.assign(new Error("Dispositivo não autorizado para esta licença."), { status: 403, reason: "device_not_authorized" });
-  }
+  const outcome = await atomicClient(env).runTransaction(async tx => {
+    const license = await transactionFindLicenseByKey(tx, projectId, licenseKey);
+    if (!license) {
+      throw Object.assign(new Error("Licença inválida."), {
+        status: 404,
+        reason: "license_invalid"
+      });
+    }
 
-  const now = nowIso();
-  await setDoc(env, path, { ...device, active: false, deactivatedAt: now, updatedAt: now });
+    const path = `projects/${projectId}/devices/${deviceHash}`;
+    const device = await tx.get(path);
+    if (!device || device.licenseId !== license.id) {
+      throw Object.assign(new Error("Dispositivo não autorizado para esta licença."), {
+        status: 403,
+        reason: "device_not_authorized"
+      });
+    }
 
-  const activationId = randomId("act");
-  await setDoc(env, `projects/${projectId}/activations/${activationId}`, {
-    licenseId: license.id,
-    customerId: license.customerId,
-    deviceHash,
-    type: "deactivate",
-    createdAt: now
+    if (device.active === false) {
+      return { alreadyInactive: true, serverTime: nowIso() };
+    }
+
+    const now = nowIso();
+    tx.set(path, {
+      ...device,
+      active: false,
+      deactivatedAt: now,
+      updatedAt: now
+    });
+
+    const activationId = randomId("act");
+    tx.create(`projects/${projectId}/activations/${activationId}`, {
+      licenseId: license.id,
+      customerId: license.customerId,
+      deviceHash,
+      type: "deactivate",
+      createdAt: now
+    });
+
+    queueLogInTransaction(
+      tx,
+      projectId,
+      "device.deactivated",
+      { licenseId: license.id, deviceHash },
+      "api",
+      now
+    );
+
+    return { alreadyInactive: false, serverTime: now };
   });
 
-  await writeLog(env, projectId, "device.deactivated", { licenseId: license.id, deviceHash }, "api");
-
-  return { protocolVersion: PROTOCOL_VERSION, ok: true, deactivated: true, serverTime: now };
+  return {
+    protocolVersion: PROTOCOL_VERSION,
+    ok: true,
+    deactivated: true,
+    alreadyInactive: Boolean(outcome.alreadyInactive),
+    serverTime: outcome.serverTime
+  };
 }
-
 
 function publicTrialView(project, trial, extra = {}) {
   const now = nowIso();
