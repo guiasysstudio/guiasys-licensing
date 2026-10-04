@@ -1,3 +1,12 @@
+import {
+  assertAdminId,
+  assertEntityId,
+  assertFirestorePath,
+  assertProjectId,
+  assertSafePathSegment,
+  decodeAdminPathSegments
+} from "./security.js";
+
 // GuiaSys Licensing API — deploy automático via Cloudflare Workers Builds
 const PROTOCOL_VERSION = "GSL-v1";
 const API_VERSION = "1.6.0";
@@ -505,7 +514,8 @@ function docIdFromName(name) {
 
 async function firestoreRequest(env, path, options = {}) {
   const token = await getGoogleAccessToken(env);
-  const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/databases/(default)/documents/${path}`;
+  const safePath = assertFirestorePath(path);
+  const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/databases/(default)/documents/${safePath}`;
 
   const response = await fetch(url, {
     ...options,
@@ -545,7 +555,8 @@ async function setDoc(env, path, value) {
 
 async function deleteDoc(env, path) {
   const token = await getGoogleAccessToken(env);
-  const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/databases/(default)/documents/${path}`;
+  const safePath = assertFirestorePath(path);
+  const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/databases/(default)/documents/${safePath}`;
   const response = await fetch(url, {
     method: "DELETE",
     headers: { "Authorization": `Bearer ${token}` }
@@ -558,12 +569,13 @@ async function deleteDoc(env, path) {
 
 async function listCollection(env, path) {
   const token = await getGoogleAccessToken(env);
+  const safePath = assertFirestorePath(path);
   let pageToken = "";
   const result = [];
 
   do {
     const url = new URL(
-      `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/databases/(default)/documents/${path}`
+      `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/databases/(default)/documents/${safePath}`
     );
     url.searchParams.set("pageSize", "100");
     if (pageToken) url.searchParams.set("pageToken", pageToken);
@@ -748,11 +760,15 @@ async function writeLog(env, projectId, action, details = {}, actor = "admin") {
 }
 
 function projectPath(projectId) {
-  return `projects/${projectId}`;
+  return `projects/${assertProjectId(projectId)}`;
 }
 
 function entityPath(projectId, entity) {
-  return `projects/${projectId}/${entity}`;
+  const safeEntity = assertSafePathSegment(entity, "Entidade");
+  if (!ENTITY_NAMES.has(safeEntity)) {
+    throw Object.assign(new Error("Entidade inválida."), { status: 400, reason: "invalid_identifier" });
+  }
+  return `${projectPath(projectId)}/${safeEntity}`;
 }
 
 async function ensureProjectIntegrationCode(env, project) {
@@ -801,7 +817,8 @@ async function ensureProjectIntegrationCode(env, project) {
 }
 
 async function resolvePublicProject(env, body = {}, origin = "") {
-  const directProjectId = String(body.projectId || "").trim();
+  const directProjectIdRaw = String(body.projectId || "").trim();
+  const directProjectId = directProjectIdRaw ? assertProjectId(directProjectIdRaw) : "";
   const integrationCode = String(body.integrationCode || "").trim().toUpperCase();
 
   let projectId = directProjectId;
@@ -809,6 +826,7 @@ async function resolvePublicProject(env, body = {}, origin = "") {
     const lookupId = await sha256Hex(integrationCode);
     const lookup = await getDoc(env, `integrationCodes/${lookupId}`);
     projectId = String(lookup?.projectId || "");
+    if (projectId) projectId = assertProjectId(projectId);
   }
 
   if (!projectId) {
@@ -948,7 +966,8 @@ async function findLicenseByKey(env, projectId, licenseKey) {
   const lookup = await getDoc(env, `projects/${projectId}/licenseKeys/${lookupId}`);
   if (!lookup?.licenseId) return null;
 
-  const license = await getDoc(env, `projects/${projectId}/licenses/${lookup.licenseId}`);
+  const licenseId = assertEntityId("licenses", lookup.licenseId);
+  const license = await getDoc(env, `${entityPath(projectId, "licenses")}/${licenseId}`);
   return license ? normalizeLicenseStatus(license) : null;
 }
 
@@ -1685,7 +1704,7 @@ async function saveAdminRecord(env, body, existing = null) {
 async function handleAdmin(request, env, origin, url, admin) {
   const method = request.method;
   const path = url.pathname.replace(/^\/api\/v1\/admin\/?/, "");
-  const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
+  const parts = decodeAdminPathSegments(path);
 
   if (parts.length === 1 && parts[0] === "me" && method === "GET") {
     return json({ ok: true, authorized: true, administrator: admin }, 200, origin);
@@ -1708,7 +1727,7 @@ async function handleAdmin(request, env, origin, url, admin) {
       return json({ ok: true, admin: await saveAdminRecord(env, body) }, 201, origin);
     }
 
-    const adminId = parts[1];
+    const adminId = parts[1] ? assertAdminId(parts[1]) : "";
     if (adminId && parts.length === 2) {
       const path = `admins/${adminId}`;
       const existing = await getDoc(env, path);
@@ -1733,7 +1752,8 @@ async function handleAdmin(request, env, origin, url, admin) {
 
   if (parts.length === 1 && parts[0] === "dashboard" && method === "GET") {
     requirePermission(admin, "viewDashboard", "Você não possui permissão para visualizar o dashboard.");
-    const requestedProjectId = url.searchParams.get("projectId") || "";
+    const requestedProjectIdRaw = url.searchParams.get("projectId") || "";
+    const requestedProjectId = requestedProjectIdRaw ? assertProjectId(requestedProjectIdRaw) : "";
     if (requestedProjectId) requireProjectAccess(admin, requestedProjectId);
     return json({ ok: true, dashboard: await dashboard(env, requestedProjectId, admin) }, 200, origin);
   }
@@ -1758,7 +1778,7 @@ async function handleAdmin(request, env, origin, url, admin) {
       }
     }
 
-    const projectId = parts[1];
+    const projectId = parts[1] ? assertProjectId(parts[1]) : "";
     if (!projectId || !(await projectExists(env, projectId))) {
       return errorResponse(origin, 404, "project_not_found", "Projeto não encontrado.");
     }
@@ -1853,8 +1873,9 @@ async function handleAdmin(request, env, origin, url, admin) {
       }
     }
 
-    const entityId = parts[3];
-    if (!entityId) return errorResponse(origin, 404, "not_found", "Registro não informado.");
+    const rawEntityId = parts[3];
+    if (!rawEntityId) return errorResponse(origin, 404, "not_found", "Registro não informado.");
+    const entityId = assertEntityId(entity, rawEntityId);
 
     if (entity === "licenses" && parts.length === 5 && method === "POST") {
       const action = parts[4];
