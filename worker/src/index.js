@@ -1410,7 +1410,7 @@ async function createLicense(env, projectId, body, admin) {
       source: license.source,
       externalOrderId: license.externalOrderId || null,
       idempotent: Boolean(idempotencyPath)
-    }, admin.email || admin.uid, createdAt);
+    }, admin?.email || admin?.uid || license.source || "system", createdAt);
 
     return { id, ...license, idempotentReplay: false };
   });
@@ -1577,6 +1577,9 @@ function publicLicenseView(project, license, extra = {}) {
     expiresAt: license.expiresAt,
     startMode: license.startMode || "first_activation",
     durationDays: Number(license.durationDays || 0),
+    renewalDaysTotal: Number(license.renewalDaysTotal || 0),
+    renewalCount: Number(license.renewalCount || 0),
+    totalTermDays: license.lifetime ? 0 : totalActivationDays(license),
     lifetime: Boolean(license.lifetime),
     maxDevices: Number(license.maxDevices || 1),
     offlineDays: Number(project.offlineDays || 0),
@@ -1608,25 +1611,22 @@ async function publicActivate(env, body, origin = "") {
       });
     }
 
-    if (["revoked", "suspended"].includes(license.status)) {
-      throw Object.assign(new Error(`Licença ${license.status}.`), {
-        status: 403,
-        reason: license.status
-      });
-    }
-
     const now = nowIso();
     const licensePath = `projects/${projectId}/licenses/${license.id}`;
+    const effectiveStatus = effectiveLicenseStatus(license, now);
 
-    if (license.status === "expired" || (license.expiresAt && isPast(license.expiresAt))) {
-      const expiredLicense = {
-        ...license,
-        status: "expired",
-        updatedAt: now
-      };
-      tx.set(licensePath, expiredLicense);
+    if (effectiveStatus === "expired") {
+      if (license.status !== "expired") {
+        tx.set(licensePath, {
+          ...license,
+          status: "expired",
+          updatedAt: now
+        });
+      }
       return { expired: true };
     }
+
+    assertLicenseCanActivate({ ...license, status: effectiveStatus }, now);
 
     const devicePath = `projects/${projectId}/devices/${deviceHash}`;
     const trialPath = `projects/${projectId}/trials/${deviceHash}`;
@@ -1645,6 +1645,22 @@ async function publicActivate(env, body, origin = "") {
       existingDevice?.active &&
       existingDevice.licenseId === license.id
     );
+    const activeOtherLicense = Boolean(
+      existingDevice?.active &&
+      existingDevice.licenseId &&
+      existingDevice.licenseId !== license.id
+    );
+
+    if (activeOtherLicense) {
+      throw Object.assign(
+        new Error("Este dispositivo está ativo em outra licença. Desative-o antes de reutilizar o mesmo Device ID."),
+        {
+          status: 409,
+          reason: "device_bound_to_other_license",
+          details: { previousLicenseId: existingDevice.licenseId }
+        }
+      );
+    }
 
     if (!sameActiveDevice && activeDevices.length >= Number(license.maxDevices || 1)) {
       throw Object.assign(new Error("Limite de dispositivos atingido."), {
@@ -1658,15 +1674,16 @@ async function publicActivate(env, body, origin = "") {
         ...license,
         status: "active",
         activatedAt: now,
-        expiresAt: license.lifetime ? null : plusDays(now, license.durationDays),
+        expiresAt: license.lifetime ? null : plusDays(now, totalActivationDays(license)),
         updatedAt: now
       };
       tx.set(licensePath, license);
     }
 
     const sameLicenseBefore = existingDevice?.licenseId === license.id;
-    const switchedLicense = Boolean(
-      existingDevice?.active &&
+    const reboundFromLicense = Boolean(
+      existingDevice &&
+      existingDevice.active === false &&
       existingDevice.licenseId &&
       existingDevice.licenseId !== license.id
     );
@@ -1692,17 +1709,19 @@ async function publicActivate(env, body, origin = "") {
       licenseId: license.id,
       customerId: license.customerId,
       deviceHash,
-      type: sameActiveDevice ? "revalidate" : (switchedLicense ? "switch_license" : "activate"),
+      type: sameActiveDevice
+        ? "revalidate"
+        : (sameLicenseBefore ? "reactivate_device" : (reboundFromLicense ? "rebind_license" : "activate")),
       createdAt: now
     });
 
     queueLogInTransaction(
       tx,
       projectId,
-      switchedLicense ? "device.license_reassigned" : "license.activated",
+      reboundFromLicense ? "device.license_rebound" : "license.activated",
       {
         licenseId: license.id,
-        previousLicenseId: switchedLicense ? existingDevice.licenseId : null,
+        previousLicenseId: reboundFromLicense ? existingDevice.licenseId : null,
         deviceHash
       },
       "api",
