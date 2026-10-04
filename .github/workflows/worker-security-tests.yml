@@ -7,12 +7,16 @@ on:
       - "fix/**"
     paths:
       - "worker/**"
+      - "assets/js/app.js"
+      - "index.html"
       - ".github/workflows/worker-security-tests.yml"
   pull_request:
     branches:
       - main
     paths:
       - "worker/**"
+      - "assets/js/app.js"
+      - "index.html"
       - ".github/workflows/worker-security-tests.yml"
 
 permissions:
@@ -35,3 +39,6 @@ jobs:
       - name: Run Worker security tests
         working-directory: worker
         run: npm test
+
+      - name: Check frontend JavaScript syntax
+        run: node --experimental-default-type=module --check assets/js/app.js
