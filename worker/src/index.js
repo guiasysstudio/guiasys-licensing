@@ -1922,6 +1922,7 @@ async function publicActivate(env, body, origin = "") {
     );
 
     tx.set(devicePath, {
+      ...(existingDevice || {}),
       licenseId: license.id,
       customerId: license.customerId,
       deviceHash,
@@ -1937,29 +1938,36 @@ async function publicActivate(env, body, origin = "") {
       updatedAt: now
     });
 
-    const activationId = randomId("act");
-    tx.create(`projects/${projectId}/activations/${activationId}`, {
-      licenseId: license.id,
-      customerId: license.customerId,
-      deviceHash,
-      type: sameActiveDevice
-        ? "revalidate"
-        : (sameLicenseBefore ? "reactivate_device" : (reboundFromLicense ? "rebind_license" : "activate")),
-      createdAt: now
-    });
+    if (!sameActiveDevice) {
+      const activationId = randomId("act");
+      const activationType = sameLicenseBefore
+        ? "reactivate_device"
+        : (reboundFromLicense ? "rebind_license" : "activate");
 
-    queueLogInTransaction(
-      tx,
-      projectId,
-      reboundFromLicense ? "device.license_rebound" : "license.activated",
-      {
+      tx.create(`projects/${projectId}/activations/${activationId}`, {
         licenseId: license.id,
-        previousLicenseId: reboundFromLicense ? existingDevice.licenseId : null,
-        deviceHash
-      },
-      "api",
-      now
-    );
+        customerId: license.customerId,
+        deviceHash,
+        type: activationType,
+        requestId: body.requestId || null,
+        createdAt: now
+      });
+
+      queueLogInTransaction(
+        tx,
+        projectId,
+        reboundFromLicense ? "device.license_rebound" : "license.activated",
+        {
+          licenseId: license.id,
+          previousLicenseId: reboundFromLicense ? existingDevice.licenseId : null,
+          deviceHash,
+          activationType,
+          requestId: body.requestId || null
+        },
+        "api",
+        now
+      );
+    }
 
     if (existingTrial && !["expired", "converted"].includes(existingTrial.status)) {
       tx.set(trialPath, {
@@ -1985,6 +1993,8 @@ async function publicActivate(env, body, origin = "") {
       expired: false,
       license,
       activeDevices: sameActiveDevice ? activeDevices.length : activeDevices.length + 1,
+      activationPerformed: !sameActiveDevice,
+      alreadyActive: sameActiveDevice,
       serverTime: now
     };
   });
@@ -1998,6 +2008,8 @@ async function publicActivate(env, body, origin = "") {
 
   const view = publicLicenseView(project, outcome.license, {
     activeDevices: outcome.activeDevices,
+    activationPerformed: outcome.activationPerformed,
+    alreadyActive: outcome.alreadyActive,
     serverTime: outcome.serverTime
   });
   return await attachSignedEntitlement(env, project, view, deviceHash);
