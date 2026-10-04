@@ -1294,70 +1294,96 @@ async function createLicense(env, projectId, body, admin) {
 
 async function updateEntity(env, projectId, entity, id, body, admin) {
   const path = `${entityPath(projectId, entity)}/${id}`;
-  const current = await getDoc(env, path);
-  if (!current) throw Object.assign(new Error("Registro não encontrado."), { status: 404 });
-
   const clean = entity === "plans"
     ? validatePlanPayload(body, { partial: true })
     : validateCustomerPayload(body, { partial: true });
 
-  if (entity === "plans") {
-    if ("price" in clean) clean.price = Math.max(0, Number(clean.price || 0));
-    if ("durationDays" in clean) clean.durationDays = Math.max(1, Number(clean.durationDays || 1));
-    if ("deviceLimit" in clean) clean.deviceLimit = Math.max(1, Number(clean.deviceLimit || 1));
-    if ("startMode" in clean && !["first_activation", "immediate"].includes(clean.startMode)) {
-      clean.startMode = "first_activation";
+  return await atomicClient(env).runTransaction(async tx => {
+    const current = await tx.get(path);
+    if (!current) {
+      throw Object.assign(new Error("Registro não encontrado."), { status: 404 });
     }
-    if ("publicCatalog" in clean) clean.publicCatalog = Boolean(clean.publicCatalog);
-    if (clean.lifetime) clean.durationDays = 0;
-  }
 
-  const saved = await setDoc(env, path, { ...current, ...clean, updatedAt: nowIso() });
-  await writeLog(env, projectId, `${entity.slice(0, -1)}.updated`, { id }, admin.email || admin.uid);
-  return saved;
+    if (entity === "plans") {
+      if ("price" in clean) clean.price = Math.max(0, Number(clean.price || 0));
+      if ("durationDays" in clean) clean.durationDays = Math.max(1, Number(clean.durationDays || 1));
+      if ("deviceLimit" in clean) clean.deviceLimit = Math.max(1, Number(clean.deviceLimit || 1));
+      if ("startMode" in clean && !["first_activation", "immediate"].includes(clean.startMode)) {
+        clean.startMode = "first_activation";
+      }
+      if ("publicCatalog" in clean) clean.publicCatalog = Boolean(clean.publicCatalog);
+      if (clean.lifetime) clean.durationDays = 0;
+    }
+
+    const saved = { ...current, ...clean, updatedAt: nowIso() };
+    tx.set(path, saved);
+    queueLogInTransaction(
+      tx,
+      projectId,
+      `${entity.slice(0, -1)}.updated`,
+      { id },
+      admin.email || admin.uid,
+      saved.updatedAt
+    );
+
+    return { id, ...saved };
+  });
 }
 
 async function licenseAction(env, projectId, licenseId, action, body, admin) {
   body = validateLicenseActionPayload(action, body);
   const path = `${entityPath(projectId, "licenses")}/${licenseId}`;
-  const current = await getDoc(env, path);
-  if (!current) throw Object.assign(new Error("Licença não encontrada."), { status: 404 });
 
-  const now = nowIso();
-  let next = { ...current, updatedAt: now };
-
-  if (action === "revoke") {
-    next.status = "revoked";
-    next.revokedAt = now;
-    next.revocationReason = String(body.reason || "").trim();
-  } else if (action === "suspend") {
-    next.status = "suspended";
-    next.suspendedAt = now;
-  } else if (action === "reactivate") {
-    next.status = current.activatedAt ? "active" : "pending";
-    next.suspendedAt = null;
-    next.revokedAt = null;
-    next.revocationReason = "";
-  } else if (action === "renew") {
-    const days = Math.max(1, Number(body.days || current.durationDays || 30));
-    next.lifetime = Boolean(body.lifetime ?? current.lifetime);
-
-    if (next.lifetime) {
-      next.expiresAt = null;
-      if (next.status === "expired") next.status = "active";
-    } else {
-      const base = current.expiresAt && !isPast(current.expiresAt) ? current.expiresAt : now;
-      next.expiresAt = plusDays(base, days);
-      next.durationDays = days;
-      if (["expired", "pending"].includes(next.status) && next.activatedAt) next.status = "active";
+  return await atomicClient(env).runTransaction(async tx => {
+    const current = await tx.get(path);
+    if (!current) {
+      throw Object.assign(new Error("Licença não encontrada."), { status: 404 });
     }
-  } else {
-    throw Object.assign(new Error("Ação de licença inválida."), { status: 400 });
-  }
 
-  const saved = await setDoc(env, path, next);
-  await writeLog(env, projectId, `license.${action}`, { licenseId, ...body }, admin.email || admin.uid);
-  return normalizeLicenseStatus(saved);
+    const now = nowIso();
+    let next = { ...current, updatedAt: now };
+
+    if (action === "revoke") {
+      next.status = "revoked";
+      next.revokedAt = now;
+      next.revocationReason = String(body.reason || "").trim();
+    } else if (action === "suspend") {
+      next.status = "suspended";
+      next.suspendedAt = now;
+    } else if (action === "reactivate") {
+      next.status = current.activatedAt ? "active" : "pending";
+      next.suspendedAt = null;
+      next.revokedAt = null;
+      next.revocationReason = "";
+    } else if (action === "renew") {
+      const days = Math.max(1, Number(body.days || current.durationDays || 30));
+      next.lifetime = Boolean(body.lifetime ?? current.lifetime);
+
+      if (next.lifetime) {
+        next.expiresAt = null;
+        if (next.status === "expired") next.status = "active";
+      } else {
+        const base = current.expiresAt && !isPast(current.expiresAt) ? current.expiresAt : now;
+        next.expiresAt = plusDays(base, days);
+        next.durationDays = days;
+        if (["expired", "pending"].includes(next.status) && next.activatedAt) next.status = "active";
+      }
+    } else {
+      throw Object.assign(new Error("Ação de licença inválida."), { status: 400 });
+    }
+
+    tx.set(path, next);
+    queueLogInTransaction(
+      tx,
+      projectId,
+      `license.${action}`,
+      { licenseId, ...body },
+      admin.email || admin.uid,
+      now
+    );
+
+    return normalizeLicenseStatus({ id: licenseId, ...next });
+  });
 }
 
 function todayInBrazil(iso = nowIso()) {
