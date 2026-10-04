@@ -6,6 +6,19 @@ import {
   assertSafePathSegment,
   decodeAdminPathSegments
 } from "./security.js";
+import { fetchWithTimeout } from "./network.js";
+import {
+  readJsonBody,
+  validateAdminPayload,
+  validateCustomerPayload,
+  validateLicenseActionPayload,
+  validateLicenseCreatePayload,
+  validatePlanPayload,
+  validateProjectPayload,
+  validatePublicLicensePayload,
+  validatePublicProjectPayload,
+  validatePublicTrialPayload
+} from "./validation.js";
 
 // GuiaSys Licensing API — deploy automático via Cloudflare Workers Builds
 const PROTOCOL_VERSION = "GSL-v1";
@@ -161,15 +174,7 @@ function assertProjectOrigin(project, origin) {
 }
 
 async function readJson(request) {
-  const contentType = request.headers.get("Content-Type") || "";
-  if (!contentType.includes("application/json")) {
-    throw Object.assign(new Error("O corpo da requisição deve ser JSON."), { status: 415, reason: "invalid_request" });
-  }
-  try {
-    return await request.json();
-  } catch {
-    throw Object.assign(new Error("JSON inválido."), { status: 400, reason: "invalid_request" });
-  }
+  return await readJsonBody(request);
 }
 
 function nowIso() {
@@ -290,11 +295,18 @@ async function getFirebasePublicKeys() {
     return firebaseKeyCache.keys;
   }
 
-  const response = await fetch(
-    "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"
+  const response = await fetchWithTimeout(
+    "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com",
+    {},
+    8_000
   );
 
-  if (!response.ok) throw new Error("Não foi possível obter as chaves públicas do Firebase.");
+  if (!response.ok) {
+    throw Object.assign(new Error("Serviço de autenticação temporariamente indisponível."), {
+      status: 502,
+      reason: "upstream_error"
+    });
+  }
 
   const data = await response.json();
   if (!Array.isArray(data.keys)) throw new Error("Resposta inválida das chaves públicas do Firebase.");
@@ -413,6 +425,14 @@ async function requireAdmin(request, env) {
     if (error?.status === 403) {
       return { ok: false, status: 403, error: "admin_required", message: error.message };
     }
+    if (Number(error?.status) >= 500) {
+      return {
+        ok: false,
+        status: Number(error.status),
+        error: error.reason || "auth_unavailable",
+        message: "Serviço de autenticação temporariamente indisponível."
+      };
+    }
     return { ok: false, status: 401, error: "invalid_token", message: error.message };
   }
 }
@@ -449,18 +469,21 @@ async function getGoogleAccessToken(env) {
     new TextEncoder().encode(unsignedToken)
   );
 
-  const response = await fetch("https://oauth2.googleapis.com/token", {
+  const response = await fetchWithTimeout("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
       assertion: `${unsignedToken}.${base64UrlEncode(signature)}`
     })
-  });
+  }, 8_000);
 
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(`Falha ao obter token Google: ${data.error_description || data.error || response.status}`);
+    throw Object.assign(new Error("Não foi possível autenticar o backend no Google."), {
+      status: 502,
+      reason: "upstream_error"
+    });
   }
 
   googleTokenCache = {
@@ -476,6 +499,12 @@ function toFirestoreValue(value) {
   if (typeof value === "string") return { stringValue: value };
   if (typeof value === "boolean") return { booleanValue: value };
   if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw Object.assign(new Error("Valor numérico interno inválido."), {
+        status: 500,
+        reason: "invalid_internal_value"
+      });
+    }
     return Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
   }
   if (Array.isArray(value)) return { arrayValue: { values: value.map(toFirestoreValue) } };
@@ -517,22 +546,23 @@ async function firestoreRequest(env, path, options = {}) {
   const safePath = assertFirestorePath(path);
   const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/databases/(default)/documents/${safePath}`;
 
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     ...options,
     headers: {
       "Authorization": `Bearer ${token}`,
       ...(options.body ? { "Content-Type": "application/json" } : {}),
       ...(options.headers || {})
     }
-  });
+  }, 10_000);
 
   if (response.status === 404) return null;
 
-  const data = response.status === 204 ? null : await response.json();
+  const data = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
-    throw Object.assign(new Error(data?.error?.message || `Firestore respondeu ${response.status}`), {
-      status: response.status,
-      firestore: data
+    throw Object.assign(new Error("Falha ao acessar o Firestore."), {
+      status: 502,
+      reason: "upstream_error",
+      firestoreStatus: response.status
     });
   }
 
@@ -557,13 +587,16 @@ async function deleteDoc(env, path) {
   const token = await getGoogleAccessToken(env);
   const safePath = assertFirestorePath(path);
   const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/databases/(default)/documents/${safePath}`;
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: "DELETE",
     headers: { "Authorization": `Bearer ${token}` }
-  });
+  }, 10_000);
   if (![200, 204, 404].includes(response.status)) {
-    const data = await response.json().catch(() => null);
-    throw new Error(data?.error?.message || `Falha ao excluir documento: ${response.status}`);
+    throw Object.assign(new Error("Falha ao acessar o Firestore."), {
+      status: 502,
+      reason: "upstream_error",
+      firestoreStatus: response.status
+    });
   }
 }
 
@@ -580,12 +613,22 @@ async function listCollection(env, path) {
     url.searchParams.set("pageSize", "100");
     if (pageToken) url.searchParams.set("pageToken", pageToken);
 
-    const response = await fetch(url, { headers: { "Authorization": `Bearer ${token}` } });
+    const response = await fetchWithTimeout(
+      url,
+      { headers: { "Authorization": `Bearer ${token}` } },
+      10_000
+    );
 
     if (response.status === 404) return [];
 
-    const data = await response.json();
-    if (!response.ok) throw new Error(data?.error?.message || `Firestore respondeu ${response.status}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw Object.assign(new Error("Falha ao acessar o Firestore."), {
+        status: 502,
+        reason: "upstream_error",
+        firestoreStatus: response.status
+      });
+    }
 
     for (const doc of data.documents || []) {
       result.push({ id: docIdFromName(doc.name), ...fromFirestoreFields(doc.fields || {}) });
@@ -976,6 +1019,7 @@ async function projectExists(env, projectId) {
 }
 
 async function createProject(env, body, admin) {
+  body = validateProjectPayload(body);
   const name = String(body.name || "").trim();
   if (!name) throw Object.assign(new Error("Informe o nome do projeto."), { status: 400 });
 
@@ -1014,6 +1058,7 @@ async function createProject(env, body, admin) {
 }
 
 async function createPlan(env, projectId, body, admin) {
+  body = validatePlanPayload(body);
   const name = String(body.name || "").trim();
   if (!name) throw Object.assign(new Error("Informe o nome do plano."), { status: 400 });
 
@@ -1045,6 +1090,7 @@ async function createPlan(env, projectId, body, admin) {
 }
 
 async function createCustomer(env, projectId, body, admin) {
+  body = validateCustomerPayload(body);
   const name = String(body.name || "").trim();
   const email = String(body.email || "").trim().toLowerCase();
   if (!name || !email) throw Object.assign(new Error("Informe nome e e-mail do cliente."), { status: 400 });
@@ -1067,7 +1113,8 @@ async function createCustomer(env, projectId, body, admin) {
 }
 
 async function createLicense(env, projectId, body, admin) {
-  const customerId = String(body.customerId || "");
+  body = validateLicenseCreatePayload(body);
+  const customerId = assertEntityId("customers", body.customerId);
   if (!customerId) throw Object.assign(new Error("Selecione um cliente."), { status: 400 });
 
   const customer = await getDoc(env, `${entityPath(projectId, "customers")}/${customerId}`);
@@ -1078,7 +1125,8 @@ async function createLicense(env, projectId, body, admin) {
 
   let plan = null;
   if (body.planId) {
-    plan = await getDoc(env, `${entityPath(projectId, "plans")}/${body.planId}`);
+    const planId = assertEntityId("plans", body.planId);
+    plan = await getDoc(env, `${entityPath(projectId, "plans")}/${planId}`);
     if (!plan) throw Object.assign(new Error("Plano não encontrado."), { status: 404 });
   }
 
@@ -1151,10 +1199,9 @@ async function updateEntity(env, projectId, entity, id, body, admin) {
   const current = await getDoc(env, path);
   if (!current) throw Object.assign(new Error("Registro não encontrado."), { status: 404 });
 
-  const protectedFields = new Set(["id", "createdAt", "key", "customerId"]);
-  const clean = Object.fromEntries(
-    Object.entries(body).filter(([key]) => !protectedFields.has(key))
-  );
+  const clean = entity === "plans"
+    ? validatePlanPayload(body, { partial: true })
+    : validateCustomerPayload(body, { partial: true });
 
   if (entity === "plans") {
     if ("price" in clean) clean.price = Math.max(0, Number(clean.price || 0));
@@ -1167,17 +1214,13 @@ async function updateEntity(env, projectId, entity, id, body, admin) {
     if (clean.lifetime) clean.durationDays = 0;
   }
 
-  if (entity === "projects") {
-    if ("prefix" in clean) clean.prefix = normalizePrefix(clean.prefix);
-    if ("slug" in clean) clean.slug = slugify(clean.slug);
-  }
-
   const saved = await setDoc(env, path, { ...current, ...clean, updatedAt: nowIso() });
   await writeLog(env, projectId, `${entity.slice(0, -1)}.updated`, { id }, admin.email || admin.uid);
   return saved;
 }
 
 async function licenseAction(env, projectId, licenseId, action, body, admin) {
+  body = validateLicenseActionPayload(action, body);
   const path = `${entityPath(projectId, "licenses")}/${licenseId}`;
   const current = await getDoc(env, path);
   if (!current) throw Object.assign(new Error("Licença não encontrada."), { status: 404 });
@@ -1313,6 +1356,7 @@ function publicLicenseView(project, license, extra = {}) {
 }
 
 async function publicActivate(env, body, origin = "") {
+  body = validatePublicLicensePayload(body);
   const { projectId, project } = await resolvePublicProject(env, body, origin);
   const licenseKey = normalizeLicenseKey(body.licenseKey);
   const deviceId = String(body.deviceId || "");
@@ -1409,6 +1453,7 @@ async function publicActivate(env, body, origin = "") {
 }
 
 async function publicValidate(env, body, origin = "") {
+  body = validatePublicLicensePayload(body);
   const { projectId, project } = await resolvePublicProject(env, body, origin);
   const licenseKey = normalizeLicenseKey(body.licenseKey);
   const deviceId = String(body.deviceId || "");
@@ -1442,6 +1487,7 @@ async function publicValidate(env, body, origin = "") {
 }
 
 async function publicDeactivate(env, body, origin = "") {
+  body = validatePublicLicensePayload(body);
   const { projectId } = await resolvePublicProject(env, body, origin);
   const licenseKey = normalizeLicenseKey(body.licenseKey);
   const deviceId = String(body.deviceId || "");
@@ -1504,11 +1550,13 @@ function publicTrialView(project, trial, extra = {}) {
 }
 
 async function publicProjectConfig(env, body, origin = "") {
+  body = validatePublicProjectPayload(body);
   const { project } = await resolvePublicProject(env, body, origin);
   return publicProjectConfigView(project);
 }
 
 async function publicTrialStart(env, body, origin = "") {
+  body = validatePublicTrialPayload(body);
   const { projectId, project } = await resolvePublicProject(env, body, origin);
   const deviceId = String(body.deviceId || "").trim();
   if (!deviceId) {
@@ -1584,6 +1632,7 @@ async function publicTrialStart(env, body, origin = "") {
 }
 
 async function publicTrialValidate(env, body, origin = "") {
+  body = validatePublicTrialPayload(body);
   const { projectId, project } = await resolvePublicProject(env, body, origin);
   const deviceId = String(body.deviceId || "").trim();
   if (!deviceId) {
@@ -1674,6 +1723,7 @@ async function listAdminRecords(env) {
 }
 
 async function saveAdminRecord(env, body, existing = null) {
+  body = validateAdminPayload(body, { partial: Boolean(existing) });
   const email = String(body.email ?? existing?.email ?? "").trim().toLowerCase();
   if (!email || !email.includes("@")) {
     throw Object.assign(new Error("Informe um e-mail válido para o administrador."), { status: 400 });
@@ -1793,7 +1843,7 @@ async function handleAdmin(request, env, origin, url, admin) {
       if (method === "PATCH") {
         requirePermission(admin, "manageProjectSettings", "Você não possui permissão para alterar as configurações deste projeto.");
         const current = await getDoc(env, projectPath(projectId));
-        const body = await readJson(request);
+        const body = validateProjectPayload(await readJson(request), { partial: true });
         const next = {
           ...current,
           ...body,
@@ -1948,6 +1998,18 @@ async function handleAdmin(request, env, origin, url, admin) {
   return errorResponse(origin, 404, "not_found", "Rota administrativa não encontrada.");
 }
 
+const ROUTE_METHODS = Object.freeze({
+  "/": "GET",
+  "/health": "GET",
+  "/api/v1/catalog": "GET",
+  "/api/v1/project/config": "POST",
+  "/api/v1/trial/start": "POST",
+  "/api/v1/trial/validate": "POST",
+  "/api/v1/license/activate": "POST",
+  "/api/v1/license/validate": "POST",
+  "/api/v1/license/deactivate": "POST"
+});
+
 function isPublicApiPath(pathname) {
   return [
     "/api/v1/catalog",
@@ -1968,6 +2030,18 @@ export default {
 
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders(origin, publicApi) });
+    }
+
+    const expectedMethod = ROUTE_METHODS[url.pathname];
+    if (expectedMethod && request.method !== expectedMethod) {
+      return errorResponse(
+        origin,
+        405,
+        "method_not_allowed",
+        `Use o método ${expectedMethod} para esta rota.`,
+        { expectedMethod },
+        publicApi
+      );
     }
 
     try {
@@ -2043,12 +2117,25 @@ export default {
       return errorResponse(origin, 404, "not_found", "Rota não encontrada.", null, publicApi);
     } catch (error) {
       console.error(error);
+
+      const requestedStatus = Number(error?.status);
+      const status = Number.isInteger(requestedStatus) && requestedStatus >= 400 && requestedStatus <= 599
+        ? requestedStatus
+        : 500;
+      const serverError = status >= 500;
+      const safeError = serverError
+        ? (["upstream_error", "upstream_timeout"].includes(error?.reason) ? error.reason : "internal_error")
+        : (error?.reason || "invalid_request");
+      const safeMessage = serverError
+        ? (status === 504 ? "Serviço temporariamente indisponível." : "Erro interno do servidor.")
+        : (error?.message || "Requisição inválida.");
+
       return errorResponse(
         origin,
-        Number(error.status || 500),
-        error.reason || "internal_error",
-        error.message || "Erro interno do servidor.",
-        error.status >= 500 ? null : error.details || null,
+        status,
+        safeError,
+        safeMessage,
+        serverError ? null : error?.details || null,
         publicApi
       );
     }
