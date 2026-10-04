@@ -1376,12 +1376,18 @@ async function licensesView() {
 
 function openLicenseActions(license) {
   const actions = [];
+  const suspendedExpired = Boolean(
+    license.status === "suspended" &&
+    !license.lifetime &&
+    license.expiresAt &&
+    new Date(license.expiresAt).getTime() <= Date.now()
+  );
 
   if (!license.lifetime && license.status !== "revoked") {
     actions.push(["renew", "Renovar", "primary"]);
   }
 
-  if (license.status === "suspended") {
+  if (license.status === "suspended" && !suspendedExpired) {
     actions.push(["reactivate", "Reativar", "primary"]);
   } else if (["active", "pending"].includes(license.status)) {
     actions.push(["suspend", "Suspender", "ghost"]);
