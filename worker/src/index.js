@@ -674,50 +674,38 @@ async function enforceRateLimit(env, request, bucket, limit, windowSeconds) {
   const clientId = forwarded || "unknown";
   const id = await sha256Hex(`${clientId}|${bucket}`);
   const path = `rateLimits/${id}`;
+  const clientHash = await sha256Hex(clientId);
   const now = Date.now();
-  const current = await getDoc(env, path);
-  const windowStartedMs = current?.windowStartedAt ? new Date(current.windowStartedAt).getTime() : 0;
-  const sameWindow = current && Number.isFinite(windowStartedMs) && now - windowStartedMs < windowSeconds * 1000;
-  const count = sameWindow ? Number(current.count || 0) : 0;
 
-  if (count >= limit) {
-    const retryAfterSeconds = Math.max(1, Math.ceil((windowSeconds * 1000 - (now - windowStartedMs)) / 1000));
-    throw Object.assign(new Error("Muitas requisições. Aguarde e tente novamente."), {
-      status: 429,
-      reason: "rate_limited",
-      details: { retryAfterSeconds }
+  await atomicClient(env).runTransaction(async tx => {
+    const current = await tx.get(path);
+    const windowStartedMs = current?.windowStartedAt ? new Date(current.windowStartedAt).getTime() : 0;
+    const sameWindow = current && Number.isFinite(windowStartedMs) && now - windowStartedMs < windowSeconds * 1000;
+    const count = sameWindow ? Number(current.count || 0) : 0;
+
+    if (count >= limit) {
+      const retryAfterSeconds = Math.max(
+        1,
+        Math.ceil((windowSeconds * 1000 - (now - windowStartedMs)) / 1000)
+      );
+      throw Object.assign(new Error("Muitas requisições. Aguarde e tente novamente."), {
+        status: 429,
+        reason: "rate_limited",
+        details: { retryAfterSeconds }
+      });
+    }
+
+    tx.set(path, {
+      bucket,
+      clientHash,
+      count: count + 1,
+      windowStartedAt: sameWindow ? current.windowStartedAt : new Date(now).toISOString(),
+      updatedAt: new Date(now).toISOString()
     });
-  }
-
-  await setDoc(env, path, {
-    bucket,
-    clientHash: await sha256Hex(clientId),
-    count: count + 1,
-    windowStartedAt: sameWindow ? current.windowStartedAt : new Date(now).toISOString(),
-    updatedAt: new Date(now).toISOString()
   });
 }
 
-async function ensureProjectSigningKey(env, project) {
-  if (!project) return null;
-
-  const signingPath = `projects/${project.id}/internal/signing`;
-  let stored = await getDoc(env, signingPath);
-
-  if (stored?.privateJwk && stored?.publicJwk && stored?.keyId) {
-    if (project.signingKeyId === stored.keyId && project.signingPublicJwk?.x && project.signingPublicJwk?.y) {
-      return project;
-    }
-
-    return await setDoc(env, projectPath(project.id), {
-      ...project,
-      signingKeyId: stored.keyId,
-      signingAlgorithm: "ES256",
-      signingPublicJwk: stored.publicJwk,
-      updatedAt: nowIso()
-    });
-  }
-
+async function generateSigningMaterial() {
   const keyPair = await crypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-256" },
     true,
@@ -728,21 +716,63 @@ async function ensureProjectSigningKey(env, project) {
   const keyId = randomId("sig");
   const createdAt = nowIso();
 
-  stored = await setDoc(env, signingPath, {
+  return {
     keyId,
     algorithm: "ES256",
     privateJwk,
     publicJwk,
     createdAt,
     updatedAt: createdAt
-  });
+  };
+}
 
-  return await setDoc(env, projectPath(project.id), {
-    ...project,
-    signingKeyId: stored.keyId,
-    signingAlgorithm: "ES256",
-    signingPublicJwk: stored.publicJwk,
-    updatedAt: createdAt
+async function ensureProjectSigningKey(env, project) {
+  if (!project) return null;
+
+  return await atomicClient(env).runTransaction(async tx => {
+    const projectPathValue = projectPath(project.id);
+    const signingPath = `projects/${project.id}/internal/signing`;
+    const currentProject = await tx.get(projectPathValue);
+    if (!currentProject) {
+      throw Object.assign(new Error("Projeto não encontrado."), {
+        status: 404,
+        reason: "project_not_found"
+      });
+    }
+
+    const stored = await tx.get(signingPath);
+    if (stored?.privateJwk && stored?.publicJwk && stored?.keyId) {
+      if (
+        currentProject.signingKeyId === stored.keyId &&
+        currentProject.signingPublicJwk?.x &&
+        currentProject.signingPublicJwk?.y
+      ) {
+        return currentProject;
+      }
+
+      const synced = {
+        ...currentProject,
+        signingKeyId: stored.keyId,
+        signingAlgorithm: "ES256",
+        signingPublicJwk: stored.publicJwk,
+        updatedAt: nowIso()
+      };
+      tx.set(projectPathValue, synced);
+      return synced;
+    }
+
+    const material = await generateSigningMaterial();
+    tx.create(signingPath, material);
+
+    const synced = {
+      ...currentProject,
+      signingKeyId: material.keyId,
+      signingAlgorithm: "ES256",
+      signingPublicJwk: material.publicJwk,
+      updatedAt: material.createdAt
+    };
+    tx.set(projectPathValue, synced);
+    return synced;
   });
 }
 
