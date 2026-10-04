@@ -388,6 +388,59 @@ function bearerToken(request) {
   return request.headers.get("Authorization")?.match(/^Bearer\s+(.+)$/i)?.[1] || null;
 }
 
+async function bindAdminIdentity(env, adminId, baseUser) {
+  return await atomicClient(env).runTransaction(async tx => {
+    const path = `admins/${adminId}`;
+    const current = await tx.get(path);
+
+    if (!current || current.status !== "active") {
+      throw Object.assign(new Error("Esta conta não possui acesso administrativo."), {
+        status: 403,
+        reason: "admin_required"
+      });
+    }
+
+    if (String(current.email || "").trim().toLowerCase() !== String(baseUser.email || "").trim().toLowerCase()) {
+      throw Object.assign(new Error("Identidade administrativa inconsistente."), {
+        status: 403,
+        reason: "admin_identity_mismatch"
+      });
+    }
+
+    if (current.firebaseUid && current.firebaseUid !== baseUser.uid) {
+      throw Object.assign(new Error("Esta conta Firebase não corresponde ao administrador cadastrado."), {
+        status: 403,
+        reason: "admin_identity_mismatch"
+      });
+    }
+
+    if (!current.firebaseUid) {
+      const now = nowIso();
+      const next = {
+        ...current,
+        firebaseUid: baseUser.uid,
+        identityBoundAt: now,
+        updatedAt: now
+      };
+      tx.set(path, next);
+      queuePlatformLogInTransaction(
+        tx,
+        "admin.identity_bound",
+        {
+          adminId,
+          email: current.email,
+          signInProvider: baseUser.signInProvider
+        },
+        baseUser.email || baseUser.uid,
+        now
+      );
+      return next;
+    }
+
+    return current;
+  });
+}
+
 async function requireAdmin(request, env) {
   const token = bearerToken(request);
   if (!token) {
@@ -396,12 +449,18 @@ async function requireAdmin(request, env) {
 
   try {
     const user = await verifyFirebaseIdToken(token, env);
+    const account = await getFirebaseAccountState(env, user.sub);
+    assertAccountTokenStillValid(account, user);
+
     const baseUser = {
       uid: user.sub,
-      email: user.email || null,
-      name: user.name || null,
-      picture: user.picture || null,
-      emailVerified: Boolean(user.email_verified)
+      email: user.email || account?.email || null,
+      name: user.name || account?.displayName || null,
+      picture: user.picture || account?.photoUrl || null,
+      emailVerified: Boolean(account?.emailVerified ?? user.email_verified),
+      authTime: Number(user.auth_time),
+      issuedAt: Number(user.iat),
+      signInProvider: String(user.firebase?.sign_in_provider || "")
     };
 
     if (user.sub === env.ADMIN_FIREBASE_UID) {
@@ -419,15 +478,16 @@ async function requireAdmin(request, env) {
     }
 
     if (!baseUser.email || !baseUser.emailVerified) {
-      return { ok: false, status: 403, error: "admin_required", message: "Esta conta não possui acesso administrativo." };
+      return {
+        ok: false,
+        status: 403,
+        error: "admin_required",
+        message: "Esta conta não possui e-mail verificado para acesso administrativo."
+      };
     }
 
     const adminId = await sha256Hex(baseUser.email.toLowerCase());
-    const record = await getDoc(env, `admins/${adminId}`);
-
-    if (!record || record.status !== "active") {
-      return { ok: false, status: 403, error: "admin_required", message: "Esta conta não possui acesso administrativo." };
-    }
+    const record = await bindAdminIdentity(env, adminId, baseUser);
 
     return {
       ok: true,
@@ -438,12 +498,18 @@ async function requireAdmin(request, env) {
         role: "admin",
         allProjects: Boolean(record.allProjects),
         projectIds: Array.isArray(record.projectIds) ? record.projectIds : [],
-        permissions: normalizeAdminPermissions(record.permissions)
+        permissions: normalizeAdminPermissions(record.permissions),
+        identityBound: Boolean(record.firebaseUid)
       }
     };
   } catch (error) {
     if (error?.status === 403) {
-      return { ok: false, status: 403, error: "admin_required", message: error.message };
+      return {
+        ok: false,
+        status: 403,
+        error: error.reason || "admin_required",
+        message: error.message
+      };
     }
     if (Number(error?.status) >= 500) {
       return {
@@ -453,7 +519,12 @@ async function requireAdmin(request, env) {
         message: "Serviço de autenticação temporariamente indisponível."
       };
     }
-    return { ok: false, status: 401, error: "invalid_token", message: error.message };
+    return {
+      ok: false,
+      status: 401,
+      error: error.reason || "invalid_token",
+      message: error.message
+    };
   }
 }
 
