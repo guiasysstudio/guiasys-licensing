@@ -238,6 +238,8 @@ function bindInputEnhancements(root = document) {
 }
 
 let pendingLoginMessage = "";
+let authorizationSyncPromise = null;
+let lastAuthorizationSyncAt = 0;
 
 function e(value = "") {
   return String(value)
@@ -384,8 +386,8 @@ async function checkApi() {
   el.apiStatusText.textContent = state.apiOnline ? "API online" : "API indisponível";
 }
 
-async function verifyAdministrator(user) {
-  const token = await user.getIdToken(true);
+async function verifyAdministrator(user, forceTokenRefresh = false) {
+  const token = await user.getIdToken(forceTokenRefresh);
   const response = await fetch(`${API_BASE}/api/v1/admin/me`, {
     headers: { "Authorization": `Bearer ${token}` },
     cache: "no-store"
