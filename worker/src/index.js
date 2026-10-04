@@ -1163,54 +1163,73 @@ async function createPlan(env, projectId, body, admin) {
   const name = String(body.name || "").trim();
   if (!name) throw Object.assign(new Error("Informe o nome do plano."), { status: 400 });
 
-  const id = randomId("plan");
-  const createdAt = nowIso();
-  const lifetime = Boolean(body.lifetime);
+  return await atomicClient(env).runTransaction(async tx => {
+    const id = randomId("plan");
+    const createdAt = nowIso();
+    const lifetime = Boolean(body.lifetime);
+    const startMode = ["first_activation", "immediate"].includes(body.startMode)
+      ? body.startMode
+      : "first_activation";
 
-  const startMode = ["first_activation", "immediate"].includes(body.startMode)
-    ? body.startMode
-    : "first_activation";
+    const plan = {
+      name,
+      description: String(body.description || "").trim(),
+      price: Math.max(0, Number(body.price || 0)),
+      durationDays: lifetime ? 0 : Math.max(1, Number(body.durationDays || 30)),
+      lifetime,
+      deviceLimit: Math.max(1, Number(body.deviceLimit || 1)),
+      startMode,
+      active: body.active !== false,
+      publicCatalog: Boolean(body.publicCatalog),
+      createdAt,
+      updatedAt: createdAt
+    };
 
-  const plan = {
-    name,
-    description: String(body.description || "").trim(),
-    price: Math.max(0, Number(body.price || 0)),
-    durationDays: lifetime ? 0 : Math.max(1, Number(body.durationDays || 30)),
-    lifetime,
-    deviceLimit: Math.max(1, Number(body.deviceLimit || 1)),
-    startMode,
-    active: body.active !== false,
-    publicCatalog: Boolean(body.publicCatalog),
-    createdAt,
-    updatedAt: createdAt
-  };
-
-  const saved = await setDoc(env, `${entityPath(projectId, "plans")}/${id}`, plan);
-  await writeLog(env, projectId, "plan.created", { planId: id, name }, admin.email || admin.uid);
-  return saved;
+    tx.create(`${entityPath(projectId, "plans")}/${id}`, plan);
+    queueLogInTransaction(
+      tx,
+      projectId,
+      "plan.created",
+      { planId: id, name },
+      admin.email || admin.uid,
+      createdAt
+    );
+    return { id, ...plan };
+  });
 }
 
 async function createCustomer(env, projectId, body, admin) {
   body = validateCustomerPayload(body);
   const name = String(body.name || "").trim();
   const email = String(body.email || "").trim().toLowerCase();
-  if (!name || !email) throw Object.assign(new Error("Informe nome e e-mail do cliente."), { status: 400 });
+  if (!name || !email) {
+    throw Object.assign(new Error("Informe nome e e-mail do cliente."), { status: 400 });
+  }
 
-  const id = randomId("cus");
-  const createdAt = nowIso();
-  const customer = {
-    name,
-    email,
-    phone: String(body.phone || "").trim(),
-    notes: String(body.notes || "").trim(),
-    status: body.status === "inactive" ? "inactive" : "active",
-    createdAt,
-    updatedAt: createdAt
-  };
+  return await atomicClient(env).runTransaction(async tx => {
+    const id = randomId("cus");
+    const createdAt = nowIso();
+    const customer = {
+      name,
+      email,
+      phone: String(body.phone || "").trim(),
+      notes: String(body.notes || "").trim(),
+      status: body.status === "inactive" ? "inactive" : "active",
+      createdAt,
+      updatedAt: createdAt
+    };
 
-  const saved = await setDoc(env, `${entityPath(projectId, "customers")}/${id}`, customer);
-  await writeLog(env, projectId, "customer.created", { customerId: id, name, email }, admin.email || admin.uid);
-  return saved;
+    tx.create(`${entityPath(projectId, "customers")}/${id}`, customer);
+    queueLogInTransaction(
+      tx,
+      projectId,
+      "customer.created",
+      { customerId: id, name, email },
+      admin.email || admin.uid,
+      createdAt
+    );
+    return { id, ...customer };
+  });
 }
 
 async function createLicense(env, projectId, body, admin) {
