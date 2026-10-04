@@ -1431,9 +1431,7 @@ function bindLicensePlanBehavior(form) {
   sync();
 }
 
-async function licenseFormHtml() {
-  const [customers, plans] = await Promise.all([loadEntity("customers", true), loadEntity("plans", true)]);
-
+function licenseFormHtml(customers, plans) {
   return `
     <div class="form-grid form-grid-2">
       <label class="field field-full">
@@ -1487,7 +1485,11 @@ async function licenseFormHtml() {
 }
 
 async function openLicenseCreate(onCreated = null) {
-  const [plans, html] = await Promise.all([loadEntity("plans", true), licenseFormHtml()]);
+  const [customers, plans] = await Promise.all([
+    loadEntity("customers", true),
+    loadEntity("plans", true)
+  ]);
+  const html = licenseFormHtml(customers, plans);
   openModal({
     title: "Gerar licença",
     subtitle: selectedProject().name,
@@ -1700,7 +1702,11 @@ function openRenewLicense(license) {
 }
 
 async function generateLicenseView() {
-  const html = await licenseFormHtml();
+  const [customers, plans] = await Promise.all([
+    loadEntity("customers", true),
+    loadEntity("plans", true)
+  ]);
+  const html = licenseFormHtml(customers, plans);
   el.content.innerHTML = `
     ${pageHeader("Gerar licença", "Emita uma nova key para um cliente deste projeto.")}
     <article class="card card-section form-page">
@@ -1713,7 +1719,6 @@ async function generateLicenseView() {
     </article>
   `;
 
-  const plans = await loadEntity("plans", true);
   const form = document.querySelector("#generate-license-form");
   bindInputEnhancements(form);
   bindLicensePlanBehavior(form);
