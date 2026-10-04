@@ -103,6 +103,18 @@ test("renovação expirada volta a active sem alterar duração original", () =>
   assert.equal(result.license.expiresAt, "2026-10-14T22:00:00.000Z");
 });
 
+test("renovar vitalícia como vitalícia novamente é no-op", () => {
+  const result = transitionLicense(
+    base({ lifetime: true, expiresAt: null }),
+    "renew",
+    { lifetime: true },
+    NOW,
+    plusDays
+  );
+  assert.equal(result.changed, false);
+  assert.equal(result.license.lifetime, true);
+});
+
 test("vitalícia não pode voltar para temporária", () => {
   assert.throws(
     () => transitionLicense(base({ lifetime: true, expiresAt: null }), "renew", { days: 30, lifetime: false }, NOW, plusDays),
