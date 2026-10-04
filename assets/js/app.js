@@ -2219,7 +2219,10 @@ function buildIntegrationConfig(project) {
       enabled: Boolean(project.trialEnabled && Number(project.trialDays || 0) > 0),
       days: Number(project.trialDays || 0),
       validationHours: Number(project.trialValidationHours || project.validationHours || 24),
-      offlineHours: Number(project.trialOfflineHours ?? project.trialValidationHours ?? project.validationHours ?? 24)
+      offlineHours: Number(project.trialOfflineHours ?? project.trialValidationHours ?? project.validationHours ?? 24),
+      deviceIdentity: "stable_installation_id",
+      restartPolicy: "same_project_device_hash_never_restarts",
+      requestIdSupported: true
     },
     license: {
       validationHours: Number(project.validationHours || 24),
@@ -2315,7 +2318,8 @@ function buildIntegrationContract(project, platform = "universal") {
       deviceId: "<DEVICE_ID_ESTAVEL>",
       deviceName: "<NOME_DO_DISPOSITIVO>",
       platform: "<PLATAFORMA>",
-      appVersion: "<VERSAO>"
+      appVersion: "<VERSAO>",
+      requestId: "<UUID_DA_OPERACAO>"
     }, null, 2),
     "",
     "Endpoint: POST /api/v1/trial/start",
@@ -2324,10 +2328,12 @@ function buildIntegrationContract(project, platform = "universal") {
     JSON.stringify({
       integrationCode: project.integrationCode,
       deviceId: "<MESMO_DEVICE_ID>",
-      appVersion: "<VERSAO>"
+      appVersion: "<VERSAO>",
+      requestId: "<UUID_DA_REVALIDACAO>"
     }, null, 2),
     "",
     "Endpoint: POST /api/v1/trial/validate",
+    "requestId identifica uma operação lógica. Gere um UUID novo para cada operação e reutilize o MESMO requestId somente ao repetir a mesma requisição após timeout/erro de rede.",
     "Nunca permita funcionamento além de expiresAt. Se a tolerância offline terminar antes, exija conexão.",
     "",
     "LICENÇA PAGA",
@@ -2344,7 +2350,8 @@ function buildIntegrationContract(project, platform = "universal") {
       deviceId: "<DEVICE_ID_ESTAVEL>",
       deviceName: "<NOME_DO_DISPOSITIVO>",
       platform: "<PLATAFORMA>",
-      appVersion: "<VERSAO>"
+      appVersion: "<VERSAO>",
+      requestId: "<UUID_DA_OPERACAO>"
     }, null, 2),
     "",
     "Endpoint: POST /api/v1/license/activate",
@@ -2354,7 +2361,8 @@ function buildIntegrationContract(project, platform = "universal") {
       integrationCode: project.integrationCode,
       licenseKey: sampleKey,
       deviceId: "<MESMO_DEVICE_ID>",
-      appVersion: "<VERSAO>"
+      appVersion: "<VERSAO>",
+      requestId: "<UUID_DA_REVALIDACAO>"
     }, null, 2),
     "",
     "Endpoint: POST /api/v1/license/validate",
@@ -2363,7 +2371,8 @@ function buildIntegrationContract(project, platform = "universal") {
     JSON.stringify({
       integrationCode: project.integrationCode,
       licenseKey: sampleKey,
-      deviceId: "<MESMO_DEVICE_ID>"
+      deviceId: "<MESMO_DEVICE_ID>",
+      requestId: "<UUID_DA_OPERACAO>"
     }, null, 2),
     "",
     "Endpoint: POST /api/v1/license/deactivate",
@@ -2427,7 +2436,7 @@ function buildIntegrationContract(project, platform = "universal") {
     "Respostas válidas de trial/activate/validate incluem offlineUntil e entitlement.",
     "entitlement.token é um JWS assinado com ES256 pelo GuiaSys Licensing.",
     "Antes de usar um cache offline, verifique criptograficamente a assinatura com signing.publicJwk deste projeto.",
-    "Depois da assinatura válida, confira no payload: protocolVersion, projectId, integrationCode, deviceHash, status, expiresAt e offlineUntil.",
+    "Depois da assinatura válida, confira header.alg=ES256, header.typ=GSL-ENT, header.kid=signing.keyId e, no payload, protocolVersion, type, projectId, integrationCode, deviceHash, status, expiresAt e offlineUntil.",
     "Calcule SHA-256 do Device ID local e compare com deviceHash do entitlement para impedir reutilização em outro dispositivo.",
     "Nunca confie em claims do token antes de validar a assinatura.",
     "Nunca libere o produto depois de offlineUntil ou expiresAt.",
@@ -2449,8 +2458,10 @@ function buildIntegrationContract(project, platform = "universal") {
     "",
     "IDENTIDADE DO DISPOSITIVO",
     "----------------------------------------------------------------",
-    "Use um Device ID estável. A atualização do aplicativo não pode gerar um Device ID novo.",
+    "Use um Device ID estável de instalação. A atualização do aplicativo não pode gerar um Device ID novo.",
     "O mesmo Device ID deve ser usado em trial/start, trial/validate, license/activate, license/validate e license/deactivate.",
+    "Device ID identifica a instalação, mas não é uma credencial criptográfica nem prova de hardware. Não o trate como segredo.",
+    "O servidor impede reinício do trial para o mesmo projectId + hash do Device ID e aplica rate limit antiabuso. Um cliente adulterado capaz de fabricar identidades novas exige mecanismos específicos de plataforma (por exemplo, attestation) fora do protocolo universal GSL-v1.",
     "",
     "SEGURANÇA",
     "----------------------------------------------------------------",
@@ -2470,7 +2481,7 @@ function buildIntegrationContract(project, platform = "universal") {
     "[ ] Alterar a duração do trial afeta novos trials, não os já iniciados.",
     "[ ] Trial bloqueia ao chegar em expiresAt mesmo offline.",
     "[ ] Trial convertido em licença não reinicia.",
-    "[ ] Cache offline só é aceito após validar assinatura ES256 e deviceHash.",
+    "[ ] Cache offline só é aceito após validar ES256, typ/kid, protocolo, projeto, integrationCode, deviceHash, status e janelas de validade.",
     "[ ] offlineUntil e expiresAt são respeitados.",
     "[ ] Key válida ativa a licença.",
     "[ ] Key inválida é recusada.",
@@ -2480,6 +2491,7 @@ function buildIntegrationContract(project, platform = "universal") {
     "[ ] Plano/duração não ficam hardcoded no produto.",
     "[ ] Aba Conta/Licença mostra os dados reais retornados pelo servidor.",
     "[ ] Origem Web não cadastrada é recusada quando houver Origin.",
+    "[ ] requestId é novo por operação lógica e reutilizado somente em retry da mesma operação.",
     "[ ] Erro rate_limited é tratado sem loop agressivo de retry.",
     "[ ] Nenhum segredo administrativo ou chave privada está presente no cliente.",
     "",
