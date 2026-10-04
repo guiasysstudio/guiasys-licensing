@@ -2343,6 +2343,16 @@ async function handleAdmin(request, env, origin, url, admin) {
           }
 
           const integrationCreated = !current.integrationCode;
+          const restoringArchived = current.status === "archived" && body.status != null;
+          if (restoringArchived) {
+            requirePermission(
+              admin,
+              "manageProjects",
+              "Somente quem gerencia projetos pode restaurar um projeto arquivado."
+            );
+          }
+
+          const nextStatus = body.status != null ? body.status : current.status;
           const next = {
             ...current,
             ...body,
@@ -2350,9 +2360,8 @@ async function handleAdmin(request, env, origin, url, admin) {
             name: String(body.name ?? current.name).trim(),
             slug: slugify(body.slug ?? current.slug),
             prefix: normalizePrefix(body.prefix ?? current.prefix),
-            status: body.status != null
-              ? (body.status === "inactive" ? "inactive" : "active")
-              : (current.status === "inactive" ? "inactive" : "active"),
+            status: nextStatus,
+            archivedAt: restoringArchived ? null : (current.archivedAt || null),
             integrationCode: current.integrationCode || generateIntegrationCode(),
             signingKeyId: current.signingKeyId || null,
             signingAlgorithm: current.signingAlgorithm || "ES256",
@@ -2382,8 +2391,12 @@ async function handleAdmin(request, env, origin, url, admin) {
           queueLogInTransaction(
             tx,
             projectId,
-            "project.updated",
-            { name: next.name },
+            restoringArchived ? "project.restored" : "project.updated",
+            {
+              name: next.name,
+              previousStatus: current.status,
+              nextStatus: next.status
+            },
             admin.email || admin.uid,
             next.updatedAt
           );
@@ -2401,6 +2414,10 @@ async function handleAdmin(request, env, origin, url, admin) {
               reason: "project_not_found"
             });
           }
+          if (current.status === "archived") {
+            return { id: projectId, ...current };
+          }
+
           const now = nowIso();
           const next = {
             ...current,
