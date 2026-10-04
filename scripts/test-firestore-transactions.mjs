@@ -62,25 +62,40 @@ async function directGet(path) {
 
 await directSet("atomicity/counter", { count: 0 });
 
-const results = await Promise.all([
-  client.runTransaction(async tx => {
-    const current = await tx.get("atomicity/counter");
-    await new Promise(resolve => setTimeout(resolve, 50));
-    tx.set("atomicity/counter", { count: Number(current.count || 0) + 1 });
-    return "A";
-  }),
-  client.runTransaction(async tx => {
+for (let index = 0; index < 2; index++) {
+  await client.runTransaction(async tx => {
     const current = await tx.get("atomicity/counter");
     tx.set("atomicity/counter", { count: Number(current.count || 0) + 1 });
-    return "B";
-  })
-]);
-
-if (results.length !== 2) throw new Error("As duas transações não concluíram.");
+  });
+}
 
 const finalCounter = await directGet("atomicity/counter");
 if (finalCounter.count !== 2) {
-  throw new Error(`Retry transacional perdeu atualização. Valor final: ${finalCounter.count}`);
+  throw new Error(`Atualização transacional perdeu valor. Valor final: ${finalCounter.count}`);
+}
+
+await directSet("atomicity/retry-collision", { value: 1 });
+
+let operationRuns = 0;
+await client.runTransaction(async tx => {
+  operationRuns++;
+
+  if (operationRuns === 1) {
+    tx.create("atomicity/retry-collision", { value: 2 });
+    return;
+  }
+
+  const current = await tx.get("atomicity/counter");
+  tx.set("atomicity/counter", { count: Number(current.count || 0) + 1 });
+});
+
+if (operationRuns < 2) {
+  throw new Error("Cliente transacional não refez a operação após conflito.");
+}
+
+const afterRetry = await directGet("atomicity/counter");
+if (afterRetry.count !== 3) {
+  throw new Error(`Retry transacional não concluiu a atualização. Valor final: ${afterRetry.count}`);
 }
 
 await client.runTransaction(async tx => {
@@ -97,4 +112,4 @@ if (a.value !== 1 || b.value !== 2) {
   throw new Error("Commit multi-documento não foi aplicado corretamente.");
 }
 
-console.log("Firestore atomic client contention/retry + multi-write OK.");
+console.log("Firestore atomic client read/write + retry + multi-write OK.");
