@@ -5,6 +5,7 @@ import {
   MAX_JSON_BYTES,
   readJsonBody,
   validateAdminPayload,
+  validateLicenseActionPayload,
   validateLicenseCreatePayload,
   validatePlanPayload,
   validateProjectPayload,
@@ -63,6 +64,43 @@ test("valida IDs recebidos dentro do payload", () => {
   assertApiError(() => validateLicenseCreatePayload({
     customerId: "../admins/" + "a".repeat(64)
   }), 400, "invalid_identifier");
+});
+
+
+test("emissão aceita metadados de idempotência com limites estritos", () => {
+  const payload = validateLicenseCreatePayload({
+    customerId: "cus_0123456789abcdefabcd",
+    idempotencyKey: "pagbank:charge:123",
+    source: "pagbank",
+    externalOrderId: "ORDER-123"
+  });
+
+  assert.equal(payload.idempotencyKey, "pagbank:charge:123");
+  assert.equal(payload.source, "pagbank");
+  assert.equal(payload.externalOrderId, "ORDER-123");
+
+  assertApiError(() => validateLicenseCreatePayload({
+    customerId: "cus_0123456789abcdefabcd",
+    source: "pagbank webhook"
+  }));
+});
+
+test("renovação exige dias ou conversão explícita para vitalícia", () => {
+  assertApiError(
+    () => validateLicenseActionPayload("renew", {}),
+    400,
+    "invalid_renewal"
+  );
+
+  assert.deepEqual(
+    validateLicenseActionPayload("renew", { days: 30, lifetime: false }),
+    { days: 30, lifetime: false }
+  );
+
+  assert.deepEqual(
+    validateLicenseActionPayload("renew", { lifetime: true }),
+    { lifetime: true }
+  );
 });
 
 test("admin aceita somente projectIds e permissions conhecidos", () => {
