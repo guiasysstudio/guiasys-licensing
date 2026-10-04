@@ -1,117 +1,100 @@
+import { createFirestoreAtomicClient } from "../worker/src/firestore-atomic.js";
+
 const projectId = "guiasys-licensing";
-const root = `http://127.0.0.1:8080/v1/projects/${projectId}/databases/(default)/documents`;
+const apiBase = "http://127.0.0.1:8080/v1";
 
-function fields(value) {
-  return {
-    count: { integerValue: String(value) }
-  };
+function encodeValue(value) {
+  if (typeof value === "boolean") return { booleanValue: value };
+  if (Number.isInteger(value)) return { integerValue: String(value) };
+  if (typeof value === "number") return { doubleValue: value };
+  if (value === null) return { nullValue: null };
+  return { stringValue: String(value) };
 }
 
-async function jsonFetch(url, options = {}, allowed = [200]) {
-  const response = await fetch(url, options);
-  const data = await response.json().catch(() => null);
-  if (!allowed.includes(response.status)) {
-    const error = new Error(`Firestore Emulator respondeu ${response.status}`);
-    error.status = response.status;
-    error.data = data;
-    throw error;
-  }
-  return { response, data };
+function encodeFields(object) {
+  return Object.fromEntries(
+    Object.entries(object).map(([key, value]) => [key, encodeValue(value)])
+  );
 }
 
-async function setCounter(value) {
-  await jsonFetch(`${root}/atomicity/counter`, {
+function decodeValue(value) {
+  if ("booleanValue" in value) return value.booleanValue;
+  if ("integerValue" in value) return Number(value.integerValue);
+  if ("doubleValue" in value) return Number(value.doubleValue);
+  if ("nullValue" in value) return null;
+  if ("stringValue" in value) return value.stringValue;
+  return null;
+}
+
+function decodeFields(fields = {}) {
+  return Object.fromEntries(
+    Object.entries(fields).map(([key, value]) => [key, decodeValue(value)])
+  );
+}
+
+const client = createFirestoreAtomicClient({
+  projectId,
+  getAccessToken: async () => "",
+  encodeFields,
+  encodeValue,
+  decodeFields,
+  docIdFromName: name => decodeURIComponent(String(name || "").split("/").pop() || ""),
+  apiBase
+});
+
+const root = `${apiBase}/projects/${projectId}/databases/(default)/documents`;
+
+async function directSet(path, value) {
+  const response = await fetch(`${root}/${path}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fields: fields(value) })
+    body: JSON.stringify({ fields: encodeFields(value) })
   });
+  if (!response.ok) throw new Error(`directSet falhou: ${response.status}`);
 }
 
-async function getCounter(transaction = "") {
-  const url = new URL(`${root}/atomicity/counter`);
-  if (transaction) url.searchParams.set("transaction", transaction);
-  const { data } = await jsonFetch(url);
-  return Number(data.fields?.count?.integerValue || 0);
+async function directGet(path) {
+  const response = await fetch(`${root}/${path}`);
+  if (!response.ok) throw new Error(`directGet falhou: ${response.status}`);
+  const data = await response.json();
+  return decodeFields(data.fields || {});
 }
 
-async function begin(retryTransaction = "") {
-  const body = retryTransaction
-    ? { options: { readWrite: { retryTransaction } } }
-    : { options: { readWrite: {} } };
-  const { data } = await jsonFetch(`${root}:beginTransaction`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-  if (!data?.transaction) throw new Error("Firestore Emulator não retornou transaction.");
-  return data.transaction;
+await directSet("atomicity/counter", { count: 0 });
+
+const results = await Promise.all([
+  client.runTransaction(async tx => {
+    const current = await tx.get("atomicity/counter");
+    await new Promise(resolve => setTimeout(resolve, 50));
+    tx.set("atomicity/counter", { count: Number(current.count || 0) + 1 });
+    return "A";
+  }),
+  client.runTransaction(async tx => {
+    const current = await tx.get("atomicity/counter");
+    tx.set("atomicity/counter", { count: Number(current.count || 0) + 1 });
+    return "B";
+  })
+]);
+
+if (results.length !== 2) throw new Error("As duas transações não concluíram.");
+
+const finalCounter = await directGet("atomicity/counter");
+if (finalCounter.count !== 2) {
+  throw new Error(`Retry transacional perdeu atualização. Valor final: ${finalCounter.count}`);
 }
 
-async function commit(transaction, value) {
-  const response = await fetch(`${root}:commit`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      transaction,
-      writes: [{
-        update: {
-          name: `projects/${projectId}/databases/(default)/documents/atomicity/counter`,
-          fields: fields(value)
-        }
-      }]
-    })
-  });
-  const data = await response.json().catch(() => null);
-  return { status: response.status, data };
+await client.runTransaction(async tx => {
+  tx.create("atomicity/a", { value: 1 });
+  tx.create("atomicity/b", { value: 2 });
+});
+
+const [a, b] = await Promise.all([
+  directGet("atomicity/a"),
+  directGet("atomicity/b")
+]);
+
+if (a.value !== 1 || b.value !== 2) {
+  throw new Error("Commit multi-documento não foi aplicado corretamente.");
 }
 
-async function incrementWithRetry() {
-  let retryTransaction = "";
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const transaction = await begin(retryTransaction);
-    const current = await getCounter(transaction);
-    const result = await commit(transaction, current + 1);
-    if (result.status >= 200 && result.status < 300) return;
-
-    const code = result.data?.error?.status || "";
-    if (code !== "ABORTED" && result.status !== 409) {
-      throw new Error(`Falha transacional não retryable: ${result.status} ${code}`);
-    }
-    retryTransaction = transaction;
-  }
-  throw new Error("Transaction retry limit excedido.");
-}
-
-await setCounter(0);
-
-const txA = await begin();
-const txB = await begin();
-const valueA = await getCounter(txA);
-const valueB = await getCounter(txB);
-
-if (valueA !== 0 || valueB !== 0) {
-  throw new Error("Leitura inicial transacional inconsistente.");
-}
-
-const first = await commit(txA, valueA + 1);
-if (first.status < 200 || first.status >= 300) {
-  throw new Error("Primeiro commit transacional deveria ter sucesso.");
-}
-
-const second = await commit(txB, valueB + 1);
-const secondCode = second.data?.error?.status || "";
-if (second.status >= 200 && second.status < 300) {
-  throw new Error("Firestore aceitou dois commits concorrentes sobre a mesma leitura.");
-}
-if (second.status !== 409 && secondCode !== "ABORTED") {
-  throw new Error(`Conflito retornou status inesperado: ${second.status} ${secondCode}`);
-}
-
-await incrementWithRetry();
-
-const finalValue = await getCounter();
-if (finalValue !== 2) {
-  throw new Error(`Retry transacional perdeu atualização. Valor final: ${finalValue}`);
-}
-
-console.log("Firestore transaction contention/retry OK.");
+console.log("Firestore atomic client contention/retry + multi-write OK.");
