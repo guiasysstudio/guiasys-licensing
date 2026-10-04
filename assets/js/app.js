@@ -38,6 +38,10 @@ try {
 const provider = new GoogleAuthProvider();
 provider.setCustomParameters({ prompt: "select_account" });
 
+const CACHE_TTL_MS = 30_000;
+const DASHBOARD_CACHE_TTL_MS = 15_000;
+const API_TIMEOUT_MS = 12_000;
+
 const state = {
   user: null,
   administrator: null,
@@ -46,7 +50,12 @@ const state = {
   dashboard: null,
   selectedProjectId: "",
   route: "dashboard",
-  cache: new Map()
+  cache: new Map(),
+  inflight: new Map(),
+  cacheGeneration: 0,
+  renderRequested: 0,
+  renderCompleted: 0,
+  renderRunner: null
 };
 
 const el = {
@@ -307,15 +316,63 @@ function setLoginMessage(message = "") {
   el.loginMessage.textContent = message;
 }
 
-function invalidate(projectId = "") {
-  for (const key of [...state.cache.keys()]) {
-    if (!projectId || key.startsWith(`${projectId}:`)) state.cache.delete(key);
+function cacheRead(key, ttlMs = CACHE_TTL_MS) {
+  const entry = state.cache.get(key);
+  if (!entry) return undefined;
+
+  if (Date.now() - entry.storedAt > ttlMs) {
+    state.cache.delete(key);
+    return undefined;
   }
+
+  return entry.value;
+}
+
+function cacheWrite(key, value, generation = state.cacheGeneration) {
+  if (generation !== state.cacheGeneration) return value;
+  state.cache.set(key, { value, storedAt: Date.now() });
+  return value;
+}
+
+async function cachedLoad(key, loader, { force = false, ttlMs = CACHE_TTL_MS } = {}) {
+  if (!force) {
+    const cached = cacheRead(key, ttlMs);
+    if (cached !== undefined) return cached;
+  }
+
+  if (!force && state.inflight.has(key)) {
+    return await state.inflight.get(key);
+  }
+
+  const generation = state.cacheGeneration;
+  const pending = Promise.resolve()
+    .then(loader)
+    .then(value => cacheWrite(key, value, generation))
+    .finally(() => {
+      if (state.inflight.get(key) === pending) state.inflight.delete(key);
+    });
+
+  state.inflight.set(key, pending);
+  return await pending;
+}
+
+function invalidate(projectId = "") {
+  state.cacheGeneration++;
+
+  for (const key of [...state.cache.keys()]) {
+    if (!projectId || key.startsWith(`${projectId}:`) || key === "projects") {
+      state.cache.delete(key);
+    }
+  }
+
+  if (!projectId) state.inflight.clear();
 }
 
 function resetAdministrativeState() {
   state.administrator = null;
   state.cache.clear();
+  state.inflight.clear();
+  state.cacheGeneration++;
   state.projects = [];
   state.dashboard = null;
   state.selectedProjectId = "";
