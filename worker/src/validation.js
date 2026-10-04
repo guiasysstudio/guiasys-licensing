@@ -274,7 +274,7 @@ export function validateCustomerPayload(body, { partial = false } = {}) {
 export function validateLicenseCreatePayload(body) {
   const allowed = new Set([
     "customerId", "planId", "planName", "durationDays", "lifetime",
-    "maxDevices", "startMode", "notes"
+    "maxDevices", "startMode", "notes", "idempotencyKey", "source", "externalOrderId"
   ]);
   allowFields(body, allowed);
 
@@ -291,6 +291,12 @@ export function validateLicenseCreatePayload(body) {
   assignIfDefined(result, "maxDevices", readNumber(body, "maxDevices", { integer: true, min: 1, max: 1000 }));
   assignIfDefined(result, "startMode", readEnum(body, "startMode", ["first_activation", "immediate"]));
   assignIfDefined(result, "notes", readString(body, "notes", { max: 2000 }));
+  assignIfDefined(result, "idempotencyKey", readString(body, "idempotencyKey", { max: 160 }));
+  assignIfDefined(result, "source", readString(body, "source", {
+    max: 40,
+    pattern: /^[A-Za-z0-9._-]+$/
+  }));
+  assignIfDefined(result, "externalOrderId", readString(body, "externalOrderId", { max: 160 }));
   return result;
 }
 
@@ -301,6 +307,9 @@ export function validateLicenseActionPayload(action, body) {
     const result = {};
     assignIfDefined(result, "days", readNumber(body, "days", { integer: true, min: 1, max: 36500 }));
     assignIfDefined(result, "lifetime", readBoolean(body, "lifetime"));
+    if (result.days === undefined && result.lifetime !== true) {
+      fail("Informe days ou lifetime=true para renovar.", 400, "invalid_renewal");
+    }
     return result;
   }
 
