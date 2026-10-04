@@ -304,8 +304,8 @@ function pemToArrayBuffer(pem) {
   return bytes.buffer;
 }
 
-async function getFirebasePublicKeys() {
-  if (firebaseKeyCache.keys && firebaseKeyCache.expiresAt > Date.now()) {
+async function getFirebasePublicKeys(forceRefresh = false) {
+  if (!forceRefresh && firebaseKeyCache.keys && firebaseKeyCache.expiresAt > Date.now()) {
     return firebaseKeyCache.keys;
   }
 
@@ -322,12 +322,18 @@ async function getFirebasePublicKeys() {
     });
   }
 
-  const data = await response.json();
-  if (!Array.isArray(data.keys)) throw new Error("Resposta inválida das chaves públicas do Firebase.");
+  const data = await response.json().catch(() => ({}));
+  if (!Array.isArray(data.keys)) {
+    throw Object.assign(new Error("Resposta inválida das chaves públicas do Firebase."), {
+      status: 502,
+      reason: "upstream_error"
+    });
+  }
 
+  const maxAge = parseCacheMaxAge(response.headers.get("Cache-Control"), 300);
   firebaseKeyCache = {
     keys: data.keys,
-    expiresAt: Date.now() + 55 * 60 * 1000
+    expiresAt: Date.now() + maxAge * 1000
   };
 
   return data.keys;
@@ -343,10 +349,18 @@ async function verifyFirebaseIdToken(idToken, env) {
   const header = decodeJwtPart(encodedHeader);
   const payload = decodeJwtPart(encodedPayload);
 
-  if (header.alg !== "RS256" || !header.kid) throw new Error("Cabeçalho do token Firebase inválido.");
+  if (header.alg !== "RS256" || !header.kid) {
+    throw new Error("Cabeçalho do token Firebase inválido.");
+  }
 
-  const keys = await getFirebasePublicKeys();
-  const jwk = keys.find(key => key.kid === header.kid);
+  let keys = await getFirebasePublicKeys(false);
+  let jwk = keys.find(key => key.kid === header.kid);
+
+  if (!jwk) {
+    keys = await getFirebasePublicKeys(true);
+    jwk = keys.find(key => key.kid === header.kid);
+  }
+
   if (!jwk) throw new Error("Chave pública correspondente ao token não encontrada.");
 
   const publicKey = await crypto.subtle.importKey(
@@ -366,15 +380,7 @@ async function verifyFirebaseIdToken(idToken, env) {
 
   if (!valid) throw new Error("Assinatura do token Firebase inválida.");
 
-  const now = Math.floor(Date.now() / 1000);
-  if (payload.aud !== env.FIREBASE_PROJECT_ID) throw new Error("Token destinado a outro projeto Firebase.");
-  if (payload.iss !== `https://securetoken.google.com/${env.FIREBASE_PROJECT_ID}`) {
-    throw new Error("Emissor do token Firebase inválido.");
-  }
-  if (!payload.sub) throw new Error("UID ausente no token Firebase.");
-  if (typeof payload.exp !== "number" || payload.exp <= now) throw new Error("Token Firebase expirado.");
-  if (typeof payload.iat !== "number" || payload.iat > now + 300) throw new Error("Data de emissão do token inválida.");
-
+  validateFirebaseClaims(payload, env.FIREBASE_PROJECT_ID);
   return payload;
 }
 
