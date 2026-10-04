@@ -2637,6 +2637,11 @@ async function loadAdmins() {
   return data.admins || [];
 }
 
+async function loadPlatformLogs() {
+  const data = await api("/api/v1/admin/platform-logs");
+  return data.logs || [];
+}
+
 function adminForm(admin = {}) {
   const allProjects = Boolean(admin.allProjects);
   const permissions = admin.permissions || {};
@@ -2766,7 +2771,10 @@ async function administratorsView() {
     throw new Error("Somente o administrador master pode gerenciar administradores.");
   }
 
-  const admins = await loadAdmins();
+  const [admins, platformLogs] = await Promise.all([
+    loadAdmins(),
+    loadPlatformLogs()
+  ]);
 
   el.content.innerHTML = `
     ${pageHeader(
@@ -2790,7 +2798,7 @@ async function administratorsView() {
         <span class="badge">${admins.length} cadastrado(s)</span>
       </div>
       ${table(
-        ["Administrador", "Projetos", "Permissões", "Status", "Atualização", ""],
+        ["Administrador", "Projetos", "Permissões", "Identidade", "Status", "Atualização", ""],
         admins.map(admin => {
           const projectText = admin.allProjects
             ? "Todos + futuros"
@@ -2801,6 +2809,9 @@ async function administratorsView() {
               <td><strong>${e(admin.name || admin.email)}</strong><small>${e(admin.email)}</small></td>
               <td>${e(projectText)}</td>
               <td>${e(permissionCount)} de ${Object.keys(ADMIN_PERMISSION_LABELS).length}</td>
+              <td>${admin.identityBound
+                ? '<span class="badge badge-success">UID vinculado</span>'
+                : '<span class="badge badge-warning">Aguardando 1º login</span>'}</td>
               <td>${admin.status === "active" ? '<span class="badge badge-success">Ativo</span>' : '<span class="badge badge-muted">Inativo</span>'}</td>
               <td>${formatDate(admin.updatedAt, true)}</td>
               <td class="table-actions">
