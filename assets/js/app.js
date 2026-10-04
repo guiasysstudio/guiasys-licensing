@@ -217,29 +217,39 @@ function currencyFromInput(value) {
 
 function bindInputEnhancements(root = document) {
   root.querySelectorAll('[data-mask="phone"]').forEach(input => {
+    if (input.dataset.maskPhoneBound === "true") return;
+    input.dataset.maskPhoneBound = "true";
     input.value = formatPhone(input.value);
     input.addEventListener("input", () => { input.value = formatPhone(input.value); });
   });
 
   root.querySelectorAll('[data-mask="integer"]').forEach(input => {
+    if (input.dataset.maskIntegerBound === "true") return;
+    input.dataset.maskIntegerBound = "true";
     input.addEventListener("input", () => {
       input.value = onlyDigits(input.value, Number(input.dataset.maxDigits || 8));
     });
   });
 
   root.querySelectorAll('[data-mask="prefix"]').forEach(input => {
+    if (input.dataset.maskPrefixBound === "true") return;
+    input.dataset.maskPrefixBound = "true";
     input.addEventListener("input", () => {
       input.value = input.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
     });
   });
 
   root.querySelectorAll('[data-mask="slug"]').forEach(input => {
+    if (input.dataset.maskSlugBound === "true") return;
+    input.dataset.maskSlugBound = "true";
     input.addEventListener("input", () => {
       input.value = input.value.toLowerCase().replace(/[^a-z0-9-]/g, "").replace(/-+/g, "-").slice(0, 48);
     });
   });
 
   root.querySelectorAll('[data-mask="currency"]').forEach(input => {
+    if (input.dataset.maskCurrencyBound === "true") return;
+    input.dataset.maskCurrencyBound = "true";
     input.addEventListener("input", () => {
       const digits = onlyDigits(input.value, 12);
       input.value = (Number(digits || 0) / 100).toLocaleString("pt-BR", {
@@ -1151,7 +1161,7 @@ function bindPlanFormBehavior(form) {
     else if (!Number(duration.value)) duration.value = "30";
   };
 
-  lifetime.addEventListener("change", sync);
+  lifetime.onchange = sync;
   sync();
 }
 
@@ -1417,7 +1427,7 @@ function bindLicensePlanBehavior(form) {
     }
   };
 
-  planSelect.addEventListener("change", sync);
+  planSelect.onchange = sync;
   sync();
 }
 
