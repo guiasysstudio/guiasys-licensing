@@ -9,6 +9,12 @@ import {
 import { fetchWithTimeout } from "./network.js";
 import { createFirestoreAtomicClient } from "./firestore-atomic.js";
 import {
+  assertLicenseCanActivate,
+  effectiveLicenseStatus,
+  totalActivationDays,
+  transitionLicense
+} from "./license-policy.js";
+import {
   readJsonBody,
   validateAdminPayload,
   validateCustomerPayload,
@@ -23,7 +29,7 @@ import {
 
 // GuiaSys Licensing API — deploy automático via Cloudflare Workers Builds
 const PROTOCOL_VERSION = "GSL-v1";
-const API_VERSION = "1.6.0";
+const API_VERSION = "1.7.0";
 const ALLOWED_ORIGINS = [
   "http://127.0.0.1:5500",
   "http://127.0.0.1:5501",
@@ -991,10 +997,9 @@ function publicProjectConfigView(project) {
 }
 
 function normalizeLicenseStatus(license) {
-  if (license.status === "active" && license.expiresAt && isPast(license.expiresAt)) {
-    return { ...license, status: "expired" };
-  }
-  return license;
+  if (!license) return license;
+  const status = effectiveLicenseStatus(license, nowIso());
+  return status === license.status ? license : { ...license, status };
 }
 
 
@@ -1097,8 +1102,7 @@ async function transactionFindLicenseByKey(tx, projectId, licenseKey) {
   if (!lookup?.licenseId) return null;
 
   const licenseId = assertEntityId("licenses", lookup.licenseId);
-  const license = await tx.get(`${entityPath(projectId, "licenses")}/${licenseId}`);
-  return license ? normalizeLicenseStatus(license) : null;
+  return await tx.get(`${entityPath(projectId, "licenses")}/${licenseId}`);
 }
 
 async function projectExists(env, projectId) {
@@ -1235,19 +1239,102 @@ async function createCustomer(env, projectId, body, admin) {
 async function createLicense(env, projectId, body, admin) {
   body = validateLicenseCreatePayload(body);
   const customerId = assertEntityId("customers", body.customerId);
+  const idempotencyHash = body.idempotencyKey
+    ? await sha256Hex(body.idempotencyKey)
+    : "";
+  const requestHash = idempotencyHash
+    ? await sha256Hex(JSON.stringify({
+        customerId,
+        planId: body.planId || "",
+        planName: body.planName || "",
+        durationDays: body.durationDays ?? null,
+        lifetime: body.lifetime ?? null,
+        maxDevices: body.maxDevices ?? null,
+        startMode: body.startMode || "",
+        notes: body.notes || "",
+        source: body.source || "admin",
+        externalOrderId: body.externalOrderId || ""
+      }))
+    : "";
 
   return await atomicClient(env).runTransaction(async tx => {
-    const customer = await tx.get(`${entityPath(projectId, "customers")}/${customerId}`);
-    if (!customer) throw Object.assign(new Error("Cliente não encontrado."), { status: 404 });
+    const idempotencyPath = idempotencyHash
+      ? `projects/${projectId}/licenseRequests/${idempotencyHash}`
+      : "";
+
+    if (idempotencyPath) {
+      const existingRequest = await tx.get(idempotencyPath);
+      if (existingRequest) {
+        if (existingRequest.requestHash !== requestHash) {
+          throw Object.assign(new Error("A chave de idempotência já foi usada com outro payload."), {
+            status: 409,
+            reason: "idempotency_conflict"
+          });
+        }
+
+        const existingLicenseId = assertEntityId("licenses", existingRequest.licenseId);
+        const existingLicense = await tx.get(
+          `${entityPath(projectId, "licenses")}/${existingLicenseId}`
+        );
+        if (!existingLicense) {
+          throw Object.assign(new Error("Registro idempotente inconsistente."), {
+            status: 500,
+            reason: "idempotency_orphan"
+          });
+        }
+
+        return {
+          id: existingLicenseId,
+          ...existingLicense,
+          idempotentReplay: true
+        };
+      }
+    }
 
     const project = await tx.get(projectPath(projectId));
-    if (!project) throw Object.assign(new Error("Projeto não encontrado."), { status: 404 });
+    if (!project) {
+      throw Object.assign(new Error("Projeto não encontrado."), {
+        status: 404,
+        reason: "project_not_found"
+      });
+    }
+    if (project.status !== "active") {
+      throw Object.assign(new Error("Novas licenças só podem ser emitidas para projeto ativo."), {
+        status: 409,
+        reason: "project_not_active"
+      });
+    }
+
+    const customer = await tx.get(`${entityPath(projectId, "customers")}/${customerId}`);
+    if (!customer) {
+      throw Object.assign(new Error("Cliente não encontrado."), {
+        status: 404,
+        reason: "customer_not_found"
+      });
+    }
+    if (customer.status === "inactive") {
+      throw Object.assign(new Error("Cliente inativo não pode receber nova licença."), {
+        status: 409,
+        reason: "customer_inactive"
+      });
+    }
 
     let plan = null;
     if (body.planId) {
       const planId = assertEntityId("plans", body.planId);
       plan = await tx.get(`${entityPath(projectId, "plans")}/${planId}`);
-      if (!plan) throw Object.assign(new Error("Plano não encontrado."), { status: 404 });
+      if (!plan) {
+        throw Object.assign(new Error("Plano não encontrado."), {
+          status: 404,
+          reason: "plan_not_found"
+        });
+      }
+      if (plan.active === false) {
+        throw Object.assign(new Error("Plano inativo não pode gerar nova licença."), {
+          status: 409,
+          reason: "plan_inactive"
+        });
+      }
     }
 
     const id = randomId("lic");
@@ -1281,12 +1368,16 @@ async function createLicense(env, projectId, body, admin) {
       planId: plan?.id || "",
       planName: plan?.name || String(body.planName || "Personalizada"),
       durationDays,
+      renewalDaysTotal: 0,
+      renewalCount: 0,
       lifetime,
       maxDevices,
       startMode,
       status,
       activatedAt,
       expiresAt,
+      source: String(body.source || "admin"),
+      externalOrderId: String(body.externalOrderId || ""),
       notes: String(body.notes || "").trim(),
       createdAt,
       updatedAt: createdAt
@@ -1298,16 +1389,30 @@ async function createLicense(env, projectId, body, admin) {
       licenseId: id,
       createdAt
     });
+
+    if (idempotencyPath) {
+      tx.create(idempotencyPath, {
+        licenseId: id,
+        requestHash,
+        source: license.source,
+        externalOrderId: license.externalOrderId,
+        createdAt
+      });
+    }
+
     queueLogInTransaction(tx, projectId, "license.created", {
       licenseId: id,
       customerId,
       planId: plan?.id || null,
       lifetime,
       durationDays,
-      maxDevices
+      maxDevices,
+      source: license.source,
+      externalOrderId: license.externalOrderId || null,
+      idempotent: Boolean(idempotencyPath)
     }, admin.email || admin.uid, createdAt);
 
-    return { id, ...license };
+    return { id, ...license, idempotentReplay: false };
   });
 }
 
@@ -1356,52 +1461,35 @@ async function licenseAction(env, projectId, licenseId, action, body, admin) {
   return await atomicClient(env).runTransaction(async tx => {
     const current = await tx.get(path);
     if (!current) {
-      throw Object.assign(new Error("Licença não encontrada."), { status: 404 });
+      throw Object.assign(new Error("Licença não encontrada."), {
+        status: 404,
+        reason: "license_not_found"
+      });
     }
 
     const now = nowIso();
-    let next = { ...current, updatedAt: now };
+    const result = transitionLicense(current, action, body, now, plusDays);
 
-    if (action === "revoke") {
-      next.status = "revoked";
-      next.revokedAt = now;
-      next.revocationReason = String(body.reason || "").trim();
-    } else if (action === "suspend") {
-      next.status = "suspended";
-      next.suspendedAt = now;
-    } else if (action === "reactivate") {
-      next.status = current.activatedAt ? "active" : "pending";
-      next.suspendedAt = null;
-      next.revokedAt = null;
-      next.revocationReason = "";
-    } else if (action === "renew") {
-      const days = Math.max(1, Number(body.days || current.durationDays || 30));
-      next.lifetime = Boolean(body.lifetime ?? current.lifetime);
-
-      if (next.lifetime) {
-        next.expiresAt = null;
-        if (next.status === "expired") next.status = "active";
-      } else {
-        const base = current.expiresAt && !isPast(current.expiresAt) ? current.expiresAt : now;
-        next.expiresAt = plusDays(base, days);
-        next.durationDays = days;
-        if (["expired", "pending"].includes(next.status) && next.activatedAt) next.status = "active";
-      }
-    } else {
-      throw Object.assign(new Error("Ação de licença inválida."), { status: 400 });
+    if (!result.changed) {
+      return normalizeLicenseStatus({ id: licenseId, ...result.license });
     }
 
-    tx.set(path, next);
+    tx.set(path, result.license);
     queueLogInTransaction(
       tx,
       projectId,
-      `license.${action}`,
-      { licenseId, ...body },
+      result.event,
+      {
+        licenseId,
+        ...body,
+        previousStatus: current.status,
+        nextStatus: result.license.status
+      },
       admin.email || admin.uid,
       now
     );
 
-    return normalizeLicenseStatus({ id: licenseId, ...next });
+    return normalizeLicenseStatus({ id: licenseId, ...result.license });
   });
 }
 
