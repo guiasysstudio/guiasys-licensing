@@ -3156,7 +3156,7 @@ function platformSettingsView() {
   `;
 }
 
-async function renderContent() {
+async function performRender(renderId) {
   el.content.innerHTML = loadingView();
 
   try {
@@ -3196,16 +3196,23 @@ async function renderContent() {
       "project-settings": projectSettingsView
     };
 
-    await (routes[state.route] || projectsView)();
+    const route = state.route;
+    await (routes[route] || projectsView)();
+
+    if (renderId !== state.renderRequested) return;
+
     bindInputEnhancements(el.content);
     el.content.focus({ preventScroll: true });
   } catch (error) {
     console.error(error);
+
+    if (renderId !== state.renderRequested) return;
+
     el.content.innerHTML = `
       ${pageHeader("Não foi possível carregar", "O módulo encontrou um erro ao consultar a API.")}
       <article class="card card-section">
         <div class="error-state">
-          <strong>${e(error.message)}</strong>
+          <strong>${e(clientErrorMessage(error))}</strong>
           <button class="btn btn-primary" id="retry-view" type="button">Tentar novamente</button>
         </div>
       </article>
@@ -3214,8 +3221,36 @@ async function renderContent() {
   }
 }
 
+async function renderContent() {
+  const requested = ++state.renderRequested;
+
+  if (!state.renderRunner) {
+    state.renderRunner = (async () => {
+      while (state.renderCompleted < state.renderRequested) {
+        const target = state.renderRequested;
+        await performRender(target);
+        state.renderCompleted = target;
+      }
+    })().finally(() => {
+      state.renderRunner = null;
+    });
+  }
+
+  await state.renderRunner;
+  return requested;
+}
+
 async function enterApp(user) {
-  showScreen("boot");
+  window.addEventListener("unhandledrejection", event => {
+  const error = event.reason;
+  if (!error) return;
+
+  event.preventDefault();
+  console.error("Erro assíncrono não tratado no painel.", error);
+  toast(clientErrorMessage(error), "danger");
+});
+
+showScreen("boot");
   state.user = user;
 
   try {
