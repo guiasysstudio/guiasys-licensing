@@ -215,7 +215,7 @@ export function createFirestoreAtomicClient({
         await rollback(transaction);
 
         if (error?.retryableTransaction && attempt < maxAttempts - 1) {
-          retryTransaction = transaction;
+          retryTransaction = error?.firestoreCode === "ABORTED" ? transaction : "";
           await new Promise(resolve => setTimeout(resolve, Math.min(250, 20 * (2 ** attempt))));
           continue;
         }
