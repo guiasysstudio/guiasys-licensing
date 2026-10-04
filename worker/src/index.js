@@ -2647,6 +2647,7 @@ async function handleAdmin(request, env, origin, url, admin) {
               "manageProjects",
               "Somente quem gerencia projetos pode restaurar um projeto arquivado."
             );
+            assertRecentAuthentication(admin);
           }
 
           const nextStatus = body.status != null ? body.status : current.status;
@@ -2703,6 +2704,7 @@ async function handleAdmin(request, env, origin, url, admin) {
       }
       if (method === "DELETE") {
         requirePermission(admin, "manageProjects", "Você não possui permissão para arquivar projetos.");
+        assertRecentAuthentication(admin);
         const saved = await atomicClient(env).runTransaction(async tx => {
           const current = await tx.get(projectPath(projectId));
           if (!current) {
