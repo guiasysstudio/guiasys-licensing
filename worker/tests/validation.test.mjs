@@ -62,7 +62,7 @@ test("valida IDs recebidos dentro do payload", () => {
 
   assertApiError(() => validateLicenseCreatePayload({
     customerId: "../admins/" + "a".repeat(64)
-  }));
+  }), 400, "invalid_identifier");
 });
 
 test("admin aceita somente projectIds e permissions conhecidos", () => {
@@ -71,7 +71,7 @@ test("admin aceita somente projectIds e permissions conhecidos", () => {
     allProjects: false,
     projectIds: ["../projects"],
     permissions: {}
-  }));
+  }), 400, "invalid_identifier");
 
   assertApiError(() => validateAdminPayload({
     email: "admin@example.com",
