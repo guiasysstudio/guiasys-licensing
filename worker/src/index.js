@@ -35,7 +35,7 @@ import {
 
 // GuiaSys Licensing API — deploy automático via Cloudflare Workers Builds
 const PROTOCOL_VERSION = "GSL-v1";
-const API_VERSION = "1.7.0";
+const API_VERSION = "1.8.0";
 const ALLOWED_ORIGINS = [
   "http://127.0.0.1:5500",
   "http://127.0.0.1:5501",
