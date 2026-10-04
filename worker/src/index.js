@@ -2666,7 +2666,8 @@ async function handleAdmin(request, env, origin, url, admin) {
         if (!admin.master && !admin.allProjects) {
           return errorResponse(origin, 403, "all_projects_required", "Para criar projetos, este administrador precisa ter acesso a todos os projetos.");
         }
-        return json({ ok: true, project: await createProject(env, await readJson(request), admin) }, 201, origin);
+        const project = await createProject(env, await readJson(request), admin);
+        return json({ ok: true, project: projectDetailView(project, admin) }, 201, origin);
       }
 
       return errorResponse(origin, 405, "method_not_allowed", "Método não permitido para projetos.", { expectedMethods: ["GET", "POST"] });
@@ -2761,7 +2762,7 @@ async function handleAdmin(request, env, origin, url, admin) {
           );
           return { id: projectId, ...next };
         });
-        return json({ ok: true, project: saved }, 200, origin);
+        return json({ ok: true, project: projectDetailView(saved, admin) }, 200, origin);
       }
       if (method === "DELETE") {
         requirePermission(admin, "manageProjects", "Você não possui permissão para arquivar projetos.");
@@ -2789,7 +2790,7 @@ async function handleAdmin(request, env, origin, url, admin) {
           queueLogInTransaction(tx, projectId, "project.archived", {}, admin.email || admin.uid, now);
           return { id: projectId, ...next };
         });
-        return json({ ok: true, project: saved }, 200, origin);
+        return json({ ok: true, project: projectDetailView(saved, admin) }, 200, origin);
       }
 
       return errorResponse(origin, 405, "method_not_allowed", "Método não permitido para este projeto.", { expectedMethods: ["GET", "PATCH", "DELETE"] });
