@@ -1756,7 +1756,10 @@ async function handleAdmin(request, env, origin, url, admin) {
   const path = url.pathname.replace(/^\/api\/v1\/admin\/?/, "");
   const parts = decodeAdminPathSegments(path);
 
-  if (parts.length === 1 && parts[0] === "me" && method === "GET") {
+  if (parts.length === 1 && parts[0] === "me") {
+    if (method !== "GET") {
+      return errorResponse(origin, 405, "method_not_allowed", "Use GET para esta rota.", { expectedMethods: ["GET"] });
+    }
     return json({ ok: true, authorized: true, administrator: admin }, 200, origin);
   }
 
@@ -1777,6 +1780,10 @@ async function handleAdmin(request, env, origin, url, admin) {
       return json({ ok: true, admin: await saveAdminRecord(env, body) }, 201, origin);
     }
 
+    if (parts.length === 1) {
+      return errorResponse(origin, 405, "method_not_allowed", "Método não permitido para administradores.", { expectedMethods: ["GET", "POST"] });
+    }
+
     const adminId = parts[1] ? assertAdminId(parts[1]) : "";
     if (adminId && parts.length === 2) {
       const path = `admins/${adminId}`;
@@ -1795,12 +1802,17 @@ async function handleAdmin(request, env, origin, url, admin) {
         await deleteDoc(env, path);
         return json({ ok: true, deleted: true }, 200, origin);
       }
+
+      return errorResponse(origin, 405, "method_not_allowed", "Método não permitido para este administrador.", { expectedMethods: ["PATCH", "DELETE"] });
     }
 
     return errorResponse(origin, 404, "not_found", "Rota de administradores não encontrada.");
   }
 
-  if (parts.length === 1 && parts[0] === "dashboard" && method === "GET") {
+  if (parts.length === 1 && parts[0] === "dashboard") {
+    if (method !== "GET") {
+      return errorResponse(origin, 405, "method_not_allowed", "Use GET para esta rota.", { expectedMethods: ["GET"] });
+    }
     requirePermission(admin, "viewDashboard", "Você não possui permissão para visualizar o dashboard.");
     const requestedProjectIdRaw = url.searchParams.get("projectId") || "";
     const requestedProjectId = requestedProjectIdRaw ? assertProjectId(requestedProjectIdRaw) : "";
@@ -1826,6 +1838,8 @@ async function handleAdmin(request, env, origin, url, admin) {
         }
         return json({ ok: true, project: await createProject(env, await readJson(request), admin) }, 201, origin);
       }
+
+      return errorResponse(origin, 405, "method_not_allowed", "Método não permitido para projetos.", { expectedMethods: ["GET", "POST"] });
     }
 
     const projectId = parts[1] ? assertProjectId(parts[1]) : "";
@@ -1889,6 +1903,8 @@ async function handleAdmin(request, env, origin, url, admin) {
         await writeLog(env, projectId, "project.archived", {}, admin.email || admin.uid);
         return json({ ok: true, project: saved }, 200, origin);
       }
+
+      return errorResponse(origin, 405, "method_not_allowed", "Método não permitido para este projeto.", { expectedMethods: ["GET", "PATCH", "DELETE"] });
     }
 
     const entity = parts[2];
@@ -1921,6 +1937,8 @@ async function handleAdmin(request, env, origin, url, admin) {
         if (entity === "licenses") return json({ ok: true, license: await createLicense(env, projectId, body, admin) }, 201, origin);
         return errorResponse(origin, 405, "method_not_allowed", "Este recurso não permite cadastro manual.");
       }
+
+      return errorResponse(origin, 405, "method_not_allowed", "Método não permitido para esta coleção.", { expectedMethods: ["GET", "POST"] });
     }
 
     const rawEntityId = parts[3];
@@ -1992,6 +2010,8 @@ async function handleAdmin(request, env, origin, url, admin) {
         await writeLog(env, projectId, `${entity.slice(0, -1)}.deleted`, { id: entityId }, admin.email || admin.uid);
         return json({ ok: true, deleted: true }, 200, origin);
       }
+
+      return errorResponse(origin, 405, "method_not_allowed", "Método não permitido para este registro.", { expectedMethods: ["GET", "PATCH", "DELETE"] });
     }
   }
 
