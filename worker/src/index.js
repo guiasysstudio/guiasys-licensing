@@ -457,9 +457,10 @@ async function requireAdmin(request, env) {
   }
 }
 
-async function getGoogleAccessToken(env) {
-  if (googleTokenCache.token && googleTokenCache.expiresAt > Date.now() + 60_000) {
-    return googleTokenCache.token;
+async function getGoogleAccessToken(env, scope = "https://www.googleapis.com/auth/datastore") {
+  const cached = googleTokenCache.get(scope);
+  if (cached?.token && cached.expiresAt > Date.now() + 60_000) {
+    return cached.token;
   }
 
   const serviceAccount = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT_JSON);
@@ -468,7 +469,7 @@ async function getGoogleAccessToken(env) {
   const encodedHeader = base64UrlEncode(JSON.stringify({ alg: "RS256", typ: "JWT" }));
   const encodedPayload = base64UrlEncode(JSON.stringify({
     iss: serviceAccount.client_email,
-    scope: "https://www.googleapis.com/auth/datastore",
+    scope,
     aud: "https://oauth2.googleapis.com/token",
     iat: now,
     exp: now + 3600
@@ -499,19 +500,55 @@ async function getGoogleAccessToken(env) {
   }, 8_000);
 
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
+  if (!response.ok || !data.access_token) {
     throw Object.assign(new Error("Não foi possível autenticar o backend no Google."), {
       status: 502,
       reason: "upstream_error"
     });
   }
 
-  googleTokenCache = {
+  const entry = {
     token: data.access_token,
     expiresAt: Date.now() + Math.max(60, Number(data.expires_in || 3600) - 60) * 1000
   };
+  googleTokenCache.set(scope, entry);
+  return entry.token;
+}
 
-  return data.access_token;
+async function getFirebaseAccountState(env, uid, forceRefresh = false) {
+  const cached = firebaseAccountCache.get(uid);
+  if (!forceRefresh && cached?.expiresAt > Date.now()) {
+    return cached.account;
+  }
+
+  const token = await getGoogleAccessToken(env, "https://www.googleapis.com/auth/identitytoolkit");
+  const response = await fetchWithTimeout(
+    `https://identitytoolkit.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/accounts:lookup`,
+    {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ localId: [uid] })
+    },
+    8_000
+  );
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw Object.assign(new Error("Não foi possível consultar a conta Firebase."), {
+      status: 502,
+      reason: "upstream_error"
+    });
+  }
+
+  const account = Array.isArray(data.users) ? data.users[0] || null : null;
+  firebaseAccountCache.set(uid, {
+    account,
+    expiresAt: Date.now() + 60_000
+  });
+  return account;
 }
 
 function toFirestoreValue(value) {
