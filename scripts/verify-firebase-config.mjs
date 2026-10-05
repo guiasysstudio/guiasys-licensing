@@ -79,8 +79,8 @@ for (const source of ["/api/**", "/health"]) {
   if (rewrite?.function?.region !== "southamerica-east1") {
     fail(`Rewrite ${source} deve declarar southamerica-east1.`);
   }
-  if (rewrite?.function?.pinTag !== true) {
-    fail(`Rewrite ${source} deve usar pinTag=true.`);
+  if ("pinTag" in rewrite.function) {
+    fail(`Rewrite ${source} não deve usar pinTag no C11.`);
   }
 }
 
