@@ -5,6 +5,7 @@ import {
   MAX_JSON_BYTES,
   readJsonBody,
   validateAdminPayload,
+  validateCustomerPayload,
   validateLicenseActionPayload,
   validateLicenseCreatePayload,
   validatePlanPayload,
@@ -205,4 +206,15 @@ test("readJsonBody exige application/json", async () => {
     assert.equal(error?.status, 415);
     return true;
   });
+});
+
+
+test("updates não aceitam nomes vazios nem identificadores de projeto inválidos", () => {
+  assertApiError(() => validateProjectPayload({ name: "   " }, { partial: true }));
+  assertApiError(() => validateProjectPayload({ prefix: "!!!" }, { partial: true }));
+  assertApiError(() => validateProjectPayload({ slug: "---" }, { partial: true }));
+  assertApiError(() => validatePlanPayload({ name: "   " }, { partial: true }));
+
+  const customerUpdate = () => validateCustomerPayload({ name: "   " }, { partial: true });
+  assertApiError(customerUpdate);
 });
