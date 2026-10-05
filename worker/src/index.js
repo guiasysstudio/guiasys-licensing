@@ -39,7 +39,7 @@ import {
 
 // GuiaSys Licensing API — runtime principal em Firebase Functions v2; Worker legado somente para rollback
 const PROTOCOL_VERSION = "GSL-v1";
-const API_VERSION = "2.0.0";
+const API_VERSION = "2.0.1";
 const ALLOWED_ORIGINS = [
   "http://127.0.0.1:5500",
   "http://127.0.0.1:5501",
