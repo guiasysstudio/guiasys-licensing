@@ -206,11 +206,37 @@ export function createFirebaseRuntime({
   }
 
   async function verifyIdToken(idToken) {
-    return await authClient.verifyIdToken(idToken, true);
+    try {
+      return await authClient.verifyIdToken(idToken, true);
+    } catch (error) {
+      if (error?.code === "auth/id-token-revoked") {
+        throw Object.assign(new Error("Sessão Firebase revogada."), {
+          status: 401,
+          reason: "firebase_token_revoked",
+          cause: error
+        });
+      }
+
+      throw Object.assign(new Error("Token Firebase inválido."), {
+        status: 401,
+        reason: "invalid_token",
+        cause: error
+      });
+    }
   }
 
   async function getAccountState(uid) {
-    const user = await authClient.getUser(uid);
+    let user;
+    try {
+      user = await authClient.getUser(uid);
+    } catch (error) {
+      if (error?.code === "auth/user-not-found") return null;
+      throw Object.assign(new Error("Não foi possível consultar a conta Firebase."), {
+        status: 502,
+        reason: "upstream_error",
+        cause: error
+      });
+    }
     const validSinceMs = user.tokensValidAfterTime
       ? new Date(user.tokensValidAfterTime).getTime()
       : 0;
