@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.15.0 — 2026-10-05
+
+### C12 — regressão final e preparação de produção
+- Painel atualizado para v0.15.0 e API para v2.0.1, preservando o protocolo público GSL-v1.
+- RBAC de projetos alinhado entre frontend e backend: `manageProjects` controla arquivamento/restauração sem conceder edição indevida das configurações.
+- Planos temporários agora rejeitam duração zero e a conversão de vitalício para temporário exige duração válida.
+- Validação pública preserva o estado `suspended` mesmo quando a data de expiração já passou.
+- Trial não pode ser iniciado/reiniciado em dispositivo que já tenha sido vinculado a licença paga.
+- Origem Web é autorizada antes de qualquer migração/geração de configuração pública do projeto.
+- Desativações administrativas de dispositivos também entram no histórico técnico de ativações.
+- Updates administrativos rejeitam nomes vazios e identificadores de projeto inválidos.
+- Contrato de integração usa `https://licencas.guiasys.online` como API pública, mantendo o painel administrativo same-origin.
+- Hosting administrativo ganha Content-Security-Policy e revalidação imediata dos assets após deploy.
+- Adicionado smoke test não destrutivo para painel, health, headers e catálogo público.
+- CI e documentação foram limpos de referências antigas ao workflow de deploy de produção e atualizados para o fluxo Firebase CLI local.
+
 ## 0.14.0 — 2026-10-04
 
 ### Firebase Hosting / C11
