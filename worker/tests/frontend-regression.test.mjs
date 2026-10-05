@@ -139,3 +139,12 @@ test("texto publicado referencia API/backend e não chama o runtime principal de
   assert.equal(source.includes("receberia do Worker"), false);
   assert.equal(source.includes("segredos do Worker"), false);
 });
+
+
+test("contrato de integração usa o domínio público e o painel mantém API administrativa same-origin", () => {
+  assert.match(source, /const API_BASE = window\.location\.origin;/);
+  assert.match(source, /const PUBLIC_API_BASE = "https:\/\/licencas\.guiasys\.online";/);
+  assert.match(source, /apiBaseUrl: PUBLIC_API_BASE/);
+  assert.match(source, /`API Base: \$\{PUBLIC_API_BASE\}`/);
+  assert.match(source, /`\$\{API_BASE\}\/api\/v1\/admin\/me`/);
+});
