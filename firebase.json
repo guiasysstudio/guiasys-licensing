@@ -1,4 +1,18 @@
 {
+  "functions": {
+    "source": "worker",
+    "codebase": "licensing",
+    "runtime": "nodejs22",
+    "ignore": [
+      "tests",
+      "wrangler.jsonc",
+      "README.md"
+    ],
+    "predeploy": [
+      "npm --prefix \"$RESOURCE_DIR\" test",
+      "npm --prefix \"$RESOURCE_DIR\" run check"
+    ]
+  },
   "firestore": {
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
@@ -7,6 +21,9 @@
     "rules": "storage.rules"
   },
   "emulators": {
+    "functions": {
+      "port": 5001
+    },
     "firestore": {
       "port": 8080
     },
