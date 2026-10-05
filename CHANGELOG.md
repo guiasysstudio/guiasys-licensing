@@ -13,7 +13,8 @@
 - Removido `CNAME` do GitHub Pages.
 - Adicionados headers de segurança e política explícita de cache.
 - Emulador Hosting configurado na porta 5000.
-- CI passa a validar staging, rewrites e ausência de dependências operacionais legadas.
+- CI permanece apenas para testes/validações; o deploy de produção não é executado pelo GitHub Actions.
+- Deploy de produção é manual via Firebase CLI autenticada localmente; WIF não faz parte do fluxo.
 - Cloudflare permanece apenas como rollback temporário durante o cutover.
 
 # Changelog
