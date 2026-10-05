@@ -36,3 +36,71 @@ test("simulador usa verificação completa do entitlement", () => {
   assert.match(source, /sha256HexText\(deviceId\)/);
   assert.match(source, /entitlementExpected\(project, type, deviceHash\)/);
 });
+
+
+test("runtime usa cache com TTL, geração e deduplicação de requests", () => {
+  assert.match(source, /const CACHE_TTL_MS = 30_000/);
+  assert.match(source, /const DASHBOARD_CACHE_TTL_MS = 15_000/);
+  assert.match(source, /async function cachedLoad\(/);
+  assert.match(source, /state\.inflight\.has\(key\)/);
+  assert.match(source, /state\.cacheRequests\.get\(key\)/);
+  assert.match(source, /state\.cacheGeneration/);
+  assert.equal(source.includes("state.cache.has("), false);
+});
+
+test("todas as chamadas HTTP do painel passam pelo timeout centralizado", () => {
+  assert.match(source, /async function fetchWithClientTimeout\(/);
+  assert.equal((source.match(/\bfetch\(/g) || []).length, 1);
+  assert.ok((source.match(/fetchWithClientTimeout\(/g) || []).length >= 6);
+  assert.match(source, /const API_TIMEOUT_MS = 12_000/);
+});
+
+test("renderContent é serializado e não executa renderizações concorrentes", () => {
+  assert.match(source, /async function performRender\(renderId\)/);
+  assert.match(source, /state\.renderRunner/);
+  assert.match(source, /while \(state\.renderCompleted < state\.renderRequested\)/);
+  assert.match(source, /if \(renderId !== state\.renderRequested\) return/);
+});
+
+test("modal manager usa pilha, Escape, Tab e não remove backdrop globalmente", () => {
+  assert.match(source, /const modalStack = \[\]/);
+  assert.match(source, /function registerModal\(/);
+  assert.match(source, /event\.key === "Escape"/);
+  assert.match(source, /event\.key !== "Tab"/);
+  assert.equal(source.includes('document.querySelector(".modal-backdrop")?.remove()'), false);
+  assert.equal(source.includes('classList.remove("modal-open")'), false);
+});
+
+test("bindings de inputs e plano são idempotentes", () => {
+  assert.match(source, /maskPhoneBound/);
+  assert.match(source, /maskIntegerBound/);
+  assert.match(source, /maskPrefixBound/);
+  assert.match(source, /maskSlugBound/);
+  assert.match(source, /maskCurrencyBound/);
+  assert.equal(source.includes('planSelect.addEventListener("change"'), false);
+  assert.match(source, /planSelect\.onchange = sync/);
+});
+
+test("emissão de licença não carrega planos em duplicidade", () => {
+  const functionStart = source.indexOf("function licenseFormHtml(customers, plans)");
+  const functionEnd = source.indexOf("async function openLicenseCreate", functionStart);
+  assert.ok(functionStart >= 0);
+  assert.ok(functionEnd > functionStart);
+
+  const functionSource = source.slice(functionStart, functionEnd);
+  assert.equal(functionSource.includes('loadEntity("plans"'), false);
+  assert.equal(functionSource.includes('loadEntity("customers"'), false);
+});
+
+test("projeto arquivado exige restauração explícita", () => {
+  assert.match(source, /project\.status === "archived" \? "disabled" : ""/);
+  assert.match(source, /class="btn btn-primary restore-project"/);
+  assert.match(source, /Restaurar projeto/);
+  assert.match(source, /body: JSON\.stringify\(\{ status: "active" \}\)/);
+});
+
+test("ações críticas usam lock de botão e erro comum", () => {
+  assert.match(source, /async function runButtonAction\(/);
+  assert.ok((source.match(/runButtonAction\(/g) || []).length >= 7);
+  assert.match(source, /window\.addEventListener\("unhandledrejection"/);
+});
