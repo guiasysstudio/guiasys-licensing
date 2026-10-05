@@ -12,6 +12,18 @@ on:
       - "firestore.indexes.json"
       - "storage.rules"
       - "scripts/verify-firebase-config.mjs"
+      - "assets/js/entitlement-verifier.js"
+      - "assets/js/entitlement-verifier.js"
+      - "assets/css/app.css"
+      - "assets/css/app.css"
+      - "assets/js/app.js"
+      - "assets/js/app.js"
+      - "index.html"
+      - "index.html"
+      - "scripts/verify-hosting-dist.mjs"
+      - "scripts/verify-hosting-dist.mjs"
+      - "scripts/prepare-hosting.mjs"
+      - "scripts/prepare-hosting.mjs"
       - "scripts/test-firestore-transactions.mjs"
       - "scripts/firestore-test.rules"
       - "firebase.transaction-test.json"
@@ -61,6 +73,11 @@ jobs:
         with:
           distribution: "temurin"
           java-version: "21"
+
+      - name: Prepare and verify Hosting staging
+        run: |
+          node scripts/prepare-hosting.mjs
+          node scripts/verify-hosting-dist.mjs
 
       - name: Validate versioned config
         run: node scripts/verify-firebase-config.mjs
