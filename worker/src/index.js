@@ -1191,12 +1191,12 @@ async function resolvePublicProject(env, body = {}, origin = "") {
     throw Object.assign(new Error("Projeto não encontrado."), { status: 404, reason: "project_not_found" });
   }
 
-  project = await ensureProjectIntegrationCode(env, project);
   if (project.status !== "active") {
     throw Object.assign(new Error("Projeto inativo."), { status: 403, reason: "project_inactive" });
   }
 
   assertProjectOrigin(project, origin);
+  project = await ensureProjectIntegrationCode(env, project);
   return { projectId: project.id, project };
 }
 
