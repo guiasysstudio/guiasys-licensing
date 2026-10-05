@@ -1,4 +1,4 @@
-name: Worker Security Tests
+name: Backend Security Tests
 
 on:
   push:
@@ -7,6 +7,7 @@ on:
       - "fix/**"
     paths:
       - "worker/**"
+      - "firebase.json"
       - "assets/js/app.js"
       - "assets/css/app.css"
       - "assets/js/entitlement-verifier.js"
@@ -17,6 +18,7 @@ on:
       - main
     paths:
       - "worker/**"
+      - "firebase.json"
       - "assets/js/app.js"
       - "assets/css/app.css"
       - "assets/js/entitlement-verifier.js"
@@ -40,9 +42,19 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Run Worker security tests
+      - name: Install backend dependencies
+        working-directory: worker
+        run: npm install --no-audit --no-fund
+
+      - name: Run backend security and API tests
         working-directory: worker
         run: npm test
+
+      - name: Check backend syntax and Firebase entrypoint
+        working-directory: worker
+        run: |
+          npm run check
+          node -e "import('./src/firebase-entry.js').then(m => { if (!m.licensingApi) process.exit(1); })"
 
       - name: Check frontend JavaScript syntax
         run: |
