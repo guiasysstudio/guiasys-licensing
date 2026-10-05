@@ -30,7 +30,7 @@ test("raiz preserva GSL-v1, expõe API 2.0 e request id", async () => {
 
   const body = await response.json();
   assert.equal(body.name, "GuiaSys Licensing API");
-  assert.equal(body.version, "2.0.0");
+  assert.equal(body.version, "2.0.1");
   assert.equal(body.protocolVersion, "GSL-v1");
 
   assert.equal(logs.length, 1);
