@@ -2990,7 +2990,9 @@ async function projectSettingsView() {
         ${projectForm(project)}
         <div class="form-page-footer">
           <button class="btn btn-primary" type="submit">Salvar configurações</button>
-          <button class="btn btn-danger" id="archive-project" type="button">Arquivar projeto</button>
+          ${hasPermission("manageProjects")
+            ? '<button class="btn btn-danger" id="archive-project" type="button">Arquivar projeto</button>'
+            : ""}
         </div>
       </form>
     </article>
@@ -3010,7 +3012,7 @@ async function projectSettingsView() {
     toast("Configurações salvas.");
   });
 
-  document.querySelector("#archive-project").onclick = event => {
+  document.querySelector("#archive-project")?.addEventListener("click", event => {
     runButtonAction(event.currentTarget, async () => {
       if (!await confirmAction("Arquivar projeto", "O projeto deixará de aparecer no seletor principal e não aceitará novas ativações.", "Arquivar")) return;
       await api(`/api/v1/admin/projects/${project.id}`, { method: "DELETE" });
@@ -3023,7 +3025,7 @@ async function projectSettingsView() {
       toast("Projeto arquivado.");
       await renderContent();
     });
-  };
+  });
 }
 
 async function loadAdmins() {
