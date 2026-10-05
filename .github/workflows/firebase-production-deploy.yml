@@ -76,19 +76,19 @@ jobs:
           --project guiasys-licensing
           --non-interactive
 
-      - name: Deploy Hosting
+      - name: Deploy Hosting admin
         env:
           CI: "true"
         run: >
           npx --yes firebase-tools@15.32.1 deploy
-          --only hosting
+          --only hosting:admin
           --project guiasys-licensing
           --non-interactive
 
       - name: Smoke test Firebase Hosting
         run: |
-          curl --fail --silent --show-error --retry 5 --retry-delay 3 https://guiasys-licensing.web.app/ > /dev/null
-          curl --fail --silent --show-error --retry 5 --retry-delay 3 https://guiasys-licensing.web.app/health | node -e '
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 https://guiasys-licensing-admin.web.app/ > /dev/null
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 https://guiasys-licensing-admin.web.app/health | node -e '
             let data="";
             process.stdin.on("data", chunk => data += chunk);
             process.stdin.on("end", () => {
