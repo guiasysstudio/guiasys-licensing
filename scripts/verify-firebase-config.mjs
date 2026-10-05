@@ -32,6 +32,9 @@ const storageRules = readText("storage.rules");
 const backendPackage = readJson("worker/package.json");
 const firebaseEntry = readText("worker/src/firebase-entry.js");
 const firebaseRuntime = readText("worker/src/firebase-runtime.js");
+const frontendApp = readText("assets/js/app.js");
+const prepareHosting = readText("scripts/prepare-hosting.mjs");
+const verifyHostingDist = readText("scripts/verify-hosting-dist.mjs");
 
 if (rc?.projects?.default !== "guiasys-licensing") {
   fail(".firebaserc deve apontar o projeto default para guiasys-licensing.");
@@ -49,8 +52,76 @@ if (config?.storage?.rules !== "storage.rules") {
   fail("firebase.json deve versionar storage.rules.");
 }
 
-if ("hosting" in config) {
-  fail("Hosting pertence ao C11 e ainda não deve ser configurado no C10.");
+if (!config?.hosting || typeof config.hosting !== "object") {
+  fail("C11 exige configuração versionada do Firebase Hosting.");
+}
+
+if (config.hosting.public !== ".hosting-dist") {
+  fail("Hosting deve publicar somente a pasta .hosting-dist.");
+}
+
+if (!Array.isArray(config.hosting.predeploy)) {
+  fail("Hosting deve possuir gates de predeploy.");
+}
+
+const hostingPredeploy = config.hosting.predeploy.join("\n");
+if (!/prepare-hosting\.mjs/.test(hostingPredeploy) || !/verify-hosting-dist\.mjs/.test(hostingPredeploy)) {
+  fail("Hosting predeploy deve preparar e validar o staging público.");
+}
+
+const rewrites = Array.isArray(config.hosting.rewrites) ? config.hosting.rewrites : [];
+for (const source of ["/api/**", "/health"]) {
+  const rewrite = rewrites.find(item => item?.source === source);
+  if (!rewrite) fail(`Rewrite obrigatório ausente: ${source}`);
+  if (rewrite?.function?.functionId !== "licensingApi") {
+    fail(`Rewrite ${source} deve apontar para licensingApi.`);
+  }
+  if (rewrite?.function?.region !== "southamerica-east1") {
+    fail(`Rewrite ${source} deve declarar southamerica-east1.`);
+  }
+  if (rewrite?.function?.pinTag !== true) {
+    fail(`Rewrite ${source} deve usar pinTag=true.`);
+  }
+}
+
+const hostingHeaders = Array.isArray(config.hosting.headers) ? config.hosting.headers : [];
+const globalHeaders = hostingHeaders.find(item => item?.source === "**")?.headers || [];
+const requiredSecurityHeaders = [
+  "X-Content-Type-Options",
+  "X-Frame-Options",
+  "Referrer-Policy",
+  "Permissions-Policy",
+  "Cross-Origin-Opener-Policy",
+  "Strict-Transport-Security"
+];
+for (const header of requiredSecurityHeaders) {
+  if (!globalHeaders.some(item => item?.key === header && String(item?.value || "").trim())) {
+    fail(`Header de segurança ausente no Hosting: ${header}`);
+  }
+}
+
+if (config?.emulators?.hosting?.port !== 5000) {
+  fail("Emulador do Hosting deve usar a porta 5000.");
+}
+
+if (!/const API_BASE = window\.location\.origin;/.test(frontendApp)) {
+  fail("Frontend deve usar o próprio origin como API base.");
+}
+
+if (/workers\.dev/.test(frontendApp)) {
+  fail("Frontend não pode depender diretamente do domínio workers.dev.");
+}
+
+if (!/index\.html/.test(prepareHosting) || !/assets/.test(prepareHosting)) {
+  fail("Builder do Hosting deve copiar somente os assets públicos esperados.");
+}
+
+if (!/arquivo fora da allowlist/.test(verifyHostingDist)) {
+  fail("Validador do Hosting deve bloquear arquivos fora da allowlist.");
+}
+
+if (fs.existsSync(path.join(root, "CNAME"))) {
+  fail("CNAME do GitHub Pages deve ser removido no C11.");
 }
 
 if (!config?.functions || typeof config.functions !== "object") {
@@ -129,4 +200,4 @@ if (/allow\s+[^;]+:\s*if\s+true\s*;/.test(storageCompact)) {
   fail("Storage contém regra allow ... if true.");
 }
 
-console.log("Firebase foundation + Functions C10 config OK.");
+console.log("Firebase foundation + Functions C10 + Hosting C11 config OK.");
