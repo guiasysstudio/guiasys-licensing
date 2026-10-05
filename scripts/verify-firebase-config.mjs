@@ -35,6 +35,8 @@ const firebaseRuntime = readText("worker/src/firebase-runtime.js");
 const frontendApp = readText("assets/js/app.js");
 const prepareHosting = readText("scripts/prepare-hosting.mjs");
 const verifyHostingDist = readText("scripts/verify-hosting-dist.mjs");
+const preparePublicHosting = readText("scripts/prepare-public-hosting.mjs");
+const verifyPublicHostingDist = readText("scripts/verify-public-hosting-dist.mjs");
 
 if (rc?.projects?.default !== "guiasys-licensing") {
   fail(".firebaserc deve apontar o projeto default para guiasys-licensing.");
@@ -69,6 +71,17 @@ if (!Array.isArray(adminHosting.predeploy)) {
   fail("Hosting administrativo deve possuir gates de predeploy.");
 }
 
+const publicHosting = config.hosting.find(item => item?.target === "public");
+if (!publicHosting) {
+  fail("C12 exige target public para expor a API GSL-v1 no domínio público.");
+}
+if (publicHosting.public !== ".hosting-public-dist") {
+  fail("Hosting público deve publicar somente .hosting-public-dist.");
+}
+if (!Array.isArray(publicHosting.predeploy)) {
+  fail("Hosting público deve possuir gates de predeploy.");
+}
+
 const hostingTargets = rc?.targets?.["guiasys-licensing"]?.hosting || {};
 if (!Array.isArray(hostingTargets.admin) || hostingTargets.admin.length !== 1 || hostingTargets.admin[0] !== "guiasys-licensing-admin") {
   fail(".firebaserc deve mapear hosting:admin para guiasys-licensing-admin.");
@@ -82,37 +95,47 @@ if (!/prepare-hosting\.mjs/.test(hostingPredeploy) || !/verify-hosting-dist\.mjs
   fail("Hosting admin predeploy deve preparar e validar o staging do painel.");
 }
 
-const rewrites = Array.isArray(adminHosting.rewrites) ? adminHosting.rewrites : [];
-for (const source of ["/api/**", "/health"]) {
-  const rewrite = rewrites.find(item => item?.source === source);
-  if (!rewrite) fail(`Rewrite obrigatório ausente: ${source}`);
-  if (rewrite?.function?.functionId !== "licensingApi") {
-    fail(`Rewrite ${source} deve apontar para licensingApi.`);
+const publicHostingPredeploy = publicHosting.predeploy.join("\n");
+if (!/prepare-public-hosting\.mjs/.test(publicHostingPredeploy) || !/verify-public-hosting-dist\.mjs/.test(publicHostingPredeploy)) {
+  fail("Hosting public predeploy deve preparar e validar o gateway da API.");
+}
+
+function validateHostingRuntime(hosting, label) {
+  const rewrites = Array.isArray(hosting.rewrites) ? hosting.rewrites : [];
+  for (const source of ["/api/**", "/health"]) {
+    const rewrite = rewrites.find(item => item?.source === source);
+    if (!rewrite) fail(`Rewrite obrigatório ausente em ${label}: ${source}`);
+    if (rewrite?.function?.functionId !== "licensingApi") {
+      fail(`Rewrite ${source} em ${label} deve apontar para licensingApi.`);
+    }
+    if (rewrite?.function?.region !== "southamerica-east1") {
+      fail(`Rewrite ${source} em ${label} deve declarar southamerica-east1.`);
+    }
+    if ("pinTag" in rewrite.function) {
+      fail(`Rewrite ${source} em ${label} não deve usar pinTag.`);
+    }
   }
-  if (rewrite?.function?.region !== "southamerica-east1") {
-    fail(`Rewrite ${source} deve declarar southamerica-east1.`);
-  }
-  if ("pinTag" in rewrite.function) {
-    fail(`Rewrite ${source} não deve usar pinTag no C11.`);
+
+  const hostingHeaders = Array.isArray(hosting.headers) ? hosting.headers : [];
+  const globalHeaders = hostingHeaders.find(item => item?.source === "**")?.headers || [];
+  const requiredSecurityHeaders = [
+    "X-Content-Type-Options",
+    "X-Frame-Options",
+    "Referrer-Policy",
+    "Permissions-Policy",
+    "Cross-Origin-Opener-Policy",
+    "Strict-Transport-Security",
+    "Content-Security-Policy"
+  ];
+  for (const header of requiredSecurityHeaders) {
+    if (!globalHeaders.some(item => item?.key === header && String(item?.value || "").trim())) {
+      fail(`Header de segurança ausente em ${label}: ${header}`);
+    }
   }
 }
 
-const hostingHeaders = Array.isArray(adminHosting.headers) ? adminHosting.headers : [];
-const globalHeaders = hostingHeaders.find(item => item?.source === "**")?.headers || [];
-const requiredSecurityHeaders = [
-  "X-Content-Type-Options",
-  "X-Frame-Options",
-  "Referrer-Policy",
-  "Permissions-Policy",
-  "Cross-Origin-Opener-Policy",
-  "Strict-Transport-Security",
-  "Content-Security-Policy"
-];
-for (const header of requiredSecurityHeaders) {
-  if (!globalHeaders.some(item => item?.key === header && String(item?.value || "").trim())) {
-    fail(`Header de segurança ausente no Hosting: ${header}`);
-  }
-}
+validateHostingRuntime(adminHosting, "hosting:admin");
+validateHostingRuntime(publicHosting, "hosting:public");
 
 if (config?.emulators?.hosting?.port !== 5000) {
   fail("Emulador do Hosting deve usar a porta 5000.");
@@ -132,6 +155,13 @@ if (!/\.hosting-admin-dist/.test(prepareHosting) || !/index\.html/.test(prepareH
 
 if (!/arquivo fora da allowlist/.test(verifyHostingDist)) {
   fail("Validador do Hosting deve bloquear arquivos fora da allowlist.");
+}
+
+if (!/\.hosting-public-dist/.test(preparePublicHosting) || !/GSL-v1/.test(preparePublicHosting)) {
+  fail("Builder do Hosting public deve preparar o gateway mínimo GSL-v1.");
+}
+if (!/gateway público não deve executar conteúdo ativo/.test(verifyPublicHostingDist)) {
+  fail("Validador do Hosting public deve bloquear conteúdo ativo inesperado.");
 }
 
 if (fs.existsSync(path.join(root, "CNAME"))) {
@@ -214,4 +244,4 @@ if (/allow\s+[^;]+:\s*if\s+true\s*;/.test(storageCompact)) {
   fail("Storage contém regra allow ... if true.");
 }
 
-console.log("Firebase foundation + Functions C10 + Hosting admin multi-site C11 config OK.");
+console.log("Firebase foundation + Functions C10 + Hosting multi-site C11/C12 config OK.");
