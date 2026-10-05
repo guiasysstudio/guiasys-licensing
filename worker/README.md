@@ -1,12 +1,34 @@
 # GuiaSys Licensing API
 
-Cloudflare Worker responsável por todas as operações privilegiadas do GuiaSys Licensing.
+Backend privilegiado do GuiaSys Licensing.
 
-## Variáveis
+## Runtime principal — Firebase Functions v2
 
-- `FIREBASE_PROJECT_ID=guiasys-licensing`
-- `ADMIN_FIREBASE_UID` — variável configurada no painel
-- `FIREBASE_SERVICE_ACCOUNT_JSON` — **Secret**, nunca versionar o valor
+A partir do C10, o runtime principal é a função HTTP `licensingApi`:
+
+- Node.js 22;
+- região `southamerica-east1`;
+- Firebase Admin SDK;
+- Firestore via credenciais nativas do runtime;
+- Firebase Auth com verificação de revogação;
+- `ADMIN_FIREBASE_UID` armazenado no Secret Manager;
+- no máximo 20 instâncias;
+- contrato público preservado em `GSL-v1`;
+- `X-Request-Id` em todas as respostas do core;
+- logs estruturados de request e erro.
+
+Não é necessário nem permitido configurar `FIREBASE_SERVICE_ACCOUNT_JSON` para o runtime Firebase.
+
+## Cloudflare Worker legado
+
+O código continua compatível com o Worker durante a janela de migração para permitir rollback seguro. O Worker não é mais a arquitetura de destino e será retirado do tráfego após o corte de Hosting/implantação.
+
+## Configuração necessária
+
+- projeto Firebase: `guiasys-licensing`;
+- Secret Manager: `ADMIN_FIREBASE_UID`;
+- Firestore e Authentication habilitados;
+- service account da Function com permissões necessárias para Firebase Auth/Firestore.
 
 ## Endpoints administrativos
 
@@ -32,11 +54,24 @@ Todos exigem Firebase ID Token do administrador em `Authorization: Bearer <token
 
 Os dados permanecem isolados em `projects/{projectId}/...`.
 
+## Desenvolvimento e gates
+
+No diretório `worker/`:
+
+```bash
+npm install
+npm test
+npm run check
+```
+
+O `firebase.json` usa este diretório como source do codebase `licensing`. Os testes são executados também no predeploy.
 
 ## Hardening
 
-- Rate limiting por IP/rota nos endpoints públicos.
+- Rate limiting transacional por IP/rota nos endpoints públicos.
 - CORS por origem configurada em cada projeto Web.
 - Entitlements offline assinados com ES256.
 - Chave privada de assinatura nunca é entregue ao cliente.
 - Trial convertido em licença paga não pode ser reiniciado.
+- Transações nativas do Firestore Admin SDK no runtime Firebase.
+- Erros 5xx não expõem detalhes internos ao cliente.
