@@ -37,7 +37,7 @@ import {
   validatePublicTrialPayload
 } from "./validation.js";
 
-// GuiaSys Licensing API — deploy automático via Cloudflare Workers Builds
+// GuiaSys Licensing API — runtime principal em Firebase Functions v2; Worker legado somente para rollback
 const PROTOCOL_VERSION = "GSL-v1";
 const API_VERSION = "2.0.0";
 const ALLOWED_ORIGINS = [
