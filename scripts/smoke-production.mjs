@@ -77,7 +77,7 @@ const adminHealth = await expectJson(`${ADMIN_BASE}/health`);
 for (const [field, expected] of Object.entries({
   ok: true,
   service: "guiasys-licensing-api",
-  version: "2.0.0",
+  version: "2.0.1",
   protocolVersion: "GSL-v1",
   firebaseProject: "guiasys-licensing",
   runtime: "firebase-functions-v2",
