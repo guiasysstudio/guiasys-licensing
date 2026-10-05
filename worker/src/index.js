@@ -3093,6 +3093,18 @@ async function handleAdmin(request, env, origin, url, admin) {
         const now = nowIso();
         const next = { ...device, active: false, deactivatedAt: now, updatedAt: now };
         tx.set(path, next);
+
+        const activationId = randomId("act");
+        tx.create(`projects/${projectId}/activations/${activationId}`, {
+          licenseId: device.licenseId || null,
+          customerId: device.customerId || null,
+          deviceHash: entityId,
+          type: "deactivate",
+          source: "admin",
+          actor: admin.email || admin.uid,
+          createdAt: now
+        });
+
         queueLogInTransaction(
           tx,
           projectId,
