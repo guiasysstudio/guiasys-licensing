@@ -2930,6 +2930,14 @@ async function handleAdmin(request, env, origin, url, admin) {
       if (method !== "GET") {
         return errorResponse(origin, 405, "method_not_allowed", "Use GET para esta rota.", { expectedMethods: ["GET"] });
       }
+      if (!can(admin, "managePlans") && !can(admin, "manageProjectSettings")) {
+        return errorResponse(
+          origin,
+          403,
+          "permission_denied",
+          "Você não possui permissão para visualizar a prévia comercial deste projeto."
+        );
+      }
       const rawProject = await getDoc(env, projectPath(projectId));
       const candidate = await catalogProjectCandidate(env, rawProject);
       return json({
