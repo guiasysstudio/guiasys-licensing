@@ -1453,6 +1453,14 @@ async function createPlan(env, projectId, body, admin) {
     const id = randomId("plan");
     const createdAt = nowIso();
     const lifetime = Boolean(body.lifetime);
+    const requestedDurationDays = body.durationDays == null ? 30 : Number(body.durationDays);
+    if (!lifetime && requestedDurationDays < 1) {
+      throw Object.assign(
+        new Error("Planos temporários precisam ter duração mínima de 1 dia."),
+        { status: 400, reason: "invalid_plan_duration" }
+      );
+    }
+
     const startMode = ["first_activation", "immediate"].includes(body.startMode)
       ? body.startMode
       : "first_activation";
@@ -1461,7 +1469,7 @@ async function createPlan(env, projectId, body, admin) {
       name,
       description: String(body.description || "").trim(),
       price: Math.max(0, Number(body.price || 0)),
-      durationDays: lifetime ? 0 : Math.max(1, Number(body.durationDays || 30)),
+      durationDays: lifetime ? 0 : requestedDurationDays,
       lifetime,
       deviceLimit: Math.max(1, Number(body.deviceLimit || 1)),
       startMode,
@@ -1712,7 +1720,6 @@ async function updateEntity(env, projectId, entity, id, body, admin) {
 
     if (entity === "plans") {
       if ("price" in clean) clean.price = Math.max(0, Number(clean.price || 0));
-      if ("durationDays" in clean) clean.durationDays = Math.max(1, Number(clean.durationDays || 1));
       if ("deviceLimit" in clean) clean.deviceLimit = Math.max(1, Number(clean.deviceLimit || 1));
       if ("startMode" in clean && !["first_activation", "immediate"].includes(clean.startMode)) {
         clean.startMode = "first_activation";
@@ -1722,15 +1729,24 @@ async function updateEntity(env, projectId, entity, id, body, admin) {
       const nextLifetime = "lifetime" in clean ? Boolean(clean.lifetime) : Boolean(current.lifetime);
       if (nextLifetime) {
         clean.durationDays = 0;
-      } else if (
-        current.lifetime === true &&
-        clean.lifetime === false &&
-        !("durationDays" in clean)
-      ) {
-        throw Object.assign(
-          new Error("Informe a duração em dias ao converter um plano vitalício em temporário."),
-          { status: 400, reason: "invalid_plan_duration" }
-        );
+      } else {
+        if (
+          current.lifetime === true &&
+          clean.lifetime === false &&
+          !("durationDays" in clean)
+        ) {
+          throw Object.assign(
+            new Error("Informe a duração em dias ao converter um plano vitalício em temporário."),
+            { status: 400, reason: "invalid_plan_duration" }
+          );
+        }
+
+        if ("durationDays" in clean && Number(clean.durationDays) < 1) {
+          throw Object.assign(
+            new Error("Planos temporários precisam ter duração mínima de 1 dia."),
+            { status: 400, reason: "invalid_plan_duration" }
+          );
+        }
       }
     }
 
