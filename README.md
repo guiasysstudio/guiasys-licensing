@@ -51,7 +51,7 @@ Rewrites versionados:
 - `/api/** -> licensingApi`
 - `/health -> licensingApi`
 
-Os rewrites usam `pinTag: true` para manter a Function v2 alinhada ao release do Hosting.
+Os rewrites não usam `pinTag`. Functions e Hosting são implantados em etapas separadas; isso evita que a finalização do Hosting tente alterar tags/tráfego do serviço Cloud Run da Function v2.
 
 ## Backend
 
@@ -182,7 +182,8 @@ Antes do primeiro deploy ao vivo:
 Com Firebase CLI autenticada:
 
 ```bash
-firebase deploy --only functions:licensing,hosting --project guiasys-licensing
+firebase deploy --only functions:licensing --project guiasys-licensing
+firebase deploy --only hosting --project guiasys-licensing
 ```
 
 O domínio customizado e os registros DNS são configuração externa ao repositório. Não altere DNS antes de a URL `*.web.app` passar no smoke test.
