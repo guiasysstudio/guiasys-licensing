@@ -6,8 +6,8 @@ Existe um único motor de licenciamento e múltiplos ambientes independentes. Ca
 
 ## Componentes
 
-### GitHub Pages
-Hospeda apenas HTML, CSS e JavaScript do painel.
+### Firebase Hosting
+Hospeda o painel estático a partir de uma pasta de staging allowlist (`.hosting-dist/`). O frontend usa o próprio `window.location.origin` e os caminhos `/api/**` e `/health` são reescritos para a Function `licensingApi`.
 
 ### Firebase Authentication
 Autentica o administrador usando Google ou e-mail/senha. O Firebase ID Token é enviado ao backend.
@@ -18,7 +18,7 @@ Autentica o administrador usando Google ou e-mail/senha. O Firebase ID Token é 
 O UID do administrador master é lido de `ADMIN_FIREBASE_UID` via Secret Manager. O backend Firebase não utiliza chave JSON de service account persistida no repositório nem em variável de ambiente.
 
 ### Cloudflare Worker legado
-Permanece temporariamente compatível apenas como rollback durante a transição. O corte definitivo de tráfego ocorre na etapa de Hosting/implantação; o contrato público `GSL-v1` não muda.
+Permanece somente como contingência temporária durante a janela de cutover. O frontend não depende mais do endpoint `workers.dev`; o tráfego alvo passa por Firebase Hosting → Firebase Functions v2.
 
 ### Cloud Firestore
 Persiste projetos, planos, clientes, licenças, dispositivos, ativações e logs.
@@ -154,3 +154,14 @@ O backend Firebase usa:
 O adaptador `firebase-runtime.js` preserva a interface de persistência usada pelo motor existente. Isso permite trocar a infraestrutura sem duplicar as regras de licenciamento, trial, RBAC, assinatura ES256 ou validação GSL-v1.
 
 A autenticação administrativa no runtime Firebase usa `verifyIdToken(..., true)`, consulta o estado real da conta e mantém a validação de provedor, revogação, conta desativada e autenticação recente já existente no domínio.
+
+
+## Hosting e cutover — C11
+
+O Firebase Hosting publica somente `index.html` e `assets/`, preparados por script em `.hosting-dist/`. Backend, documentação, Rules e arquivos operacionais não entram no artefato público.
+
+Os rewrites `/api/**` e `/health` apontam para `licensingApi` em `southamerica-east1` com `pinTag: true`. O path e a query originais são preservados pelo Hosting ao encaminhar a requisição.
+
+O domínio oficial `licencas.guiasys.online` deve ser conectado ao Firebase Hosting somente depois do smoke test na URL `web.app`. O antigo `CNAME` de GitHub Pages não faz mais parte do repositório.
+
+Durante a janela de migração, Cloudflare pode permanecer online para rollback operacional, mas não é mais referência do frontend nem da documentação de integração.
