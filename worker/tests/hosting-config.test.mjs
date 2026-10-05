@@ -52,7 +52,7 @@ test("Hosting aplica headers de cache e hardening", () => {
     item.key === "Cache-Control" && /no-store/.test(item.value)
   ));
   assert.ok(assetHeaders.some(item =>
-    item.key === "Cache-Control" && /must-revalidate/.test(item.value)
+    item.key === "Cache-Control" && item.value === "public, max-age=0, must-revalidate"
   ));
 
   for (const header of [
