@@ -17,8 +17,6 @@
 - Deploy de produção é manual via Firebase CLI autenticada localmente; WIF não faz parte do fluxo.
 - Cloudflare permanece apenas como rollback temporário durante o cutover.
 
-# Changelog
-
 ## 0.9.0 — 2026-09-27
 
 ### Segurança de produção
