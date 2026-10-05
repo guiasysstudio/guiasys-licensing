@@ -457,6 +457,25 @@ function clientErrorMessage(error) {
   return error?.message || "Ocorreu um erro inesperado.";
 }
 
+async function runButtonAction(button, task) {
+  if (!button || button.dataset.busy === "true") return;
+
+  button.dataset.busy = "true";
+  button.disabled = true;
+
+  try {
+    await task();
+  } catch (error) {
+    console.error(error);
+    toast(clientErrorMessage(error), "danger");
+  } finally {
+    if (button.isConnected) {
+      button.disabled = false;
+      delete button.dataset.busy;
+    }
+  }
+}
+
 async function syncAuthorization(force = false) {
   if (!state.user || document.hidden) return;
   if (!force && Date.now() - lastAuthorizationSyncAt < 30_000) return;
