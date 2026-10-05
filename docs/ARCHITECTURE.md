@@ -73,6 +73,8 @@ As coleções de cada projeto nunca são consultadas como dados globais pelos m�
 
 O contrato público atual é `GSL-v1`.
 
+A API base entregue aos produtos integrados é `https://licencas.guiasys.online`. O painel administrativo continua usando `window.location.origin` em `painel.licencas.guiasys.online`. Isso separa o endereço público de integração do endereço administrativo.
+
 Um projeto cliente conhece somente:
 
 - API base pública;
