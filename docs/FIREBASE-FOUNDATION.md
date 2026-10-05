@@ -28,17 +28,17 @@ O runtime Firebase usa as credenciais nativas da service account da Function. N�
 
 Targets versionados em `.firebaserc`:
 
-- `public` -> `guiasys-licensing`, reservado ao portal público em `licencas.guiasys.online`;
+- `public` -> `guiasys-licensing`, gateway público GSL-v1 em `licencas.guiasys.online`;
 - `admin` -> `guiasys-licensing-admin`, painel em `painel.licencas.guiasys.online`.
 
-Enquanto o portal público ainda não foi desenvolvido, o `firebase.json` publica somente o target `admin`.
+Enquanto o portal de cliente ainda não foi desenvolvido, o target `public` publica apenas um staging mínimo (`.hosting-public-dist/`) e encaminha `/api/**` e `/health` para a Function. Nenhum artefato administrativo é publicado nesse site.
 
 O painel administrativo publica `.hosting-admin-dist/`, criada no predeploy. A allowlist contém somente:
 
 - `index.html`
 - `assets/**`
 
-Rewrites do target administrativo:
+Rewrites dos targets administrativo e público:
 
 - `/api/** -> licensingApi`
 - `/health -> licensingApi`
@@ -87,6 +87,7 @@ Depois dos gates, publique somente os componentes alterados. Para backend e pain
 ```powershell
 firebase deploy --only functions:licensing --project guiasys-licensing
 firebase deploy --only hosting:admin --project guiasys-licensing
+firebase deploy --only hosting:public --project guiasys-licensing
 ```
 
 GitHub Actions não realiza deploy de produção. A implantação é feita pela Firebase CLI autenticada localmente.
