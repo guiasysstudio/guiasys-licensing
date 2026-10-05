@@ -160,7 +160,7 @@ A autenticação administrativa no runtime Firebase usa `verifyIdToken(..., true
 
 O Firebase Hosting publica somente `index.html` e `assets/`, preparados por script em `.hosting-dist/`. Backend, documentação, Rules e arquivos operacionais não entram no artefato público.
 
-Os rewrites `/api/**` e `/health` apontam para `licensingApi` em `southamerica-east1` com `pinTag: true`. O path e a query originais são preservados pelo Hosting ao encaminhar a requisição.
+Os rewrites `/api/**` e `/health` apontam para `licensingApi` em `southamerica-east1` sem `pinTag`. Functions e Hosting são implantados separadamente para que o Hosting não precise modificar tags/tráfego do serviço Cloud Run durante a finalização. O path e a query originais são preservados pelo Hosting ao encaminhar a requisição.
 
 O domínio oficial `licencas.guiasys.online` deve ser conectado ao Firebase Hosting somente depois do smoke test na URL `web.app`. O antigo `CNAME` de GitHub Pages não faz mais parte do repositório.
 
