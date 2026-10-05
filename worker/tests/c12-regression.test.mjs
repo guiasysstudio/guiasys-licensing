@@ -460,3 +460,42 @@ test("plano temporário rejeita duração zero na criação", async () => {
     .filter(path => path.startsWith(`projects/${PROJECT_ID}/plans/`));
   assert.equal(createdPlans.length, 0);
 });
+
+
+test("origem web não autorizada é recusada antes de qualquer migração do projeto", async () => {
+  const services = memoryServices({
+    [`projects/${PROJECT_ID}`]: {
+      name: "Projeto legado",
+      prefix: "GSS",
+      status: "active",
+      allowedOrigins: ["https://permitido.example"]
+    }
+  });
+
+  const response = await handleRequest(
+    new Request("https://painel.licencas.guiasys.online/api/v1/project/config", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Origin": "https://nao-autorizado.example"
+      },
+      body: JSON.stringify({ projectId: PROJECT_ID })
+    }),
+    {
+      FIREBASE_PROJECT_ID: "guiasys-licensing",
+      ADMIN_FIREBASE_UID: "uid-master-test",
+      __services: services
+    }
+  );
+
+  assert.equal(response.status, 403);
+  const body = await response.json();
+  assert.equal(body.error, "origin_not_allowed");
+
+  const project = services.store.get(`projects/${PROJECT_ID}`);
+  assert.equal(project.integrationCode, undefined);
+  assert.equal(
+    services.store.has(`projects/${PROJECT_ID}/internal/signing`),
+    false
+  );
+});
