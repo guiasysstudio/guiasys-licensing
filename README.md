@@ -176,6 +176,12 @@ Emuladores:
 firebase emulators:start --only functions,hosting,firestore,storage --project guiasys-licensing
 ```
 
+## Versionamento e implantação
+
+O GitHub é usado somente como repositório/versionamento e para validações de teste. Não existe deploy de produção via GitHub Actions e não há dependência de Workload Identity Federation (WIF).
+
+A produção é implantada diretamente no Firebase pela Firebase CLI autenticada na máquina de desenvolvimento.
+
 ## Deploy C11
 
 Antes do primeiro deploy ao vivo:
@@ -190,12 +196,14 @@ Antes do primeiro deploy ao vivo:
 8. manter `licencas.guiasys.online` reservado ao futuro portal público;
 9. manter o Worker antigo disponível somente durante a janela de rollback.
 
-Com Firebase CLI autenticada:
+Com Firebase CLI autenticada localmente:
 
 ```bash
 firebase deploy --only functions:licensing --project guiasys-licensing
 firebase deploy --only hosting:admin --project guiasys-licensing
 ```
+
+GitHub Actions não realiza deploy no Firebase.
 
 O domínio customizado e os registros DNS são configuração externa ao repositório. Não altere DNS antes de a URL `*.web.app` passar no smoke test.
 
