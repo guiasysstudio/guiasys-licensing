@@ -15,13 +15,10 @@ on:
       - "scripts/test-firestore-transactions.mjs"
       - "scripts/firestore-test.rules"
       - "firebase.transaction-test.json"
+      - "worker/package.json"
+      - "worker/src/firebase-entry.js"
+      - "worker/src/firebase-runtime.js"
       - "worker/src/firestore-atomic.js"
-      - "worker/package.json"
-      - "worker/src/firebase-entry.js"
-      - "worker/src/firebase-runtime.js"
-      - "worker/src/firebase-runtime.js"
-      - "worker/src/firebase-entry.js"
-      - "worker/package.json"
       - ".github/workflows/firebase-config-check.yml"
   pull_request:
     branches:
@@ -36,6 +33,9 @@ on:
       - "scripts/test-firestore-transactions.mjs"
       - "scripts/firestore-test.rules"
       - "firebase.transaction-test.json"
+      - "worker/package.json"
+      - "worker/src/firebase-entry.js"
+      - "worker/src/firebase-runtime.js"
       - "worker/src/firestore-atomic.js"
       - ".github/workflows/firebase-config-check.yml"
 
