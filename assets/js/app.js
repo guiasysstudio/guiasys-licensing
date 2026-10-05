@@ -1389,7 +1389,7 @@ async function plansView() {
             <td>${e(plan.deviceLimit)}</td>
             <td>${plan.active ? '<span class="badge badge-success">Ativo</span>' : '<span class="badge badge-muted">Inativo</span>'}</td>
             <td>${plan.publicCatalog ? '<span class="badge badge-success">Venda</span>' : '<span class="badge badge-muted">Oculto</span>'}</td>
-            <td class="table-actions"><button class="btn btn-ghost btn-sm edit-plan" data-id="${e(plan.id)}">Editar</button><button class="btn btn-ghost btn-sm delete-plan" data-id="${e(plan.id)}">Excluir</button></td>
+            <td class="table-actions"><button class="btn btn-ghost btn-sm edit-plan" data-id="${e(plan.id)}" type="button">Editar</button><button class="btn btn-ghost btn-sm delete-plan" data-id="${e(plan.id)}" type="button">Excluir</button></td>
           </tr>
         `),
         "Cadastre um plano para emitir licenças."
@@ -1495,10 +1495,10 @@ async function customersView() {
             <td>${e(customer.licenseCount || 0)}</td>
             <td>${formatDate(customer.createdAt)}</td>
             <td class="table-actions">
-              <button class="btn btn-ghost btn-sm edit-customer" data-id="${e(customer.id)}">Editar</button>
+              <button class="btn btn-ghost btn-sm edit-customer" data-id="${e(customer.id)}" type="button">Editar</button>
               ${customer.licenseCount > 0
-                ? `<button class="btn btn-ghost btn-sm disable-customer" data-id="${e(customer.id)}">${customer.status === "inactive" ? "Ativar" : "Desativar"}</button>`
-                : `<button class="btn btn-ghost btn-sm delete-customer" data-id="${e(customer.id)}">Excluir</button>`}
+                ? `<button class="btn btn-ghost btn-sm disable-customer" data-id="${e(customer.id)}" type="button">${customer.status === "inactive" ? "Ativar" : "Desativar"}</button>`
+                : `<button class="btn btn-ghost btn-sm delete-customer" data-id="${e(customer.id)}" type="button">Excluir</button>`}
             </td>
           </tr>
         `),
@@ -1962,7 +1962,7 @@ async function devicesView() {
               <td>${e(device.platform || "—")}</td>
               <td>${formatDate(device.lastSeenAt, true)}</td>
               <td>${device.active !== false ? '<span class="badge badge-success">Ativo</span>' : '<span class="badge badge-muted">Desativado</span>'}</td>
-              <td class="table-actions">${device.active !== false ? `<button class="btn btn-ghost btn-sm deactivate-device" data-id="${e(device.id)}">Desativar</button>` : ""}</td>
+              <td class="table-actions">${device.active !== false ? `<button class="btn btn-ghost btn-sm deactivate-device" data-id="${e(device.id)}" type="button">Desativar</button>` : ""}</td>
             </tr>
           `;
         }),
