@@ -456,6 +456,17 @@ button:disabled {
   margin-top: 8px;
 }
 
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+  display: none;
+  border: 0;
+  padding: 0;
+  background: rgba(1, 6, 18, 0.58);
+  backdrop-filter: blur(2px);
+}
+
 .main-column {
   grid-column: 2;
   min-width: 0;
@@ -675,7 +686,11 @@ button:disabled {
 }
 
 @media (max-width: 820px) {
-  :root { --sidebar: 280px; }
+  :root { --sidebar: min(280px, calc(100vw - 44px)); }
+
+  body.sidebar-open {
+    overflow: hidden;
+  }
 
   .sidebar {
     transform: translateX(-100%);
@@ -684,6 +699,10 @@ button:disabled {
   }
 
   body.sidebar-open .sidebar { transform: translateX(0); }
+
+  body.sidebar-open .sidebar-backdrop {
+    display: block;
+  }
 
   .main-column { grid-column: 1 / -1; }
 
@@ -718,9 +737,56 @@ button:disabled {
 
   .topbar { gap: 10px; }
 
-  .project-switcher { min-width: 130px; max-width: 42vw; }
+  .project-switcher {
+    min-width: 0;
+    width: 100%;
+    max-width: none;
+  }
+
+  .project-switcher-wrap {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .user-menu {
+    flex: 0 0 auto;
+  }
 
   .btn-ghost { padding-inline: 12px; }
+}
+
+@media (max-width: 420px) {
+  .topbar {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .topbar-spacer {
+    display: none;
+  }
+
+  .user-avatar {
+    display: none;
+  }
+
+  .user-menu {
+    gap: 0;
+  }
+
+  .user-menu .btn {
+    min-width: 48px;
+    padding-inline: 10px;
+  }
+
+  .content {
+    padding-inline: 12px;
+  }
+
+  .login-panel {
+    padding-inline: 18px;
+  }
 }
 
 
