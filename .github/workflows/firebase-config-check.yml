@@ -16,6 +16,8 @@ on:
       - "scripts/verify-firebase-config.mjs"
       - "scripts/prepare-hosting.mjs"
       - "scripts/verify-hosting-dist.mjs"
+      - "scripts/prepare-public-hosting.mjs"
+      - "scripts/verify-public-hosting-dist.mjs"
       - "scripts/smoke-production.mjs"
       - "scripts/test-firestore-transactions.mjs"
       - "scripts/firestore-test.rules"
@@ -39,6 +41,8 @@ on:
       - "scripts/verify-firebase-config.mjs"
       - "scripts/prepare-hosting.mjs"
       - "scripts/verify-hosting-dist.mjs"
+      - "scripts/prepare-public-hosting.mjs"
+      - "scripts/verify-public-hosting-dist.mjs"
       - "scripts/smoke-production.mjs"
       - "scripts/test-firestore-transactions.mjs"
       - "scripts/firestore-test.rules"
@@ -76,6 +80,8 @@ jobs:
         run: |
           node scripts/prepare-hosting.mjs
           node scripts/verify-hosting-dist.mjs
+          node scripts/prepare-public-hosting.mjs
+          node scripts/verify-public-hosting-dist.mjs
 
       - name: Validate versioned config
         run: |
