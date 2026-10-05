@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 const css = await readFile(new URL("../../assets/css/app.css", import.meta.url), "utf8");
 const html = await readFile(new URL("../../index.html", import.meta.url), "utf8");
 const app = await readFile(new URL("../../assets/js/app.js", import.meta.url), "utf8");
+const workflow = await readFile(new URL("../../.github/workflows/worker-security-tests.yml", import.meta.url), "utf8");
 
 function hexToRgb(hex) {
   const value = String(hex).trim().replace("#", "");
@@ -62,6 +63,9 @@ test("controles interativos possuem alvos de toque e foco visível", () => {
   assert.match(css, /\.compact-input\s*\{[\s\S]*?height:\s*44px/);
   assert.match(css, /\.help-tip\s*\{[\s\S]*?width:\s*24px[\s\S]*?height:\s*24px/);
   assert.match(css, /:where\(button, input, select, textarea, a, \[tabindex\]\):focus-visible/);
+  assert.match(css, /\.help-tip:focus-visible\s*\{[\s\S]*?outline:\s*3px solid/);
+  const helpTipBlock = css.match(/\.help-tip\s*\{[\s\S]*?\}/)?.[0] || "";
+  assert.equal(helpTipBlock.includes("outline: 0"), false);
 });
 
 test("movimento reduzido desativa animações e transições relevantes", () => {
@@ -109,4 +113,9 @@ test("todos os botões declarados no HTML e templates possuem type explícito", 
 test("cliente não mantém cabeçalho duplicado e modais têm foco programático", () => {
   assert.match(app, /\["Cliente", "E-mail", "Status", "Status da licença"/);
   assert.match(app, /role="dialog" aria-modal="true" aria-labelledby="\$\{titleId\}" tabindex="-1"/);
+});
+
+
+test("workflow de segurança também dispara para alterações exclusivas de CSS", () => {
+  assert.ok((workflow.match(/assets\/css\/app\.css/g) || []).length >= 2);
 });
