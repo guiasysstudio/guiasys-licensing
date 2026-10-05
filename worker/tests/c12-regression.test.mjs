@@ -865,3 +865,47 @@ test("fluxo de trial preserva período, revalida de forma idempotente e converte
   assert.equal(afterConversion.status, 403);
   assert.equal((await afterConversion.json()).error, "trial_converted");
 });
+
+
+test("desativação administrativa também entra no histórico de ativações", async () => {
+  const deviceHash = sha256("DEVICE-C12-ADMIN-DEACTIVATE");
+  const services = memoryServices({
+    [`projects/${PROJECT_ID}`]: {
+      name: "Projeto Teste",
+      status: "active"
+    },
+    [`projects/${PROJECT_ID}/devices/${deviceHash}`]: {
+      licenseId: LICENSE_ID,
+      customerId: "cus_0123456789abcdefabcd",
+      deviceHash,
+      active: true,
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z"
+    }
+  });
+  const env = authenticatedEnv(services);
+
+  const response = await handleRequest(
+    jsonRequest(
+      `/api/v1/admin/projects/${PROJECT_ID}/devices/${deviceHash}/deactivate`,
+      "POST",
+      {}
+    ),
+    env
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(
+    services.store.get(`projects/${PROJECT_ID}/devices/${deviceHash}`).active,
+    false
+  );
+
+  const activations = [...services.store.entries()]
+    .filter(([path]) => path.startsWith(`projects/${PROJECT_ID}/activations/`))
+    .map(([, value]) => value);
+
+  assert.equal(activations.length, 1);
+  assert.equal(activations[0].type, "deactivate");
+  assert.equal(activations[0].source, "admin");
+  assert.equal(activations[0].deviceHash, deviceHash);
+});
