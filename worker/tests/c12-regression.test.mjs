@@ -427,3 +427,36 @@ test("trial não reinicia em dispositivo que já foi vinculado a licença paga",
   assert.equal(trial.convertedLicenseId, LICENSE_ID);
   assert.ok(trial.convertedAt);
 });
+
+
+test("plano temporário rejeita duração zero na criação", async () => {
+  const services = memoryServices({
+    [`projects/${PROJECT_ID}`]: {
+      name: "Projeto Teste",
+      status: "active"
+    }
+  });
+  const env = authenticatedEnv(services);
+
+  const response = await handleRequest(
+    jsonRequest(
+      `/api/v1/admin/projects/${PROJECT_ID}/plans`,
+      "POST",
+      {
+        name: "Plano inválido",
+        durationDays: 0,
+        lifetime: false,
+        deviceLimit: 1
+      }
+    ),
+    env
+  );
+
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.equal(body.error, "invalid_plan_duration");
+
+  const createdPlans = [...services.store.keys()]
+    .filter(path => path.startsWith(`projects/${PROJECT_ID}/plans/`));
+  assert.equal(createdPlans.length, 0);
+});
