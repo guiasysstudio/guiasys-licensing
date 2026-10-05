@@ -7,7 +7,9 @@
 - API base do painel passa a usar `window.location.origin`.
 - Rewrites `/api/**` e `/health` apontam para `licensingApi` em `southamerica-east1`.
 - Rewrites do Hosting não usam `pinTag`; Functions e Hosting são implantados separadamente para evitar mutação de tags/tráfego do Cloud Run durante a finalização.
-- Novo staging `.hosting-dist/` com allowlist estrita de `index.html` e `assets/`.
+- Hosting convertido para multi-site: `public` -> `guiasys-licensing` e `admin` -> `guiasys-licensing-admin`.
+- Painel administrativo passa a usar staging `.hosting-admin-dist/` com allowlist estrita de `index.html` e `assets/`.
+- `licencas.guiasys.online` fica reservado ao portal público e `painel.licencas.guiasys.online` ao painel administrativo.
 - Removido `CNAME` do GitHub Pages.
 - Adicionados headers de segurança e política explícita de cache.
 - Emulador Hosting configurado na porta 5000.
