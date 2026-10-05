@@ -698,3 +698,170 @@ test("fluxo público ativa, valida idempotência, aplica limite, desativa e veri
     false
   );
 });
+
+
+test("fluxo de trial preserva período, revalida de forma idempotente e converte na licença paga", async () => {
+  const signing = await signingFixture();
+  const licenseLookup = sha256(LICENSE_KEY);
+  const deviceId = "DEVICE-C12-TRIAL-01";
+  const deviceHash = sha256(deviceId);
+
+  const project = {
+    name: "Projeto Trial",
+    slug: "projeto-trial",
+    prefix: "GSS",
+    status: "active",
+    integrationCode: "GSLI-ABCD-EFGH-JKLM",
+    publicCatalog: false,
+    allowedOrigins: [],
+    trialEnabled: true,
+    trialDays: 5,
+    trialValidationHours: 12,
+    trialOfflineHours: 6,
+    offlineDays: 7,
+    validationHours: 24,
+    signingKeyId: signing.keyId,
+    signingAlgorithm: "ES256",
+    signingPublicJwk: signing.publicJwk,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z"
+  };
+
+  const services = memoryServices({
+    [`projects/${PROJECT_ID}`]: project,
+    [`projects/${PROJECT_ID}/internal/signing`]: signing,
+    [`projects/${PROJECT_ID}/licenseKeys/${licenseLookup}`]: {
+      licenseId: LICENSE_ID
+    },
+    [`projects/${PROJECT_ID}/licenses/${LICENSE_ID}`]: {
+      key: LICENSE_KEY,
+      customerId: "cus_0123456789abcdefabcd",
+      customerName: "Cliente Trial",
+      customerEmail: "trial@example.com",
+      planId: "",
+      planName: "Mensal",
+      durationDays: 30,
+      renewalDaysTotal: 0,
+      renewalCount: 0,
+      lifetime: false,
+      maxDevices: 1,
+      startMode: "first_activation",
+      status: "pending",
+      activatedAt: null,
+      expiresAt: null,
+      source: "admin",
+      externalOrderId: "",
+      notes: "",
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z"
+    }
+  });
+
+  const env = {
+    FIREBASE_PROJECT_ID: "guiasys-licensing",
+    ADMIN_FIREBASE_UID: "uid-master-test",
+    __services: services
+  };
+
+  const trialRequest = (path, requestId) => new Request(
+    `https://painel.licencas.guiasys.online${path}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId: PROJECT_ID,
+        deviceId,
+        deviceName: "PC Trial",
+        platform: "Windows",
+        appVersion: "1.0.0",
+        requestId
+      })
+    }
+  );
+
+  const start = await handleRequest(
+    trialRequest("/api/v1/trial/start", "req-c12-trial-start"),
+    env
+  );
+  assert.equal(start.status, 200);
+  const started = await start.json();
+  assert.equal(started.trial.status, "active");
+  assert.equal(started.trial.firstStart, true);
+  assert.equal(started.trial.durationDays, 5);
+  assert.equal(started.trial.validationHours, 12);
+  assert.equal(started.trial.offlineHours, 6);
+  const originalStartedAt = started.trial.startedAt;
+  const originalExpiresAt = started.trial.expiresAt;
+
+  const entitlementCheck = await verifyEntitlementToken(
+    started.trial.entitlement.token,
+    signing.publicJwk,
+    {
+      protocolVersion: "GSL-v1",
+      type: "trial",
+      projectId: PROJECT_ID,
+      integrationCode: project.integrationCode,
+      deviceHash,
+      status: "active",
+      keyId: signing.keyId
+    }
+  );
+  assert.equal(entitlementCheck.valid, true);
+
+  const startAgain = await handleRequest(
+    trialRequest("/api/v1/trial/start", "req-c12-trial-start-again"),
+    env
+  );
+  assert.equal(startAgain.status, 200);
+  const repeated = await startAgain.json();
+  assert.equal(repeated.trial.firstStart, false);
+  assert.equal(repeated.trial.startedAt, originalStartedAt);
+  assert.equal(repeated.trial.expiresAt, originalExpiresAt);
+
+  const validate = await handleRequest(
+    trialRequest("/api/v1/trial/validate", "req-c12-trial-validate"),
+    env
+  );
+  assert.equal(validate.status, 200);
+  const validated = await validate.json();
+  assert.equal(validated.trial.validationCount, 1);
+  assert.equal(validated.trial.revalidationReplay, false);
+
+  const validateReplay = await handleRequest(
+    trialRequest("/api/v1/trial/validate", "req-c12-trial-validate"),
+    env
+  );
+  assert.equal(validateReplay.status, 200);
+  const replayed = await validateReplay.json();
+  assert.equal(replayed.trial.validationCount, 1);
+  assert.equal(replayed.trial.revalidationReplay, true);
+
+  const paidActivation = await handleRequest(
+    new Request("https://painel.licencas.guiasys.online/api/v1/license/activate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId: PROJECT_ID,
+        licenseKey: LICENSE_KEY,
+        deviceId,
+        deviceName: "PC Trial",
+        platform: "Windows",
+        appVersion: "1.0.1",
+        requestId: "req-c12-paid-after-trial"
+      })
+    }),
+    env
+  );
+  assert.equal(paidActivation.status, 200);
+
+  const storedTrial = services.store.get(`projects/${PROJECT_ID}/trials/${deviceHash}`);
+  assert.equal(storedTrial.status, "converted");
+  assert.equal(storedTrial.convertedLicenseId, LICENSE_ID);
+
+  const afterConversion = await handleRequest(
+    trialRequest("/api/v1/trial/start", "req-c12-trial-after-paid"),
+    env
+  );
+  assert.equal(afterConversion.status, 403);
+  assert.equal((await afterConversion.json()).error, "trial_converted");
+});
