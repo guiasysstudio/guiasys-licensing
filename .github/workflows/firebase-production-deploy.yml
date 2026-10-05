@@ -1,0 +1,92 @@
+name: Firebase Production Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Digite DEPLOY para confirmar o deploy de produção"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: firebase-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: ${{ inputs.confirm == 'DEPLOY' }}
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Validate Workload Identity configuration
+        env:
+          WIF_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+        run: |
+          test -n "$WIF_PROVIDER" || { echo "GCP_WORKLOAD_IDENTITY_PROVIDER não configurado."; exit 1; }
+          test -n "$DEPLOY_SERVICE_ACCOUNT" || { echo "GCP_DEPLOY_SERVICE_ACCOUNT não configurado."; exit 1; }
+
+      - name: Install backend dependencies
+        working-directory: worker
+        run: npm install --no-audit --no-fund
+
+      - name: Audit production dependencies
+        working-directory: worker
+        run: npm audit --omit=dev --audit-level=moderate
+
+      - name: Run backend tests and syntax checks
+        working-directory: worker
+        run: |
+          npm test
+          npm run check
+
+      - name: Prepare and verify Hosting
+        run: |
+          node scripts/prepare-hosting.mjs
+          node scripts/verify-hosting-dist.mjs
+          node scripts/verify-firebase-config.mjs
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: guiasys-licensing
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Deploy Functions and Hosting
+        env:
+          CI: "true"
+        run: >
+          npx --yes firebase-tools@15.32.1 deploy
+          --only functions:licensing,hosting
+          --project guiasys-licensing
+          --non-interactive
+
+      - name: Smoke test Firebase Hosting
+        run: |
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 https://guiasys-licensing.web.app/ > /dev/null
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 https://guiasys-licensing.web.app/health | node -e '
+            let data="";
+            process.stdin.on("data", chunk => data += chunk);
+            process.stdin.on("end", () => {
+              const body = JSON.parse(data);
+              if (!body.ok || body.protocolVersion !== "GSL-v1" || body.runtime !== "firebase-functions-v2") {
+                console.error(body);
+                process.exit(1);
+              }
+            });
+          '
