@@ -4,8 +4,8 @@ Central universal de licenciamento multi-projeto da GuiaSys Studio.
 
 ## Estado
 
-**Painel:** v0.14.0  
-**API:** v2.0.0  
+**Painel:** v0.15.0  
+**API:** v2.0.1  
 **Protocolo público:** GSL-v1  
 **Runtime alvo:** Firebase Hosting + Firebase Functions v2
 
