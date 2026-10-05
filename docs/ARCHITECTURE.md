@@ -7,7 +7,7 @@ Existe um único motor de licenciamento e múltiplos ambientes independentes. Ca
 ## Componentes
 
 ### Firebase Hosting
-Opera em arquitetura multi-site no mesmo projeto Firebase. O site `guiasys-licensing` fica reservado ao portal público em `licencas.guiasys.online`; o site `guiasys-licensing-admin` hospeda o painel em `painel.licencas.guiasys.online`. O painel é preparado em `.hosting-admin-dist/`, usa `window.location.origin` e reescreve `/api/**` e `/health` para a Function `licensingApi`.
+Opera em arquitetura multi-site no mesmo projeto Firebase. O site `guiasys-licensing` funciona como gateway público da API GSL-v1 em `licencas.guiasys.online`; o site `guiasys-licensing-admin` hospeda o painel em `painel.licencas.guiasys.online`. O painel é preparado em `.hosting-admin-dist/`; o gateway público usa `.hosting-public-dist/` mínimo. Ambos reescrevem `/api/**` e `/health` para a Function `licensingApi`, enquanto o painel usa `window.location.origin` para chamadas administrativas.
 
 ### Firebase Authentication
 Autentica o administrador usando Google ou e-mail/senha. O Firebase ID Token é enviado ao backend.
@@ -160,7 +160,7 @@ A autenticação administrativa no runtime Firebase usa `verifyIdToken(..., true
 
 ## Hosting e cutover — C11
 
-O target `admin` publica somente `index.html` e `assets/`, preparados por script em `.hosting-admin-dist/`. Backend, documentação, Rules e arquivos operacionais não entram no artefato administrativo. O target `public` está mapeado ao site `guiasys-licensing`, mas não é implantado pelo C11 até o portal público existir.
+O target `admin` publica somente `index.html` e `assets/`, preparados por script em `.hosting-admin-dist/`. Backend, documentação, Rules e arquivos operacionais não entram no artefato administrativo. O target `public` publica apenas um placeholder estático mínimo em `.hosting-public-dist/` e os rewrites da API; ele não contém o painel nem antecipa o futuro portal de cliente.
 
 Os rewrites `/api/**` e `/health` apontam para `licensingApi` em `southamerica-east1` sem `pinTag`. Functions e Hosting são implantados separadamente para que o Hosting não precise modificar tags/tráfego do serviço Cloud Run durante a finalização. O path e a query originais são preservados pelo Hosting ao encaminhar a requisição.
 
@@ -178,6 +178,7 @@ O deploy operacional é feito diretamente da máquina de desenvolvimento autenti
 ```bash
 firebase deploy --only functions:licensing --project guiasys-licensing
 firebase deploy --only hosting:admin --project guiasys-licensing
+firebase deploy --only hosting:public --project guiasys-licensing
 ```
 
 Workload Identity Federation (WIF) não faz parte da arquitetura de implantação deste projeto.
