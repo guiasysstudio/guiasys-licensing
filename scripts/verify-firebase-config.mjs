@@ -69,9 +69,12 @@ if (!Array.isArray(adminHosting.predeploy)) {
   fail("Hosting administrativo deve possuir gates de predeploy.");
 }
 
-const hostingTarget = rc?.targets?.["guiasys-licensing"]?.hosting?.admin;
-if (!Array.isArray(hostingTarget) || hostingTarget.length !== 1 || hostingTarget[0] !== "guiasys-licensing-admin") {
+const hostingTargets = rc?.targets?.["guiasys-licensing"]?.hosting || {};
+if (!Array.isArray(hostingTargets.admin) || hostingTargets.admin.length !== 1 || hostingTargets.admin[0] !== "guiasys-licensing-admin") {
   fail(".firebaserc deve mapear hosting:admin para guiasys-licensing-admin.");
+}
+if (!Array.isArray(hostingTargets.public) || hostingTargets.public.length !== 1 || hostingTargets.public[0] !== "guiasys-licensing") {
+  fail(".firebaserc deve reservar hosting:public para guiasys-licensing.");
 }
 
 const hostingPredeploy = adminHosting.predeploy.join("\n");
