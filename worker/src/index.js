@@ -2303,10 +2303,42 @@ async function publicTrialStart(env, body, origin = "") {
 
   const deviceHash = await sha256Hex(deviceId);
   const path = `projects/${projectId}/trials/${deviceHash}`;
+  const devicePath = `projects/${projectId}/devices/${deviceHash}`;
 
   const outcome = await atomicClient(env).runTransaction(async tx => {
     let trial = await tx.get(path);
+    const licensedDevice = await tx.get(devicePath);
     const now = nowIso();
+
+    if (licensedDevice?.licenseId) {
+      const licenseId = assertEntityId("licenses", licensedDevice.licenseId);
+
+      if (trial && trial.status !== "converted") {
+        trial = {
+          ...trial,
+          status: "converted",
+          convertedAt: trial.convertedAt || now,
+          convertedLicenseId: licenseId,
+          lastSeenAt: now,
+          updatedAt: now
+        };
+        tx.set(path, trial);
+        queueLogInTransaction(
+          tx,
+          projectId,
+          "trial.converted",
+          { deviceHash, licenseId, recoveredFromDeviceBinding: true },
+          "api",
+          now
+        );
+      }
+
+      return {
+        blockedByLicense: true,
+        trial,
+        licenseId
+      };
+    }
 
     if (trial) {
       if (trial.status === "converted") {
@@ -2392,6 +2424,17 @@ async function publicTrialStart(env, body, origin = "") {
 
     return { expired: false, firstStart: true, trial };
   });
+
+  if (outcome.blockedByLicense) {
+    throw Object.assign(new Error("Este dispositivo já foi vinculado a uma licença paga e não pode iniciar um trial."), {
+      status: 403,
+      reason: "trial_converted",
+      details: {
+        convertedAt: outcome.trial?.convertedAt || null,
+        licenseId: outcome.licenseId
+      }
+    });
+  }
 
   if (outcome.expired) {
     throw Object.assign(new Error("O período de avaliação deste dispositivo já expirou."), {
