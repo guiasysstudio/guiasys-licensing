@@ -1,8 +1,17 @@
 {
-  "name": "guiasys-licensing-worker",
+  "name": "guiasys-licensing-backend",
   "private": true,
   "type": "module",
+  "main": "src/firebase-entry.js",
+  "engines": {
+    "node": "22"
+  },
   "scripts": {
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check src/index.js && node --check src/firebase-runtime.js && node --check src/firebase-entry.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^14.5.0",
+    "firebase-functions": "^7.3.0"
   }
 }
