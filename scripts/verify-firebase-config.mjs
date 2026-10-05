@@ -157,11 +157,11 @@ if (!/arquivo fora da allowlist/.test(verifyHostingDist)) {
   fail("Validador do Hosting deve bloquear arquivos fora da allowlist.");
 }
 
-if (!/\.hosting-public-dist/.test(preparePublicHosting) || !/GSL-v1/.test(preparePublicHosting)) {
-  fail("Builder do Hosting public deve preparar o gateway mínimo GSL-v1.");
+if (!/\.hosting-public-dist/.test(preparePublicHosting) || !/public\/index\.html/.test(preparePublicHosting) || !/public\/assets/.test(preparePublicHosting)) {
+  fail("Builder do Hosting public deve preparar somente o frontend de catálogo.");
 }
-if (!/gateway público não deve executar conteúdo ativo/.test(verifyPublicHostingDist)) {
-  fail("Validador do Hosting public deve bloquear conteúdo ativo inesperado.");
+if (!/arquivo fora da allowlist/.test(verifyPublicHostingDist) || !/innerHTML\|insertAdjacentHTML/.test(verifyPublicHostingDist)) {
+  fail("Validador do Hosting public deve aplicar allowlist e bloquear renderização HTML insegura.");
 }
 
 if (fs.existsSync(path.join(root, "CNAME"))) {
@@ -244,4 +244,4 @@ if (/allow\s+[^;]+:\s*if\s+true\s*;/.test(storageCompact)) {
   fail("Storage contém regra allow ... if true.");
 }
 
-console.log("Firebase foundation + Functions C10 + Hosting multi-site C11/C12 config OK.");
+console.log("Firebase foundation + Functions C10 + Hosting multi-site/catalog C11-C13 config OK.");

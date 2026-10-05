@@ -16,7 +16,7 @@ function firebaseEnv(logs = []) {
   };
 }
 
-test("raiz preserva GSL-v1, expõe API 2.0 e request id", async () => {
+test("raiz preserva GSL-v1, expõe API 2.1 e request id", async () => {
   const logs = [];
   const response = await handleRequest(
     new Request("https://licencas.guiasys.online/", {
@@ -30,7 +30,7 @@ test("raiz preserva GSL-v1, expõe API 2.0 e request id", async () => {
 
   const body = await response.json();
   assert.equal(body.name, "GuiaSys Licensing API");
-  assert.equal(body.version, "2.0.1");
+  assert.equal(body.version, "2.1.0");
   assert.equal(body.protocolVersion, "GSL-v1");
 
   assert.equal(logs.length, 1);

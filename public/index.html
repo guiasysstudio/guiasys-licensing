@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Licenças oficiais para os programas GuiaSys.">
+  <title>GuiaSys Licensing — Licenças oficiais</title>
+  <link rel="stylesheet" href="/assets/catalog.css">
+  <script type="module" src="/assets/catalog.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#catalog">Ir para o catálogo</a>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="GuiaSys Licensing — início">
+      <span class="brand-mark" aria-hidden="true">G</span>
+      <span><strong>GuiaSys</strong><small>Licensing</small></span>
+    </a>
+    <a class="header-link" href="#catalog">Ver programas</a>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow">LICENÇAS OFICIAIS GUIASYS</p>
+        <h1 id="hero-title">O programa certo, com a licença certa.</h1>
+        <p class="hero-lead">Conheça os programas GuiaSys e compare as ofertas publicadas diretamente pelo catálogo oficial.</p>
+        <a class="primary-link" href="#catalog">Explorar catálogo</a>
+      </div>
+      <div class="hero-art" aria-hidden="true">
+        <span class="hero-orbit orbit-one"></span>
+        <span class="hero-orbit orbit-two"></span>
+        <span class="hero-core">GS</span>
+      </div>
+    </section>
+
+    <section class="catalog-section" id="catalog" aria-labelledby="catalog-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">CATÁLOGO</p>
+          <h2 id="catalog-title">Programas disponíveis</h2>
+        </div>
+        <p>Valores em reais e condições definidas pela GuiaSys.</p>
+      </div>
+
+      <div id="catalog-status" class="catalog-status" role="status" aria-live="polite">
+        <span class="spinner" aria-hidden="true"></span>
+        <span>Carregando catálogo…</span>
+      </div>
+      <div id="catalog-grid" class="catalog-grid" hidden></div>
+      <div id="catalog-empty" class="state-card" hidden>
+        <strong>Nenhum programa publicado no momento.</strong>
+        <p>Novas ofertas aparecerão aqui assim que estiverem disponíveis.</p>
+      </div>
+      <div id="catalog-error" class="state-card state-error" role="alert" hidden>
+        <strong>Não foi possível carregar o catálogo.</strong>
+        <p>Verifique sua conexão e tente novamente.</p>
+        <button id="catalog-retry" class="secondary-button" type="button">Tentar novamente</button>
+      </div>
+      <p id="selection-status" class="selection-status" role="status" aria-live="polite" hidden></p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span>© <span id="current-year"></span> GuiaSys Studio</span>
+    <span>Catálogo oficial · GSL-v1</span>
+  </footer>
+</body>
+</html>

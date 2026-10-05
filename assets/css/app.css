@@ -1135,6 +1135,25 @@ button:disabled {
   color: var(--muted) !important;
 }
 
+.catalog-preview-card {
+  margin-top: 20px;
+}
+
+.catalog-preview-card .section-heading {
+  align-items: center;
+}
+
+.catalog-preview-json {
+  display: block;
+  max-height: 420px;
+  overflow: auto;
+  margin-top: 16px;
+  padding: 18px;
+  border-radius: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .form-page {
   max-width: 980px;
 }

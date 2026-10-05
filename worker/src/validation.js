@@ -140,6 +140,22 @@ function validateOrigins(value) {
   return origins;
 }
 
+function validateSecureImageUrl(value) {
+  if (value === undefined || value === "") return value;
+
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    fail("O campo imageUrl deve conter uma URL HTTPS válida.");
+  }
+
+  if (url.protocol !== "https:" || url.username || url.password) {
+    fail("O campo imageUrl deve conter uma URL HTTPS válida e sem credenciais.");
+  }
+  return url.href;
+}
+
 function selectorFields(body) {
   const result = {};
   const projectId = readString(body, "projectId", { max: 128 });
@@ -211,7 +227,8 @@ export async function readJsonBody(request, maxBytes = MAX_JSON_BYTES) {
 
 export function validateProjectPayload(body, { partial = false } = {}) {
   const allowed = new Set([
-    "name", "slug", "prefix", "description", "status", "publicCatalog",
+    "name", "slug", "prefix", "description", "shortDescription", "imageUrl",
+    "status", "publicCatalog", "featured", "displayOrder",
     "allowedOrigins", "trialEnabled", "trialDays", "trialValidationHours",
     "trialOfflineHours", "offlineDays", "validationHours"
   ]);
@@ -230,8 +247,13 @@ export function validateProjectPayload(body, { partial = false } = {}) {
     pattern: /^[A-Za-z0-9]+$/
   }));
   assignIfDefined(result, "description", readString(body, "description", { max: 300 }));
+  assignIfDefined(result, "shortDescription", readString(body, "shortDescription", { max: 180 }));
+  const imageUrl = readString(body, "imageUrl", { max: 2048 });
+  assignIfDefined(result, "imageUrl", validateSecureImageUrl(imageUrl));
   assignIfDefined(result, "status", readEnum(body, "status", ["active", "inactive"]));
   assignIfDefined(result, "publicCatalog", readBoolean(body, "publicCatalog"));
+  assignIfDefined(result, "featured", readBoolean(body, "featured"));
+  assignIfDefined(result, "displayOrder", readNumber(body, "displayOrder", { integer: true, min: 0, max: 100_000 }));
   assignIfDefined(result, "trialEnabled", readBoolean(body, "trialEnabled"));
   assignIfDefined(result, "trialDays", readNumber(body, "trialDays", { integer: true, min: 0, max: 3650 }));
   assignIfDefined(result, "trialValidationHours", readNumber(body, "trialValidationHours", { integer: true, min: 1, max: 8760 }));
@@ -246,7 +268,7 @@ export function validateProjectPayload(body, { partial = false } = {}) {
 export function validatePlanPayload(body, { partial = false } = {}) {
   const allowed = new Set([
     "name", "description", "price", "durationDays", "lifetime",
-    "deviceLimit", "startMode", "active", "publicCatalog"
+    "deviceLimit", "startMode", "active", "publicCatalog", "displayOrder"
   ]);
   allowFields(body, allowed);
 
@@ -260,6 +282,7 @@ export function validatePlanPayload(body, { partial = false } = {}) {
   assignIfDefined(result, "startMode", readEnum(body, "startMode", ["first_activation", "immediate"]));
   assignIfDefined(result, "active", readBoolean(body, "active"));
   assignIfDefined(result, "publicCatalog", readBoolean(body, "publicCatalog"));
+  assignIfDefined(result, "displayOrder", readNumber(body, "displayOrder", { integer: true, min: 0, max: 100_000 }));
   return result;
 }
 

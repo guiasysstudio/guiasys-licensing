@@ -32,7 +32,7 @@ test("Hosting admin usa target próprio e staging allowlist", () => {
   assert.equal(existsSync(new URL("../../CNAME", import.meta.url)), false);
 });
 
-test("Hosting público usa target próprio como gateway mínimo da API", () => {
+test("Hosting público usa target próprio com frontend de catálogo isolado", () => {
   const publicHosting = firebase.hosting.find(item => item.target === "public");
   assert.ok(publicHosting);
   assert.deepEqual(rc.targets["guiasys-licensing"].hosting.public, ["guiasys-licensing"]);
@@ -40,8 +40,10 @@ test("Hosting público usa target próprio como gateway mínimo da API", () => {
   assert.ok(publicHosting.predeploy.some(command => command.includes("prepare-public-hosting.mjs")));
   assert.ok(publicHosting.predeploy.some(command => command.includes("verify-public-hosting-dist.mjs")));
   assert.match(preparePublic, /\.hosting-public-dist/);
-  assert.match(preparePublic, /GSL-v1/);
-  assert.match(verifyPublic, /gateway público não deve executar conteúdo ativo/);
+  assert.match(preparePublic, /public\/index\.html/);
+  assert.match(preparePublic, /public\/assets/);
+  assert.match(verifyPublic, /arquivo fora da allowlist/);
+  assert.match(verifyPublic, /innerHTML\|insertAdjacentHTML/);
 });
 
 test("Hosting admin e público encaminham somente API/health para a Function v2 correta", () => {
@@ -127,4 +129,19 @@ test("CSP permite Firebase Auth sem liberar execução arbitrária", () => {
   assert.match(csp, /frame-ancestors 'none'/);
   assert.equal(/script-src[^;]*'unsafe-inline'/.test(csp), false);
   assert.equal(/script-src[^;]*'unsafe-eval'/.test(csp), false);
+});
+
+test("CSP público permite somente assets locais, API same-origin e imagens HTTPS", () => {
+  const publicHosting = firebase.hosting.find(item => item.target === "public");
+  const globalHeaders = publicHosting.headers.find(item => item.source === "**")?.headers || [];
+  const csp = globalHeaders.find(item => item.key === "Content-Security-Policy")?.value || "";
+
+  assert.match(csp, /default-src 'self'/);
+  assert.match(csp, /script-src 'self'/);
+  assert.match(csp, /style-src 'self'/);
+  assert.match(csp, /img-src 'self' data: https:/);
+  assert.match(csp, /connect-src 'self'/);
+  assert.match(csp, /object-src 'none'/);
+  assert.equal(csp.includes("unsafe-inline"), false);
+  assert.equal(csp.includes("unsafe-eval"), false);
 });

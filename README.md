@@ -4,12 +4,14 @@ Central universal de licenciamento multi-projeto da GuiaSys Studio.
 
 ## Estado
 
-**Painel:** v0.15.0  
-**API:** v2.0.1  
+**Painel:** v0.16.0
+
+**API:** v2.1.0
+
 **Protocolo público:** GSL-v1  
 **Runtime alvo:** Firebase Hosting + Firebase Functions v2
 
-A aplicação possui autenticação administrativa, multi-projeto, planos, clientes, licenças, trial centralizado, dispositivos, ativações, auditoria, RBAC, catálogo público opcional, integração universal e entitlement offline ES256.
+A aplicação possui autenticação administrativa, multi-projeto, planos, clientes, licenças, trial centralizado, dispositivos, ativações, auditoria, RBAC, catálogo comercial dinâmico, integração universal e entitlement offline ES256.
 
 ## Arquitetura
 
@@ -44,16 +46,20 @@ O navegador nunca recebe credencial administrativa do Firestore. As Security Rul
 
 O projeto usa arquitetura multi-site:
 
-- target `public` -> site `guiasys-licensing`, gateway público da API GSL-v1 em `licencas.guiasys.online`;
+- target `public` -> site `guiasys-licensing`, catálogo público e gateway da API GSL-v1 em `licencas.guiasys.online`;
 - target `admin` -> site `guiasys-licensing-admin`, dedicado ao painel administrativo em `painel.licencas.guiasys.online`.
 
-O target `public` não publica o painel nem um portal de cliente nesta fase: ele contém somente um placeholder mínimo e os rewrites `/api/**` e `/health` para a Function. O portal comercial/cliente continua fora do escopo deste deploy.
+O target `public` publica somente o frontend comercial em `public/`. Ele consome `GET /api/v1/catalog` pelo mesmo origin, mantém os rewrites `/api/**` e `/health` e nunca inclui os assets do painel administrativo.
+
+O C13 não implementa checkout, pedido, pagamento, webhook ou emissão automática. O CTA apenas conserva `projectId` e `planId` para o fluxo futuro. A integração PagBank começa no C14.
 
 Antes de cada deploy do painel:
 
 1. `scripts/prepare-hosting.mjs` recria `.hosting-admin-dist/`;
 2. somente `index.html` e `assets/` são copiados;
 3. `scripts/verify-hosting-dist.mjs` bloqueia qualquer arquivo fora dessa allowlist.
+
+Antes de cada deploy público, `scripts/prepare-public-hosting.mjs` copia apenas `public/index.html`, `public/404.html` e `public/assets/`; `scripts/verify-public-hosting-dist.mjs` valida essa allowlist e o uso de renderização segura.
 
 Rewrites versionados nos targets `admin` e `public`:
 
@@ -123,6 +129,22 @@ integrationCodes/{sha256(integrationCode)}
 rateLimits/{sha256(client|bucket)}
 ```
 
+## Domínio comercial C13
+
+Não existe coleção paralela `products`. Um programa/produto continua sendo `projects/{projectId}` e suas ofertas continuam em `projects/{projectId}/plans/{planId}`.
+
+Campos comerciais do programa: `name`, `slug`, `description`, `shortDescription`, `imageUrl` (HTTPS), `status`, `publicCatalog`, `featured` e `displayOrder`. Campos comerciais adicionais da oferta: `displayOrder`, preservando `name`, `description`, `price`, `durationDays`, `lifetime`, `deviceLimit`, `startMode`, `active` e `publicCatalog`.
+
+Somente programas ativos e publicados e planos ativos e publicados entram em `GET /api/v1/catalog`. A projeção é uma allowlist: dados administrativos, origens permitidas e material privado de assinatura nunca são serializados. A ordem é `displayOrder`, nome em `pt-BR` e ID como desempate.
+
+Fluxo comercial planejado:
+
+```text
+Programa/Projeto -> Planos/Ofertas -> Catálogo -> futuro Pedido -> futuro Pagamento -> futura Licença
+```
+
+O PagBank pertence ao C14, não ao C13.
+
 ## API pública GSL-v1
 
 - `GET /api/v1/catalog`
@@ -170,6 +192,13 @@ node scripts/verify-hosting-dist.mjs
 node scripts/verify-firebase-config.mjs
 ```
 
+Hosting público:
+
+```bash
+node scripts/prepare-public-hosting.mjs
+node scripts/verify-public-hosting-dist.mjs
+```
+
 Smoke não destrutivo da produção, após o deploy:
 
 ```bash
@@ -188,7 +217,7 @@ O GitHub é usado somente como repositório/versionamento e para validações de
 
 A produção é implantada diretamente no Firebase pela Firebase CLI autenticada na máquina de desenvolvimento.
 
-## Deploy C11/C12
+## Deploy C11–C13
 
 Antes do primeiro deploy ao vivo:
 

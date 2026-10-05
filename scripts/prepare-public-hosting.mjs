@@ -1,46 +1,30 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, "..");
 const dist = path.join(root, ".hosting-public-dist");
-
-const indexHtml = `<!doctype html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GuiaSys Licensing API</title>
-</head>
-<body>
-  <main>
-    <h1>GuiaSys Licensing API</h1>
-    <p>Endpoint público do protocolo GSL-v1.</p>
-  </main>
-</body>
-</html>
-`;
-
-const notFoundHtml = `<!doctype html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>404 — GuiaSys Licensing API</title>
-</head>
-<body>
-  <main>
-    <h1>404</h1>
-    <p>Recurso não encontrado.</p>
-  </main>
-</body>
-</html>
-`;
+const sources = [
+  ["public/index.html", "index.html"],
+  ["public/404.html", "404.html"],
+  ["public/assets", "assets"]
+];
 
 await rm(dist, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });
-await writeFile(path.join(dist, "index.html"), indexHtml, "utf8");
-await writeFile(path.join(dist, "404.html"), notFoundHtml, "utf8");
 
-console.log("Firebase Hosting public staging preparado como gateway mínimo da API GSL-v1.");
+for (const [sourceRel, targetRel] of sources) {
+  const source = path.join(root, sourceRel);
+  const target = path.join(dist, targetRel);
+  const info = await stat(source);
+
+  if (info.isDirectory()) {
+    await cp(source, target, { recursive: true, force: true, dereference: true });
+  } else {
+    await mkdir(path.dirname(target), { recursive: true });
+    await cp(source, target, { force: true, dereference: true });
+  }
+}
+
+console.log("Firebase Hosting public staging preparado com o catálogo comercial GSL-v1.");
