@@ -218,9 +218,17 @@ export function validateProjectPayload(body, { partial = false } = {}) {
   allowFields(body, allowed);
 
   const result = {};
-  assignIfDefined(result, "name", readString(body, "name", { required: !partial, max: 80 }));
-  assignIfDefined(result, "slug", readString(body, "slug", { max: 48 }));
-  assignIfDefined(result, "prefix", readString(body, "prefix", { max: 8 }));
+  assignIfDefined(result, "name", readString(body, "name", { required: !partial, min: 1, max: 80 }));
+  assignIfDefined(result, "slug", readString(body, "slug", {
+    min: 1,
+    max: 48,
+    pattern: /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/
+  }));
+  assignIfDefined(result, "prefix", readString(body, "prefix", {
+    min: 1,
+    max: 8,
+    pattern: /^[A-Za-z0-9]+$/
+  }));
   assignIfDefined(result, "description", readString(body, "description", { max: 300 }));
   assignIfDefined(result, "status", readEnum(body, "status", ["active", "inactive"]));
   assignIfDefined(result, "publicCatalog", readBoolean(body, "publicCatalog"));
@@ -243,7 +251,7 @@ export function validatePlanPayload(body, { partial = false } = {}) {
   allowFields(body, allowed);
 
   const result = {};
-  assignIfDefined(result, "name", readString(body, "name", { required: !partial, max: 80 }));
+  assignIfDefined(result, "name", readString(body, "name", { required: !partial, min: 1, max: 80 }));
   assignIfDefined(result, "description", readString(body, "description", { max: 1000 }));
   assignIfDefined(result, "price", readNumber(body, "price", { min: 0, max: 10_000_000 }));
   assignIfDefined(result, "durationDays", readNumber(body, "durationDays", { integer: true, min: 0, max: 36500 }));
@@ -260,7 +268,7 @@ export function validateCustomerPayload(body, { partial = false } = {}) {
   allowFields(body, allowed);
 
   const result = {};
-  assignIfDefined(result, "name", readString(body, "name", { required: !partial, max: 120 }));
+  assignIfDefined(result, "name", readString(body, "name", { required: !partial, min: 1, max: 120 }));
 
   const email = readString(body, "email", { required: !partial, max: 160 });
   if (email !== undefined) result.email = validateEmail(email);
