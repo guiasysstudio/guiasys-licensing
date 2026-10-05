@@ -9,6 +9,7 @@ const firebase = JSON.parse(
 const app = await readFile(new URL("../../assets/js/app.js", import.meta.url), "utf8");
 const prepare = await readFile(new URL("../../scripts/prepare-hosting.mjs", import.meta.url), "utf8");
 const verify = await readFile(new URL("../../scripts/verify-hosting-dist.mjs", import.meta.url), "utf8");
+const deployWorkflow = await readFile(new URL("../../.github/workflows/firebase-production-deploy.yml", import.meta.url), "utf8");
 
 test("Hosting publica somente staging allowlist", () => {
   assert.equal(firebase.hosting.public, ".hosting-dist");
@@ -67,4 +68,18 @@ test("frontend consome a API pelo mesmo origin do Hosting", () => {
 
 test("emulador Hosting usa porta conhecida para smoke local", () => {
   assert.equal(firebase.emulators.hosting.port, 5000);
+});
+
+
+test("deploy manual exige confirmação, WIF e smoke test", () => {
+  assert.match(deployWorkflow, /workflow_dispatch:/);
+  assert.match(deployWorkflow, /inputs\.confirm == 'DEPLOY'/);
+  assert.match(deployWorkflow, /id-token:\s*write/);
+  assert.match(deployWorkflow, /google-github-actions\/auth@v3/);
+  assert.match(deployWorkflow, /GCP_WORKLOAD_IDENTITY_PROVIDER/);
+  assert.match(deployWorkflow, /GCP_DEPLOY_SERVICE_ACCOUNT/);
+  assert.match(deployWorkflow, /functions:licensing,hosting/);
+  assert.match(deployWorkflow, /guiasys-licensing\.web\.app\/health/);
+  assert.equal(deployWorkflow.includes("credentials_json"), false);
+  assert.equal(deployWorkflow.includes("FIREBASE_SERVICE_ACCOUNT"), false);
 });
