@@ -24,7 +24,7 @@ const firebaseConfig = {
   measurementId: "G-J1GL33PCN7"
 };
 
-const API_BASE = "https://guiasys-licensing-api.lindolfoandrew0.workers.dev";
+const API_BASE = window.location.origin;
 const PANEL_VERSION = "0.13.0";
 const PROTOCOL_VERSION = "GSL-v1";
 
@@ -1075,7 +1075,7 @@ async function dashboardView() {
       <article class="card card-section">
         <span class="status-pill"><span class="status-dot"></span> Administrador autorizado</span>
         <h3 style="margin-top:16px">Infraestrutura operacional</h3>
-        <p>Firebase Authentication, Cloudflare Worker e Firestore estão integrados. O painel usa o Worker como única camada administrativa.</p>
+        <p>Firebase Authentication, Firebase Functions v2 e Firestore estão integrados. O painel usa a Function como única camada administrativa.</p>
         <div class="mini-info">
           <div><span>Conta</span><strong>${e(state.user.email || "")}</strong></div>
           <div><span>Projetos</span><strong>${e(data.projectsTotal)}</strong></div>
@@ -3255,10 +3255,10 @@ function platformSettingsView() {
         <span class="badge">Infraestrutura</span>
         <h3 style="margin-top:14px">Serviços</h3>
         <div class="mini-info vertical">
-          <div><span>Frontend</span><strong>GitHub Pages</strong></div>
+          <div><span>Frontend</span><strong>Firebase Hosting</strong></div>
           <div><span>Autenticação</span><strong>Firebase Auth</strong></div>
           <div><span>Banco</span><strong>Cloud Firestore</strong></div>
-          <div><span>API</span><strong>Cloudflare Workers</strong></div>
+          <div><span>API</span><strong>Firebase Functions v2</strong></div>
           <div><span>Painel</span><strong>v${PANEL_VERSION}</strong></div>
         </div>
       </article>
@@ -3402,7 +3402,7 @@ showScreen("boot");
       <article class="card card-section">
         <div class="notice notice-danger">
           ${e(error.message)}<br><br>
-          Atualize o Cloudflare Worker com o arquivo <code>worker/src/index.js</code> deste repositório.
+          Verifique o deploy da Firebase Function <code>licensingApi</code> e o rewrite do Firebase Hosting.
         </div>
       </article>
     `;
