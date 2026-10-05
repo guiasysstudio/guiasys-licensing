@@ -106,16 +106,14 @@
         "source": "/api/**",
         "function": {
           "functionId": "licensingApi",
-          "region": "southamerica-east1",
-          "pinTag": true
+          "region": "southamerica-east1"
         }
       },
       {
         "source": "/health",
         "function": {
           "functionId": "licensingApi",
-          "region": "southamerica-east1",
-          "pinTag": true
+          "region": "southamerica-east1"
         }
       }
     ]
