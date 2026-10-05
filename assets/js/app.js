@@ -25,6 +25,7 @@ const firebaseConfig = {
 };
 
 const API_BASE = window.location.origin;
+const PUBLIC_API_BASE = "https://licencas.guiasys.online";
 const PANEL_VERSION = "0.14.0";
 const PROTOCOL_VERSION = "GSL-v1";
 
@@ -2547,7 +2548,7 @@ function integrationPlatformLabel(platform) {
 function buildIntegrationConfig(project) {
   return {
     protocol: PROTOCOL_VERSION,
-    apiBaseUrl: API_BASE,
+    apiBaseUrl: PUBLIC_API_BASE,
     integrationCode: project.integrationCode,
     signing: {
       algorithm: project.signingAlgorithm || "ES256",
@@ -2604,7 +2605,7 @@ function buildIntegrationContract(project, platform = "universal") {
     `Código de integração: ${project.integrationCode}`,
     `Project ID interno: ${project.id}`,
     `Prefixo de key: ${project.prefix}`,
-    `API Base: ${API_BASE}`,
+    `API Base: ${PUBLIC_API_BASE}`,
     "",
     "REGRA DE AUTORIDADE",
     "----------------------------------------------------------------",
@@ -2917,7 +2918,7 @@ async function integrationView() {
     <section class="integration-identity card card-section">
       <div><span>Projeto</span><strong>${e(project.name)}</strong></div>
       <div><span>Project ID</span><code>${e(project.id)}</code></div>
-      <div><span>API</span><code>${e(API_BASE)}</code></div>
+      <div><span>API pública</span><code>${e(PUBLIC_API_BASE)}</code></div>
       <div><span>Planos</span><strong>Dinâmicos — definidos pelo servidor</strong></div>
     </section>
 
