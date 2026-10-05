@@ -45,8 +45,9 @@ const ALLOWED_ORIGINS = [
   "http://127.0.0.1:5501",
   "http://localhost:5500",
   "http://localhost:5501",
-  "https://guiasysstudio.github.io",
-  "https://licencas.guiasys.online"
+  "https://licencas.guiasys.online",
+  "https://guiasys-licensing.web.app",
+  "https://guiasys-licensing.firebaseapp.com"
 ];
 
 const ENTITY_NAMES = new Set([
@@ -178,8 +179,22 @@ function normalizeAllowedOrigins(value) {
   return origins.slice(0, 30);
 }
 
+function isInternalHostingOrigin(origin) {
+  if (!origin || ALLOWED_ORIGINS.includes(origin)) return true;
+
+  try {
+    const url = new URL(origin);
+    return (
+      url.protocol === "https:" &&
+      /^guiasys-licensing--[a-z0-9-]+\.web\.app$/i.test(url.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function assertProjectOrigin(project, origin) {
-  if (!origin || ALLOWED_ORIGINS.includes(origin)) return;
+  if (isInternalHostingOrigin(origin)) return;
 
   const allowed = normalizeAllowedOrigins(project.allowedOrigins || []);
   if (!allowed.includes(origin)) {
