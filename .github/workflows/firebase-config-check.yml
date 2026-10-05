@@ -16,6 +16,7 @@ on:
       - "scripts/verify-firebase-config.mjs"
       - "scripts/prepare-hosting.mjs"
       - "scripts/verify-hosting-dist.mjs"
+      - "scripts/smoke-production.mjs"
       - "scripts/test-firestore-transactions.mjs"
       - "scripts/firestore-test.rules"
       - "firebase.transaction-test.json"
@@ -38,6 +39,7 @@ on:
       - "scripts/verify-firebase-config.mjs"
       - "scripts/prepare-hosting.mjs"
       - "scripts/verify-hosting-dist.mjs"
+      - "scripts/smoke-production.mjs"
       - "scripts/test-firestore-transactions.mjs"
       - "scripts/firestore-test.rules"
       - "firebase.transaction-test.json"
@@ -76,7 +78,9 @@ jobs:
           node scripts/verify-hosting-dist.mjs
 
       - name: Validate versioned config
-        run: node scripts/verify-firebase-config.mjs
+        run: |
+          node scripts/verify-firebase-config.mjs
+          node --check scripts/smoke-production.mjs
 
       - name: Compile production Firestore and Storage rules
         env:
