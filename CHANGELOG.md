@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.14.0 — 2026-10-04
+
+### Firebase Hosting / C11
+- Frontend migrado da dependência operacional de GitHub Pages/Cloudflare para Firebase Hosting + Functions v2.
+- API base do painel passa a usar `window.location.origin`.
+- Rewrites `/api/**` e `/health` apontam para `licensingApi` em `southamerica-east1`.
+- Hosting usa `pinTag` para sincronizar conteúdo estático e Function v2.
+- Novo staging `.hosting-dist/` com allowlist estrita de `index.html` e `assets/`.
+- Removido `CNAME` do GitHub Pages.
+- Adicionados headers de segurança e política explícita de cache.
+- Emulador Hosting configurado na porta 5000.
+- CI passa a validar staging, rewrites e ausência de dependências operacionais legadas.
+- Cloudflare permanece apenas como rollback temporário durante o cutover.
+
+# Changelog
+
 ## 0.9.0 — 2026-09-27
 
 ### Segurança de produção
