@@ -65,6 +65,13 @@ async function sendWebResponse(res, response) {
   res.send(bytes);
 }
 
+function adapterRequestId(req) {
+  const candidate = String(req.get?.("x-request-id") || req.headers?.["x-request-id"] || "").trim();
+  return /^[A-Za-z0-9._:-]{8,128}$/.test(candidate)
+    ? candidate
+    : `req_${crypto.randomUUID().replace(/-/g, "")}`;
+}
+
 export const licensingApi = onRequest(
   {
     region: "southamerica-east1",
@@ -75,6 +82,9 @@ export const licensingApi = onRequest(
     secrets: [ADMIN_FIREBASE_UID]
   },
   async (req, res) => {
+    const requestId = adapterRequestId(req);
+    res.setHeader("X-Request-Id", requestId);
+
     try {
       const services = runtime();
       const response = await handleRequest(expressToWebRequest(req), {
@@ -85,6 +95,9 @@ export const licensingApi = onRequest(
       await sendWebResponse(res, response);
     } catch (error) {
       logger.error("firebase.adapter_failure", {
+        requestId,
+        method: req.method || "UNKNOWN",
+        path: req.path || req.url || "/",
         errorName: error?.name || "Error",
         message: error?.message || "Unknown error"
       });
