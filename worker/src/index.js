@@ -39,7 +39,7 @@ import {
 
 // GuiaSys Licensing API — deploy automático via Cloudflare Workers Builds
 const PROTOCOL_VERSION = "GSL-v1";
-const API_VERSION = "1.9.0";
+const API_VERSION = "2.0.0";
 const ALLOWED_ORIGINS = [
   "http://127.0.0.1:5500",
   "http://127.0.0.1:5501",
@@ -346,6 +346,12 @@ async function getFirebasePublicKeys(forceRefresh = false) {
 async function verifyFirebaseIdToken(idToken, env) {
   if (!idToken) throw new Error("Token Firebase não informado.");
 
+  if (env.__services?.verifyIdToken) {
+    const payload = await env.__services.verifyIdToken(idToken);
+    validateFirebaseClaims(payload, env.FIREBASE_PROJECT_ID);
+    return payload;
+  }
+
   const parts = idToken.split(".");
   if (parts.length !== 3) throw new Error("Token Firebase inválido.");
 
@@ -643,6 +649,15 @@ async function getFirebaseAccountState(env, uid, forceRefresh = false) {
     return cached.account;
   }
 
+  if (env.__services?.getAccountState) {
+    const account = await env.__services.getAccountState(uid);
+    firebaseAccountCache.set(uid, {
+      account,
+      expiresAt: Date.now() + 60_000
+    });
+    return account;
+  }
+
   const token = await getGoogleAccessToken(env, "https://www.googleapis.com/auth/identitytoolkit");
   const response = await fetchWithTimeout(
     `https://identitytoolkit.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/accounts:lookup`,
@@ -760,12 +775,18 @@ async function firestoreRequest(env, path, options = {}) {
 }
 
 async function getDoc(env, path) {
-  const data = await firestoreRequest(env, path);
+  const safePath = assertFirestorePath(path);
+  if (env.__services?.getDoc) return await env.__services.getDoc(safePath);
+
+  const data = await firestoreRequest(env, safePath);
   return decodeFirestoreDocument(data);
 }
 
 async function setDoc(env, path, value) {
-  const data = await firestoreRequest(env, path, {
+  const safePath = assertFirestorePath(path);
+  if (env.__services?.setDoc) return await env.__services.setDoc(safePath, value);
+
+  const data = await firestoreRequest(env, safePath, {
     method: "PATCH",
     body: JSON.stringify({ fields: toFirestoreFields(value) })
   });
@@ -773,8 +794,13 @@ async function setDoc(env, path, value) {
 }
 
 async function deleteDoc(env, path) {
-  const token = await getGoogleAccessToken(env);
   const safePath = assertFirestorePath(path);
+  if (env.__services?.deleteDoc) {
+    await env.__services.deleteDoc(safePath);
+    return;
+  }
+
+  const token = await getGoogleAccessToken(env);
   const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(env.FIREBASE_PROJECT_ID)}/databases/(default)/documents/${safePath}`;
   const response = await fetchWithTimeout(url, {
     method: "DELETE",
@@ -790,8 +816,10 @@ async function deleteDoc(env, path) {
 }
 
 async function listCollection(env, path) {
-  const token = await getGoogleAccessToken(env);
   const safePath = assertFirestorePath(path);
+  if (env.__services?.listCollection) return await env.__services.listCollection(safePath);
+
+  const token = await getGoogleAccessToken(env);
   let pageToken = "";
   const result = [];
 
@@ -830,6 +858,8 @@ async function listCollection(env, path) {
 }
 
 function atomicClient(env) {
+  if (env.__services?.atomicClient) return env.__services.atomicClient();
+
   return createFirestoreAtomicClient({
     projectId: env.FIREBASE_PROJECT_ID,
     getAccessToken: () => getGoogleAccessToken(env),
@@ -3065,8 +3095,7 @@ function isPublicApiPath(pathname) {
   ].includes(pathname);
 }
 
-export default {
-  async fetch(request, env) {
+async function routeRequest(request, env) {
     const url = new URL(request.url);
     const origin = request.headers.get("Origin") || "";
     const publicApi = isPublicApiPath(url.pathname);
@@ -3104,6 +3133,8 @@ export default {
           version: API_VERSION,
           protocolVersion: PROTOCOL_VERSION,
           firebaseProject: env.FIREBASE_PROJECT_ID || null,
+          runtime: env.__services?.runtime || "cloudflare-worker",
+          adminSdkConfigured: Boolean(env.__services),
           serviceAccountConfigured: Boolean(env.FIREBASE_SERVICE_ACCOUNT_JSON),
           adminConfigured: Boolean(env.ADMIN_FIREBASE_UID),
           offlineEntitlements: "ES256"
@@ -3160,8 +3191,6 @@ export default {
 
       return errorResponse(origin, 404, "not_found", "Rota não encontrada.", null, publicApi);
     } catch (error) {
-      console.error(error);
-
       const requestedStatus = Number(error?.status);
       const status = Number.isInteger(requestedStatus) && requestedStatus >= 400 && requestedStatus <= 599
         ? requestedStatus
@@ -3174,6 +3203,15 @@ export default {
         ? (status === 504 ? "Serviço temporariamente indisponível." : "Erro interno do servidor.")
         : (error?.message || "Requisição inválida.");
 
+      structuredLog(env, "error", "request.error", {
+        requestId: requestIdFor(request),
+        method: request.method,
+        path: url.pathname,
+        status,
+        reason: safeError,
+        errorName: error?.name || "Error"
+      });
+
       return errorResponse(
         origin,
         status,
@@ -3183,5 +3221,61 @@ export default {
         publicApi
       );
     }
+}
+
+const requestIds = new WeakMap();
+
+function requestIdFor(request) {
+  if (requestIds.has(request)) return requestIds.get(request);
+
+  const candidate = String(request.headers.get("X-Request-Id") || "").trim();
+  const requestId = /^[A-Za-z0-9._:-]{8,128}$/.test(candidate)
+    ? candidate
+    : `req_${crypto.randomUUID().replace(/-/g, "")}`;
+
+  requestIds.set(request, requestId);
+  return requestId;
+}
+
+function structuredLog(env, level, event, details = {}) {
+  if (typeof env?.__services?.log === "function") {
+    env.__services.log(level, event, details);
+    return;
   }
+
+  const writer = console[level] || console.log;
+  writer(JSON.stringify({ event, ...details }));
+}
+
+function responseWithRequestId(response, requestId) {
+  const headers = new Headers(response.headers);
+  headers.set("X-Request-Id", requestId);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers
+  });
+}
+
+export async function handleRequest(request, env = {}) {
+  const requestId = requestIdFor(request);
+  const startedAt = Date.now();
+  const url = new URL(request.url);
+
+  const response = await routeRequest(request, env);
+
+  structuredLog(env, "info", "request.completed", {
+    requestId,
+    method: request.method,
+    path: url.pathname,
+    status: response.status,
+    durationMs: Date.now() - startedAt,
+    runtime: env.__services?.runtime || "cloudflare-worker"
+  });
+
+  return responseWithRequestId(response, requestId);
+}
+
+export default {
+  fetch: handleRequest
 };
