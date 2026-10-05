@@ -4,55 +4,97 @@ Central universal de licenciamento multi-projeto da GuiaSys Studio.
 
 ## Estado
 
-**Painel:** v0.9.0  
-**API:** v1.6.0  
-**Protocolo público:** GSL-v1
+**Painel:** v0.14.0  
+**API:** v2.0.0  
+**Protocolo público:** GSL-v1  
+**Runtime alvo:** Firebase Hosting + Firebase Functions v2
 
-A aplicação já possui a estrutura funcional para:
-
-- autenticação administrativa exclusiva com Firebase Auth;
-- dashboard geral;
-- cadastro, edição e arquivamento de projetos;
-- isolamento de dados por projeto;
-- planos independentes por projeto;
-- clientes independentes por projeto;
-- geração de license keys;
-- licenças por período ou vitalícias;
-- validade iniciando na emissão ou na primeira ativação;
-- limite de dispositivos;
-- renovação, suspensão, reativação e revogação;
-- ativações e revalidações;
-- desativação de dispositivos;
-- logs e auditoria;
-- configurações individuais por projeto;
-- administradores adicionais por e-mail Google, com projetos e permissões limitadas;
-- campos tipados, máscaras e ajuda contextual;
-- planos com regras imutáveis durante a emissão de licenças;
-- página de integração por projeto com contrato personalizado para Universal, .NET, Web, Android, iOS e Flutter;
-- protocolo público versionado `GSL-v1`;
-- código de integração permanente por projeto;
-- trial centralizado e dinâmico por projeto, com início/expiração registrados por dispositivo;
-- catálogo público opcional para futuro portal do cliente;
-- API pública para configuração, trial, ativação, validação e desativação de licenças;
-- entitlement offline assinado com ES256 por projeto;
-- rate limiting nos endpoints públicos;
-- CORS configurável por projeto para integrações Web.
+A aplicação possui autenticação administrativa, multi-projeto, planos, clientes, licenças, trial centralizado, dispositivos, ativações, auditoria, RBAC, catálogo público opcional, integração universal e entitlement offline ES256.
 
 ## Arquitetura
 
 ```text
-GitHub Pages
-    |
-    | Firebase ID Token
-    v
-Cloudflare Worker
-    |
-    | Service Account / OAuth
-    v
-Cloud Firestore
+Navegador / Aplicativo integrado
+        |
+        | HTTPS — mesmo domínio no painel
+        v
+Firebase Hosting
+        |
+        | /api/** e /health
+        v
+Firebase Functions v2 — licensingApi
+        |
+        | Firebase Admin SDK
+        v
+Firebase Auth + Cloud Firestore
 ```
 
-O navegador não possui credencial administrativa do Firestore. Todas as operações privilegiadas passam pelo Worker.
+- Projeto Firebase: `guiasys-licensing`
+- Function: `licensingApi`
+- Região: `southamerica-east1`
+- Node.js: 22
+- Domínio oficial planejado/operacional: `https://licencas.guiasys.online`
+- Protocolo dos clientes: `GSL-v1`
+
+O navegador nunca recebe credencial administrativa do Firestore. As Security Rules continuam deny-all para clientes e toda operação privilegiada passa pela Function.
+
+## Firebase Hosting
+
+O Hosting **não publica a raiz do repositório**. Antes de cada deploy:
+
+1. `scripts/prepare-hosting.mjs` recria `.hosting-dist/`;
+2. somente `index.html` e `assets/` são copiados;
+3. `scripts/verify-hosting-dist.mjs` bloqueia qualquer arquivo fora dessa allowlist.
+
+Rewrites versionados:
+
+- `/api/** -> licensingApi`
+- `/health -> licensingApi`
+
+Os rewrites usam `pinTag: true` para manter a Function v2 alinhada ao release do Hosting.
+
+## Backend
+
+Código principal:
+
+```text
+worker/src/index.js
+worker/src/firebase-entry.js
+worker/src/firebase-runtime.js
+```
+
+O diretório ainda se chama `worker/` por compatibilidade histórica, mas o runtime principal é Firebase Functions v2.
+
+O backend Firebase usa:
+
+- `firebase-admin` para Auth e Firestore;
+- credenciais nativas da service account da Function;
+- `ADMIN_FIREBASE_UID` via Secret Manager;
+- transações nativas do Firestore;
+- request IDs e logs estruturados.
+
+`FIREBASE_SERVICE_ACCOUNT_JSON` não faz parte do runtime Firebase.
+
+## Cloudflare legado
+
+`worker/wrangler.jsonc` permanece temporariamente no repositório somente para rollback controlado durante a migração. O frontend não possui mais URL `workers.dev` hardcoded e o `CNAME` do GitHub Pages foi removido.
+
+## Frontend
+
+O frontend fonte permanece em:
+
+```text
+index.html
+assets/
+```
+
+Em runtime, a API base é:
+
+```js
+window.location.origin
+```
+
+Assim, o painel usa o mesmo domínio do Hosting e os rewrites encaminham a API sem dependência direta do endpoint da Function ou do Worker legado.
 
 ## Isolamento de projeto
 
@@ -66,179 +108,85 @@ projects/{projectId}
 ├── devices
 ├── activations
 ├── logs
-└── internal/signing   # chave privada ES256, nunca exposta pela API administrativa
+└── internal/signing
 
 integrationCodes/{sha256(integrationCode)}
 rateLimits/{sha256(client|bucket)}
 ```
 
-Clientes, licenças e dispositivos de um projeto não são compartilhados automaticamente com outro projeto.
+## API pública GSL-v1
 
-## Frontend
+- `GET /api/v1/catalog`
+- `POST /api/v1/project/config`
+- `POST /api/v1/trial/start`
+- `POST /api/v1/trial/validate`
+- `POST /api/v1/license/activate`
+- `POST /api/v1/license/validate`
+- `POST /api/v1/license/deactivate`
 
-O frontend estático fica na raiz e em `assets/` e é compatível com GitHub Pages.
-
-Configuração Firebase Web atual:
-
-- Project ID: `guiasys-licensing`
-- Authentication: Google
-- Firestore: acesso direto do navegador bloqueado
-
-## Worker
-
-Código-fonte:
-
-```text
-worker/src/index.js
-```
-
-Configuração:
-
-```text
-worker/wrangler.jsonc
-```
-
-Variáveis necessárias no Cloudflare:
-
-- `FIREBASE_PROJECT_ID=guiasys-licensing`
-- `ADMIN_FIREBASE_UID`
-- `FIREBASE_SERVICE_ACCOUNT_JSON` como **Secret**
-
-Nunca versione o JSON da Service Account.
-
-## API pública para os programas
-
-O cliente integrado deve preferir o **Código de Integração** do projeto. O `projectId` permanece aceito por compatibilidade.
-
-### Configuração dinâmica
-
-`POST /api/v1/project/config`
-
-```json
-{
-  "integrationCode": "GSLI-XXXX-XXXX-XXXX"
-}
-```
-
-### Iniciar trial
-
-`POST /api/v1/trial/start`
-
-```json
-{
-  "integrationCode": "GSLI-XXXX-XXXX-XXXX",
-  "deviceId": "identificador-estavel-da-maquina",
-  "deviceName": "PC Principal",
-  "platform": "Windows",
-  "appVersion": "1.0.0"
-}
-```
-
-### Validar trial
-
-`POST /api/v1/trial/validate`
-
-### Ativar licença
-
-`POST /api/v1/license/activate`
-
-```json
-{
-  "integrationCode": "GSLI-XXXX-XXXX-XXXX",
-  "licenseKey": "GPL-XXXXX-XXXXX-XXXXX-XXXXX",
-  "deviceId": "identificador-estavel-da-maquina",
-  "deviceName": "PC Principal",
-  "platform": "Windows",
-  "appVersion": "1.0.0"
-}
-```
-
-### Validar licença
-
-`POST /api/v1/license/validate`
-
-### Desativar licença neste dispositivo
-
-`POST /api/v1/license/deactivate`
-
-### Catálogo público
-
-`GET /api/v1/catalog`
-
-Retorna somente projetos e planos explicitamente marcados para aparecer no futuro portal do cliente.
+O cliente integrado deve preferir o Código de Integração permanente do projeto. O `projectId` continua aceito onde documentado por compatibilidade.
 
 ## Segurança
 
-- Firestore bloqueado para leitura e escrita direta pelo frontend.
-- Login administrativo conferido no Worker por Firebase ID Token.
-- UID administrativo comparado com `ADMIN_FIREBASE_UID`.
-- Service Account armazenada apenas como Secret da Cloudflare.
-- License keys geradas com `crypto.getRandomValues()`.
-- Lookup de key no Firestore feito por SHA-256 da key.
-- Device ID convertido para SHA-256 antes de persistência.
-- Logs de auditoria separados por projeto.
-- Respostas de trial/licença recebem `entitlement.token` JWS assinado com ES256.
-- A chave pública de verificação é exposta em `/api/v1/project/config`; a privada permanece somente no armazenamento interno do backend.
-- `offlineUntil` limita explicitamente o uso do cache offline.
-- Rate limiting por IP/rota reduz brute force e abuso dos endpoints públicos.
-- Integrações Web só são aceitas a partir das origens cadastradas no projeto.
+- Firestore e Storage deny-all para acesso direto de clientes.
+- Firebase ID Token validado no backend com revogação.
+- Master UID mantido no Secret Manager.
+- License keys geradas com CSPRNG.
+- Keys e Device IDs persistidos/consultados por SHA-256 conforme o domínio.
+- Entitlements offline assinados com ES256.
+- Chave privada de assinatura permanece em armazenamento interno.
+- Rate limiting transacional nos endpoints públicos.
+- CORS/origens Web por projeto.
+- Hosting com headers de hardening e staging allowlist.
+- `npm audit --omit=dev --audit-level=moderate` no CI.
+- `X-Request-Id` nas respostas da API.
 
-## Próximas evoluções
+## Validação
 
-- SDK `GuiaSys.Licensing` para .NET;
-- área do cliente;
-- pacotes com múltiplos produtos;
-- billing e automações comerciais.
+Backend:
 
+```bash
+cd worker
+npm install
+npm audit --omit=dev --audit-level=moderate
+npm test
+npm run check
+```
 
-## Protocolo GSL-v1
+Hosting:
 
-O projeto integrado não decodifica a key e não mantém uma tabela fixa de planos. A key identifica uma licença; o Worker devolve o entitlement real dessa licença.
+```bash
+node scripts/prepare-hosting.mjs
+node scripts/verify-hosting-dist.mjs
+node scripts/verify-firebase-config.mjs
+```
 
-A resposta pública inclui, entre outros campos:
+Emuladores:
 
-- `protocolVersion`
-- `projectId`
-- `licenseId`
-- `planName`
-- `customerName`
-- `customerEmail`
-- `issuedAt`
-- `activatedAt`
-- `expiresAt`
-- `startMode`
-- `durationDays`
-- `lifetime`
-- `maxDevices`
-- `offlineDays`
-- `validationHours`
-- `serverTime`
+```bash
+firebase emulators:start --only functions,hosting,firestore,storage --project guiasys-licensing
+```
 
-Cada projeto possui uma página **Integração** que gera as instruções completas e personalizadas para serem entregues ao projeto de destino.
+## Deploy C11
 
+Antes do primeiro deploy ao vivo:
 
-### Regra de trial
+1. confirmar o projeto `guiasys-licensing`;
+2. confirmar/criar o secret `ADMIN_FIREBASE_UID`;
+3. executar todos os gates;
+4. publicar Functions + Hosting;
+5. validar `/health` e login;
+6. conectar `licencas.guiasys.online` ao Firebase Hosting;
+7. manter o Worker antigo disponível somente durante a janela de rollback.
 
-- O primeiro início do trial exige internet.
-- O servidor registra `startedAt` e `expiresAt`.
-- Atualização ou reinstalação não reinicia o trial para o mesmo Device ID.
-- Alterar a duração no painel afeta novos trials; trials já iniciados preservam o snapshot original.
-- O produto nunca deve funcionar além de `expiresAt`, mesmo offline.
-- Uma licença paga ativa passa a comandar o acesso e não soma dias restantes do trial.
+Com Firebase CLI autenticada:
 
+```bash
+firebase deploy --only functions:licensing,hosting --project guiasys-licensing
+```
 
-### Entitlement offline assinado
+O domínio customizado e os registros DNS são configuração externa ao repositório. Não altere DNS antes de a URL `*.web.app` passar no smoke test.
 
-As respostas bem-sucedidas de trial e licença incluem:
+## Rollback
 
-- `offlineUntil`;
-- `entitlement.format = JWS`;
-- `entitlement.algorithm = ES256`;
-- `entitlement.keyId`;
-- `entitlement.token`.
-
-O cliente deve validar o JWS com `signing.publicJwk` retornado por `/api/v1/project/config`, conferir o hash do Device ID e nunca usar o cache depois de `offlineUntil` ou `expiresAt`.
-
-### Integração Web
-
-Cada projeto pode cadastrar origens HTTPS permitidas. Navegadores só conseguem consumir os endpoints públicos do projeto quando o cabeçalho `Origin` corresponde a uma origem cadastrada. Aplicativos nativos desktop/mobile normalmente não enviam `Origin` e não dependem dessa lista.
+Hosting possui rollback de releases pelo Firebase Console. Durante a migração C11, o endpoint Cloudflare legado pode ser mantido disponível como contingência, mas não deve voltar a ser hardcoded no frontend.
