@@ -24,6 +24,7 @@ on:
       - "worker/src/firebase-runtime.js"
       - "worker/src/firestore-atomic.js"
       - ".github/workflows/firebase-config-check.yml"
+      - ".github/workflows/firebase-production-deploy.yml"
   pull_request:
     branches:
       - main
@@ -46,6 +47,7 @@ on:
       - "worker/src/firebase-runtime.js"
       - "worker/src/firestore-atomic.js"
       - ".github/workflows/firebase-config-check.yml"
+      - ".github/workflows/firebase-production-deploy.yml"
 
 permissions:
   contents: read
