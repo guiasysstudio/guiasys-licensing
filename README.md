@@ -103,7 +103,7 @@ Em runtime, a API base é:
 window.location.origin
 ```
 
-Assim, o painel usa o mesmo domínio do Hosting administrativo e os rewrites encaminham a API sem dependência direta do endpoint da Function ou do Worker legado.
+Assim, o painel usa o mesmo domínio do Hosting administrativo e os rewrites encaminham a API sem dependência direta do endpoint da Function ou do runtime legado.
 
 ## Isolamento de projeto
 
