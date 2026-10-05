@@ -52,7 +52,7 @@ test("runtime Firebase usa Admin SDK e credenciais nativas", () => {
 
 test("core preserva GSL-v1 e seleciona serviços Firebase sem remover rollback legado", () => {
   assert.match(core, /const PROTOCOL_VERSION = "GSL-v1"/);
-  assert.match(core, /const API_VERSION = "2\.0\.0"/);
+  assert.match(core, /const API_VERSION = "2\.0\.1"/);
   assert.match(core, /env\.__services\?\.verifyIdToken/);
   assert.match(core, /env\.__services\?\.getDoc/);
   assert.match(core, /env\.__services\?\.atomicClient/);
