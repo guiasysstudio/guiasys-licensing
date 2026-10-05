@@ -68,6 +68,10 @@ test("controles interativos possuem alvos de toque e foco visível", () => {
   assert.equal(helpTipBlock.includes("outline: 0"), false);
 });
 
+test("CSS não anula o outline dos controles focáveis", () => {
+  assert.equal((css.match(/outline:\\s*(?:0|none)\\b/g) || []).length, 0);
+});
+
 test("movimento reduzido desativa animações e transições relevantes", () => {
   assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)/);
   assert.match(css, /animation-duration:\s*0\.01ms !important/);
