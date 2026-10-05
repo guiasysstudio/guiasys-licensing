@@ -1718,7 +1718,20 @@ async function updateEntity(env, projectId, entity, id, body, admin) {
         clean.startMode = "first_activation";
       }
       if ("publicCatalog" in clean) clean.publicCatalog = Boolean(clean.publicCatalog);
-      if (clean.lifetime) clean.durationDays = 0;
+
+      const nextLifetime = "lifetime" in clean ? Boolean(clean.lifetime) : Boolean(current.lifetime);
+      if (nextLifetime) {
+        clean.durationDays = 0;
+      } else if (
+        current.lifetime === true &&
+        clean.lifetime === false &&
+        !("durationDays" in clean)
+      ) {
+        throw Object.assign(
+          new Error("Informe a duração em dias ao converter um plano vitalício em temporário."),
+          { status: 400, reason: "invalid_plan_duration" }
+        );
+      }
     }
 
     const saved = { ...current, ...clean, updatedAt: nowIso() };
@@ -2095,20 +2108,23 @@ async function publicValidate(env, body, origin = "") {
 
     const now = nowIso();
     const licensePath = `projects/${projectId}/licenses/${license.id}`;
+    const effectiveStatus = effectiveLicenseStatus(license, now);
 
-    if (license.status === "expired" || (license.expiresAt && isPast(license.expiresAt))) {
-      tx.set(licensePath, {
-        ...license,
-        status: "expired",
-        updatedAt: now
-      });
+    if (effectiveStatus === "expired") {
+      if (license.status !== "expired") {
+        tx.set(licensePath, {
+          ...license,
+          status: "expired",
+          updatedAt: now
+        });
+      }
       return { expired: true };
     }
 
-    if (["revoked", "suspended", "pending"].includes(license.status)) {
-      throw Object.assign(new Error(`Licença ${license.status}.`), {
+    if (["revoked", "suspended", "pending"].includes(effectiveStatus)) {
+      throw Object.assign(new Error(`Licença ${effectiveStatus}.`), {
         status: 403,
-        reason: license.status
+        reason: effectiveStatus
       });
     }
 
@@ -2821,7 +2837,6 @@ async function handleAdmin(request, env, origin, url, admin) {
         return json({ ok: true, project: projectDetailView(project, admin) }, 200, origin);
       }
       if (method === "PATCH") {
-        requirePermission(admin, "manageProjectSettings", "Você não possui permissão para alterar as configurações deste projeto.");
         const body = validateProjectPayload(await readJson(request), { partial: true });
         const saved = await atomicClient(env).runTransaction(async tx => {
           const current = await tx.get(projectPath(projectId));
@@ -2834,13 +2849,28 @@ async function handleAdmin(request, env, origin, url, admin) {
 
           const integrationCreated = !current.integrationCode;
           const restoringArchived = current.status === "archived" && body.status != null;
+          const changesSettings = Object.keys(body).some(key => key !== "status");
+
           if (restoringArchived) {
             requirePermission(
               admin,
               "manageProjects",
               "Somente quem gerencia projetos pode restaurar um projeto arquivado."
             );
+            if (changesSettings) {
+              requirePermission(
+                admin,
+                "manageProjectSettings",
+                "Você não possui permissão para alterar as configurações deste projeto."
+              );
+            }
             assertRecentAuthentication(admin);
+          } else {
+            requirePermission(
+              admin,
+              "manageProjectSettings",
+              "Você não possui permissão para alterar as configurações deste projeto."
+            );
           }
 
           const nextStatus = body.status != null ? body.status : current.status;
