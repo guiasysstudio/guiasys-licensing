@@ -28,7 +28,7 @@ test("Hosting encaminha somente API/health para a Function v2 correta", () => {
   for (const rewrite of rewrites) {
     assert.equal(rewrite.function.functionId, "licensingApi");
     assert.equal(rewrite.function.region, "southamerica-east1");
-    assert.equal(rewrite.function.pinTag, true);
+    assert.equal("pinTag" in rewrite.function, false);
   }
 });
 
@@ -71,6 +71,12 @@ test("emulador Hosting usa porta conhecida para smoke local", () => {
 });
 
 
+test("Hosting não usa pinTag para evitar alteração de tráfego no Cloud Run", () => {
+  for (const rewrite of firebase.hosting.rewrites) {
+    assert.equal("pinTag" in rewrite.function, false);
+  }
+});
+
 test("deploy manual exige confirmação, WIF e smoke test", () => {
   assert.match(deployWorkflow, /workflow_dispatch:/);
   assert.match(deployWorkflow, /inputs\.confirm == 'DEPLOY'/);
@@ -78,7 +84,8 @@ test("deploy manual exige confirmação, WIF e smoke test", () => {
   assert.match(deployWorkflow, /google-github-actions\/auth@v3/);
   assert.match(deployWorkflow, /GCP_WORKLOAD_IDENTITY_PROVIDER/);
   assert.match(deployWorkflow, /GCP_DEPLOY_SERVICE_ACCOUNT/);
-  assert.match(deployWorkflow, /functions:licensing,hosting/);
+  assert.match(deployWorkflow, /--only functions:licensing/);
+  assert.match(deployWorkflow, /--only hosting/);
   assert.match(deployWorkflow, /guiasys-licensing\.web\.app\/health/);
   assert.equal(deployWorkflow.includes("credentials_json"), false);
   assert.equal(deployWorkflow.includes("FIREBASE_SERVICE_ACCOUNT"), false);
