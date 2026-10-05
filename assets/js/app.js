@@ -25,7 +25,7 @@ const firebaseConfig = {
 };
 
 const API_BASE = "https://guiasys-licensing-api.lindolfoandrew0.workers.dev";
-const PANEL_VERSION = "0.12.0";
+const PANEL_VERSION = "0.13.0";
 const PROTOCOL_VERSION = "GSL-v1";
 
 const firebaseApp = initializeApp(firebaseConfig);
