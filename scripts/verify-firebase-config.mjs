@@ -52,24 +52,34 @@ if (config?.storage?.rules !== "storage.rules") {
   fail("firebase.json deve versionar storage.rules.");
 }
 
-if (!config?.hosting || typeof config.hosting !== "object") {
-  fail("C11 exige configuração versionada do Firebase Hosting.");
+if (!Array.isArray(config?.hosting)) {
+  fail("C11 exige configuração multi-site do Firebase Hosting.");
 }
 
-if (config.hosting.public !== ".hosting-dist") {
-  fail("Hosting deve publicar somente a pasta .hosting-dist.");
+const adminHosting = config.hosting.find(item => item?.target === "admin");
+if (!adminHosting) {
+  fail("Hosting administrativo deve usar o target admin.");
 }
 
-if (!Array.isArray(config.hosting.predeploy)) {
-  fail("Hosting deve possuir gates de predeploy.");
+if (adminHosting.public !== ".hosting-admin-dist") {
+  fail("Hosting administrativo deve publicar somente .hosting-admin-dist.");
 }
 
-const hostingPredeploy = config.hosting.predeploy.join("\n");
+if (!Array.isArray(adminHosting.predeploy)) {
+  fail("Hosting administrativo deve possuir gates de predeploy.");
+}
+
+const hostingTarget = rc?.targets?.["guiasys-licensing"]?.hosting?.admin;
+if (!Array.isArray(hostingTarget) || hostingTarget.length !== 1 || hostingTarget[0] !== "guiasys-licensing-admin") {
+  fail(".firebaserc deve mapear hosting:admin para guiasys-licensing-admin.");
+}
+
+const hostingPredeploy = adminHosting.predeploy.join("\n");
 if (!/prepare-hosting\.mjs/.test(hostingPredeploy) || !/verify-hosting-dist\.mjs/.test(hostingPredeploy)) {
-  fail("Hosting predeploy deve preparar e validar o staging público.");
+  fail("Hosting admin predeploy deve preparar e validar o staging do painel.");
 }
 
-const rewrites = Array.isArray(config.hosting.rewrites) ? config.hosting.rewrites : [];
+const rewrites = Array.isArray(adminHosting.rewrites) ? adminHosting.rewrites : [];
 for (const source of ["/api/**", "/health"]) {
   const rewrite = rewrites.find(item => item?.source === source);
   if (!rewrite) fail(`Rewrite obrigatório ausente: ${source}`);
@@ -84,7 +94,7 @@ for (const source of ["/api/**", "/health"]) {
   }
 }
 
-const hostingHeaders = Array.isArray(config.hosting.headers) ? config.hosting.headers : [];
+const hostingHeaders = Array.isArray(adminHosting.headers) ? adminHosting.headers : [];
 const globalHeaders = hostingHeaders.find(item => item?.source === "**")?.headers || [];
 const requiredSecurityHeaders = [
   "X-Content-Type-Options",
@@ -112,8 +122,8 @@ if (/workers\.dev/.test(frontendApp)) {
   fail("Frontend não pode depender diretamente do domínio workers.dev.");
 }
 
-if (!/index\.html/.test(prepareHosting) || !/assets/.test(prepareHosting)) {
-  fail("Builder do Hosting deve copiar somente os assets públicos esperados.");
+if (!/\.hosting-admin-dist/.test(prepareHosting) || !/index\.html/.test(prepareHosting) || !/assets/.test(prepareHosting)) {
+  fail("Builder do Hosting admin deve preparar somente o painel em .hosting-admin-dist.");
 }
 
 if (!/arquivo fora da allowlist/.test(verifyHostingDist)) {
@@ -200,4 +210,4 @@ if (/allow\s+[^;]+:\s*if\s+true\s*;/.test(storageCompact)) {
   fail("Storage contém regra allow ... if true.");
 }
 
-console.log("Firebase foundation + Functions C10 + Hosting C11 config OK.");
+console.log("Firebase foundation + Functions C10 + Hosting admin multi-site C11 config OK.");
