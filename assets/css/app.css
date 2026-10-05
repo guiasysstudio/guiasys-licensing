@@ -9,9 +9,9 @@
   --line-strong: rgba(148, 163, 184, 0.28);
   --text: #f8fafc;
   --muted: #94a3b8;
-  --muted-2: #64748b;
-  --primary: #5b7cfa;
-  --primary-2: #7c5cff;
+  --muted-2: #8494aa;
+  --primary: #415fdb;
+  --primary-2: #5940d6;
   --success: #22c55e;
   --warning: #f59e0b;
   --danger: #ef4444;
@@ -36,14 +36,36 @@ body {
   color: var(--text);
 }
 
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 
 button { cursor: pointer; }
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+:where(button, input, select, textarea, a, [tabindex]):focus-visible {
+  outline: 3px solid rgba(147, 197, 253, 0.9);
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
 
 .hidden { display: none !important; }
 
 .boot-screen {
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-content: center;
   grid-auto-flow: column;
@@ -85,6 +107,7 @@ button { cursor: pointer; }
 
 .login-screen {
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   grid-template-columns: minmax(420px, 0.9fr) minmax(520px, 1.1fr);
 }
@@ -204,6 +227,7 @@ button { cursor: pointer; }
 .btn {
   border: 0;
   border-radius: 12px;
+  min-height: 44px;
   padding: 11px 16px;
   color: var(--text);
   background: var(--panel-hover);
@@ -316,6 +340,7 @@ button { cursor: pointer; }
 
 .app-shell {
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   grid-template-columns: var(--sidebar) 1fr;
 }
@@ -331,6 +356,9 @@ button { cursor: pointer; }
   display: flex;
   flex-direction: column;
   z-index: 20;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .sidebar-brand {
@@ -362,6 +390,7 @@ button { cursor: pointer; }
 
 .nav-button {
   width: 100%;
+  min-height: 44px;
   border: 0;
   background: transparent;
   color: var(--muted);
@@ -463,7 +492,7 @@ button { cursor: pointer; }
   border: 1px solid var(--line);
   border-radius: 11px;
   min-width: 210px;
-  height: 42px;
+  height: 44px;
   padding: 0 38px 0 13px;
 }
 
@@ -575,30 +604,6 @@ button { cursor: pointer; }
   margin: 0;
 }
 
-.setup-card {
-  border-color: rgba(91, 124, 250, 0.28);
-  background:
-    linear-gradient(135deg, rgba(91, 124, 250, 0.08), rgba(124, 92, 255, 0.04)),
-    rgba(13, 24, 41, 0.9);
-}
-
-.setup-row {
-  margin-top: 20px;
-  display: grid;
-  gap: 10px;
-}
-
-.code-field {
-  border: 1px solid var(--line);
-  background: rgba(2, 8, 23, 0.5);
-  border-radius: 12px;
-  padding: 14px;
-  overflow-wrap: anywhere;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  color: #cbd5e1;
-  font-size: 12px;
-}
-
 .notice {
   padding: 14px 16px;
   border-radius: 12px;
@@ -653,8 +658,8 @@ button { cursor: pointer; }
   background: var(--panel-strong);
   color: var(--text);
   border-radius: 10px;
-  height: 40px;
-  min-width: 40px;
+  height: 44px;
+  min-width: 44px;
 }
 
 .mobile-only { display: none; }
@@ -732,6 +737,7 @@ button { cursor: pointer; }
 }
 
 .btn-sm {
+  min-height: 36px;
   padding: 7px 10px;
   font-size: 12px;
   border-radius: 9px;
@@ -1091,7 +1097,7 @@ button { cursor: pointer; }
 
 .field input,
 .field select {
-  min-height: 42px;
+  min-height: 44px;
 }
 
 .field textarea {
@@ -1151,6 +1157,7 @@ button { cursor: pointer; }
 .modal-card {
   width: min(560px, 100%);
   max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
   overflow: auto;
   background: #0d192b;
   border: 1px solid var(--line-strong);
@@ -1376,6 +1383,7 @@ button { cursor: pointer; }
 
   .modal-card {
     max-height: calc(100vh - 24px);
+    max-height: calc(100dvh - 24px);
   }
 
   .modal-header,
@@ -1503,9 +1511,9 @@ button { cursor: pointer; }
   content: attr(data-tip);
   position: absolute;
   z-index: 1600;
-  left: 50%;
+  left: 0;
   bottom: calc(100% + 10px);
-  transform: translate(-50%, 4px);
+  transform: translate(0, 4px);
   width: max-content;
   max-width: min(320px, 76vw);
   padding: 9px 11px;
@@ -1529,7 +1537,7 @@ button { cursor: pointer; }
 .help-tip:focus::after {
   opacity: 1;
   visibility: visible;
-  transform: translate(-50%, 0);
+  transform: translate(0, 0);
 }
 
 .money-input {
