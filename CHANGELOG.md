@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.17.0 â€” 2026-10-05
+
+### C14-A — fundação comercial e checkout
+
+- identidade global pelo Firebase UID, pedidos multi-item e valores em centavos;
+- checkout autenticado, área de compras e renovação da mesma key;
+- fulfillment interno idempotente, pagamentos provider-agnostic e contrato PagBank inerte;
+- painel financeiro somente leitura, RBAC e testes de ownership.
+
 ## 0.16.0 — 2026-10-05
 
 ### C13 — domínio comercial e catálogo dinâmico

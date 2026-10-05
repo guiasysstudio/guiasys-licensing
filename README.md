@@ -2,6 +2,12 @@
 
 Central universal de licenciamento multi-projeto da GuiaSys Studio.
 
+## Comércio C14-A
+
+A plataforma inclui conta global Firebase, checkout com pedidos multi-item, valores autoritativos em centavos, renovação da mesma key, pagamentos provider-agnostic e fulfillment interno idempotente. O site público usa uma sessão Firebase nomeada e acessa dados exclusivamente pela Function.
+
+O adapter PagBank apenas responde `payment_provider_not_configured`; credenciais, cobrança, PIX, cartão e webhook real pertencem ao C14-B. Consulte [docs/COMMERCE.md](docs/COMMERCE.md) e [docs/PAYMENTS.md](docs/PAYMENTS.md).
+
 ## Estado
 
 **Painel:** v0.16.0
