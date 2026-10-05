@@ -33,20 +33,29 @@ Firebase Auth + Cloud Firestore
 - Function: `licensingApi`
 - Região: `southamerica-east1`
 - Node.js: 22
-- Domínio oficial planejado/operacional: `https://licencas.guiasys.online`
+- Portal público reservado: `https://licencas.guiasys.online`
+- Painel administrativo: `https://painel.licencas.guiasys.online`
+- Hosting admin Firebase: `https://guiasys-licensing-admin.web.app`
 - Protocolo dos clientes: `GSL-v1`
 
 O navegador nunca recebe credencial administrativa do Firestore. As Security Rules continuam deny-all para clientes e toda operação privilegiada passa pela Function.
 
 ## Firebase Hosting
 
-O Hosting **não publica a raiz do repositório**. Antes de cada deploy:
+O projeto usa arquitetura multi-site:
 
-1. `scripts/prepare-hosting.mjs` recria `.hosting-dist/`;
+- target `public` -> site `guiasys-licensing`, reservado ao portal público em `licencas.guiasys.online`;
+- target `admin` -> site `guiasys-licensing-admin`, dedicado ao painel administrativo em `painel.licencas.guiasys.online`.
+
+O C11 publica **somente o target administrativo**. O portal público ainda não é implantado por esta configuração.
+
+Antes de cada deploy do painel:
+
+1. `scripts/prepare-hosting.mjs` recria `.hosting-admin-dist/`;
 2. somente `index.html` e `assets/` são copiados;
 3. `scripts/verify-hosting-dist.mjs` bloqueia qualquer arquivo fora dessa allowlist.
 
-Rewrites versionados:
+Rewrites versionados no target admin:
 
 - `/api/** -> licensingApi`
 - `/health -> licensingApi`
@@ -94,7 +103,7 @@ Em runtime, a API base é:
 window.location.origin
 ```
 
-Assim, o painel usa o mesmo domínio do Hosting e os rewrites encaminham a API sem dependência direta do endpoint da Function ou do Worker legado.
+Assim, o painel usa o mesmo domínio do Hosting administrativo e os rewrites encaminham a API sem dependência direta do endpoint da Function ou do Worker legado.
 
 ## Isolamento de projeto
 
@@ -153,7 +162,7 @@ npm test
 npm run check
 ```
 
-Hosting:
+Hosting administrativo:
 
 ```bash
 node scripts/prepare-hosting.mjs
@@ -176,14 +185,16 @@ Antes do primeiro deploy ao vivo:
 3. executar todos os gates;
 4. publicar Functions + Hosting;
 5. validar `/health` e login;
-6. conectar `licencas.guiasys.online` ao Firebase Hosting;
-7. manter o Worker antigo disponível somente durante a janela de rollback.
+6. publicar e validar o site administrativo `guiasys-licensing-admin.web.app`;
+7. conectar `painel.licencas.guiasys.online` ao target admin;
+8. manter `licencas.guiasys.online` reservado ao futuro portal público;
+9. manter o Worker antigo disponível somente durante a janela de rollback.
 
 Com Firebase CLI autenticada:
 
 ```bash
 firebase deploy --only functions:licensing --project guiasys-licensing
-firebase deploy --only hosting --project guiasys-licensing
+firebase deploy --only hosting:admin --project guiasys-licensing
 ```
 
 O domínio customizado e os registros DNS são configuração externa ao repositório. Não altere DNS antes de a URL `*.web.app` passar no smoke test.
