@@ -23,7 +23,9 @@ test("firebase.json registra codebase Functions v2 no diretório do backend", ()
   assert.equal(firebaseJson.functions.source, "worker");
   assert.equal(firebaseJson.functions.codebase, "licensing");
   assert.equal(firebaseJson.functions.runtime, "nodejs22");
+  assert.ok(firebaseJson.functions.predeploy.some(command => command.includes("npm") && command.includes("install")));
   assert.ok(firebaseJson.functions.predeploy.some(command => command.includes("npm") && command.includes("test")));
+  assert.ok(firebaseJson.functions.predeploy.some(command => command.includes("run check")));
   assert.equal(firebaseJson.emulators.functions.port, 5001);
 });
 
