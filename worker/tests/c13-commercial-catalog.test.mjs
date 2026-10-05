@@ -292,8 +292,35 @@ test("frontend público cobre carregamento, vazio, erro, CTA e renderização an
   assert.match(app, /textContent/);
   assert.equal(/innerHTML|insertAdjacentHTML|document\.write/.test(app), false);
   assert.match(app, /url\.protocol === "https:"/);
+  assert.match(app, /!url\.username && !url\.password/);
   assert.match(css, /@media \(max-width: 760px\)/);
   assert.match(css, /prefers-reduced-motion/);
+});
+
+test("preview comercial exige permissão de catálogo ou planos", async () => {
+  const uid = "uid-catalog-preview-reader";
+  const email = "preview-reader@example.com";
+  const adminId = sha256(email);
+  const services = memoryServices({
+    [`adminUids/${sha256(uid)}`]: { adminId },
+    [`admins/${adminId}`]: {
+      email,
+      status: "active",
+      allProjects: true,
+      projectIds: [],
+      permissions: { manageProjectSettings: false, managePlans: false },
+      firebaseUid: uid
+    },
+    [`projects/${PROJECT_A}`]: project()
+  });
+  const env = authenticatedEnv(services, uid, email);
+
+  const response = await handleRequest(
+    adminRequest(`/api/v1/admin/projects/${PROJECT_A}/catalog-preview`, "GET"),
+    env
+  );
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).error, "permission_denied");
 });
 
 test("preview administrativo reutiliza a projeção pública sem campos sensíveis", async () => {
