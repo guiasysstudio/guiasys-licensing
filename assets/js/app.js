@@ -80,6 +80,7 @@ const el = {
   apiStatusDot: document.querySelector("#api-status-dot"),
   apiStatusText: document.querySelector("#api-status-text"),
   mobileMenuButton: document.querySelector("#mobile-menu-button"),
+  sidebar: document.querySelector("#sidebar"),
   sidebarBackdrop: document.querySelector("#sidebar-backdrop")
 };
 
@@ -802,10 +803,20 @@ function confirmAction(title, message, confirmLabel = "Confirmar", tone = "dange
 }
 
 function setSidebarOpen(open) {
-  const isOpen = Boolean(open);
+  const isMobile = window.matchMedia("(max-width: 820px)").matches;
+  const isOpen = Boolean(open && isMobile);
+
   document.body.classList.toggle("sidebar-open", isOpen);
   el.mobileMenuButton.setAttribute("aria-expanded", String(isOpen));
   el.mobileMenuButton.setAttribute("aria-label", isOpen ? "Fechar menu" : "Abrir menu");
+
+  if (isMobile && !isOpen) {
+    el.sidebar.inert = true;
+    el.sidebar.setAttribute("aria-hidden", "true");
+  } else {
+    el.sidebar.inert = false;
+    el.sidebar.removeAttribute("aria-hidden");
+  }
 }
 
 function updateDocumentTitle() {
@@ -3446,11 +3457,16 @@ el.projectSwitcher.addEventListener("change", async () => {
 });
 
 el.mobileMenuButton.addEventListener("click", () => {
-  setSidebarOpen(!document.body.classList.contains("sidebar-open"));
+  const willOpen = !document.body.classList.contains("sidebar-open");
+  setSidebarOpen(willOpen);
+  if (willOpen) {
+    setTimeout(() => el.sidebar.querySelector(".nav-button")?.focus(), 0);
+  }
 });
 
 el.sidebarBackdrop.addEventListener("click", () => {
   setSidebarOpen(false);
+  el.mobileMenuButton.focus({ preventScroll: true });
 });
 
 document.addEventListener("keydown", event => {
@@ -3465,9 +3481,7 @@ document.addEventListener("keydown", event => {
 });
 
 window.addEventListener("resize", () => {
-  if (window.innerWidth > 820 && document.body.classList.contains("sidebar-open")) {
-    setSidebarOpen(false);
-  }
+  setSidebarOpen(document.body.classList.contains("sidebar-open"));
 });
 
 window.addEventListener("focus", () => {
@@ -3496,4 +3510,5 @@ onAuthStateChanged(auth, async user => {
   await checkApi();
 });
 
+setSidebarOpen(false);
 showScreen("boot");
