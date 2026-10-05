@@ -47,7 +47,10 @@ const ALLOWED_ORIGINS = [
   "http://localhost:5501",
   "https://licencas.guiasys.online",
   "https://guiasys-licensing.web.app",
-  "https://guiasys-licensing.firebaseapp.com"
+  "https://guiasys-licensing.firebaseapp.com",
+  "https://painel.licencas.guiasys.online",
+  "https://guiasys-licensing-admin.web.app",
+  "https://guiasys-licensing-admin.firebaseapp.com"
 ];
 
 const ENTITY_NAMES = new Set([
@@ -186,7 +189,7 @@ function isInternalHostingOrigin(origin) {
     const url = new URL(origin);
     return (
       url.protocol === "https:" &&
-      /^guiasys-licensing--[a-z0-9-]+\.web\.app$/i.test(url.hostname)
+      /^guiasys-licensing(?:-admin)?--[a-z0-9-]+\.web\.app$/i.test(url.hostname)
     );
   } catch {
     return false;
