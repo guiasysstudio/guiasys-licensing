@@ -16,6 +16,12 @@ on:
       - "scripts/firestore-test.rules"
       - "firebase.transaction-test.json"
       - "worker/src/firestore-atomic.js"
+      - "worker/package.json"
+      - "worker/src/firebase-entry.js"
+      - "worker/src/firebase-runtime.js"
+      - "worker/src/firebase-runtime.js"
+      - "worker/src/firebase-entry.js"
+      - "worker/package.json"
       - ".github/workflows/firebase-config-check.yml"
   pull_request:
     branches:
