@@ -112,7 +112,7 @@ O portal do cliente será uma aplicação separada. Ele poderá compartilhar Fir
 
 Cada projeto possui um par ES256 (ECDSA P-256/SHA-256). A chave privada fica em `projects/{projectId}/internal/signing`, coleção que não é exposta pelo roteamento administrativo. A chave pública fica no documento do projeto e é entregue pela configuração pública/contrato.
 
-Após uma ativação ou validação bem-sucedida, o Worker assina um JWS contendo, entre outros:
+Após uma ativação ou validação bem-sucedida, o backend Firebase assina um JWS contendo, entre outros:
 
 - protocolo;
 - tipo (`license` ou `trial`);
