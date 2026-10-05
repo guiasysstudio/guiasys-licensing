@@ -25,7 +25,7 @@ const firebaseConfig = {
 };
 
 const API_BASE = window.location.origin;
-const PANEL_VERSION = "0.13.0";
+const PANEL_VERSION = "0.14.0";
 const PROTOCOL_VERSION = "GSL-v1";
 
 const firebaseApp = initializeApp(firebaseConfig);
