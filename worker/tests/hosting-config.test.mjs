@@ -20,6 +20,7 @@ test("Hosting admin usa target próprio e staging allowlist", () => {
   const admin = firebase.hosting.find(item => item.target === "admin");
   assert.ok(admin);
   assert.deepEqual(rc.targets["guiasys-licensing"].hosting.admin, ["guiasys-licensing-admin"]);
+  assert.deepEqual(rc.targets["guiasys-licensing"].hosting.public, ["guiasys-licensing"]);
   assert.equal(admin.public, ".hosting-admin-dist");
   assert.ok(admin.predeploy.some(command => command.includes("prepare-hosting.mjs")));
   assert.ok(admin.predeploy.some(command => command.includes("verify-hosting-dist.mjs")));
