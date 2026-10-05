@@ -170,6 +170,12 @@ node scripts/verify-hosting-dist.mjs
 node scripts/verify-firebase-config.mjs
 ```
 
+Smoke não destrutivo da produção, após o deploy:
+
+```bash
+node scripts/smoke-production.mjs
+```
+
 Emuladores:
 
 ```bash
