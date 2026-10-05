@@ -67,7 +67,7 @@
     </section>
 
     <section id="app-shell" class="app-shell hidden">
-      <aside class="sidebar">
+      <aside id="sidebar" class="sidebar" aria-label="Menu lateral">
         <div class="sidebar-brand">
           <div class="brand-mark">GS</div>
           <div class="sidebar-brand-text">
@@ -92,9 +92,11 @@
         </div>
       </aside>
 
+      <button id="sidebar-backdrop" class="sidebar-backdrop" type="button" aria-label="Fechar menu lateral" tabindex="-1"></button>
+
       <main class="main-column">
         <header class="topbar">
-          <button id="mobile-menu-button" class="icon-button mobile-only" type="button" aria-label="Abrir menu">☰</button>
+          <button id="mobile-menu-button" class="icon-button mobile-only" type="button" aria-label="Abrir menu" aria-controls="sidebar" aria-expanded="false">☰</button>
 
           <div class="project-switcher-wrap">
             <label for="project-switcher">Projeto</label>
