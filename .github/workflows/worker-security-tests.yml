@@ -44,7 +44,11 @@ jobs:
 
       - name: Install backend dependencies
         working-directory: worker
-        run: npm install --no-audit --no-fund --package-lock=false
+        run: npm install --no-audit --no-fund
+
+      - name: Audit production dependencies
+        working-directory: worker
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Run backend security and API tests
         working-directory: worker
