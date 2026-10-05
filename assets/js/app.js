@@ -1091,7 +1091,8 @@ async function dashboardView() {
 async function projectsView() {
   const canCreate = canCreateProjects();
   const canEdit = hasPermission("manageProjectSettings");
-  const canRestore = hasPermission("manageProjects");
+  const canLifecycle = hasPermission("manageProjects");
+  const canRestore = canLifecycle;
 
   el.content.innerHTML = `
     ${pageHeader(
@@ -1120,6 +1121,9 @@ async function projectsView() {
                 ? '<button class="btn btn-ghost open-project" type="button" disabled>Projeto arquivado</button>'
                 : '<button class="btn btn-primary open-project" type="button">Abrir projeto</button>'}
               ${canEdit ? '<button class="btn btn-ghost edit-project" type="button">Editar</button>' : ""}
+              ${project.status !== "archived" && canLifecycle
+                ? '<button class="btn btn-danger archive-project-card" type="button">Arquivar</button>'
+                : ""}
               ${project.status === "archived" && canRestore
                 ? '<button class="btn btn-primary restore-project" type="button">Restaurar</button>'
                 : ""}
@@ -1155,6 +1159,23 @@ async function projectsView() {
 
     card.querySelector(".edit-project")?.addEventListener("click", async () => {
       openProjectEdit(await loadProjectDetail(id, true));
+    });
+
+    card.querySelector(".archive-project-card")?.addEventListener("click", event => {
+      runButtonAction(event.currentTarget, async () => {
+        if (!await confirmAction("Arquivar projeto", `Arquivar "${project.name}"? O projeto deixará de aceitar novas ativações.`, "Arquivar")) return;
+
+        await api(`/api/v1/admin/projects/${encodeURIComponent(id)}`, {
+          method: "DELETE"
+        });
+        invalidate(id);
+        await loadProjects(true);
+        if (state.selectedProjectId === id) {
+          state.selectedProjectId = "";
+        }
+        toast("Projeto arquivado.");
+        await renderContent();
+      });
     });
 
     card.querySelector(".restore-project")?.addEventListener("click", event => {
@@ -2097,7 +2118,7 @@ async function activationSimulatorView() {
       <article class="card card-section">
         <span class="badge">Resposta da API</span>
         <h3 style="margin-top:14px">Resultado</h3>
-        <p>Aqui você verá exatamente o que um programa integrado receberia do Worker.</p>
+        <p>Aqui você verá exatamente o que um programa integrado receberia da API.</p>
         <pre id="simulator-result" class="simulator-result">Aguardando uma operação...</pre>
       </article>
     </section>
@@ -2472,7 +2493,7 @@ function integrationPlatformNotes(platform) {
       "Use uma camada própria de licenciamento separada da lógica de negócio.",
       "Use armazenamento seguro adequado à plataforma para a key e para o estado local da licença.",
       "O identificador do dispositivo deve ser estável entre atualizações do aplicativo.",
-      "Nunca embuta credenciais administrativas, Service Account ou segredos do Worker."
+      "Nunca embuta credenciais administrativas, Service Account ou segredos do backend."
     ],
     dotnet: [
       "Crie um serviço como GuiaSysLicensingService ou um projeto reutilizável GuiaSys.Licensing.",
@@ -2791,7 +2812,7 @@ function buildIntegrationContract(project, platform = "universal") {
     "",
     "SEGURANÇA",
     "----------------------------------------------------------------",
-    "Nunca inclua FIREBASE_SERVICE_ACCOUNT_JSON, ADMIN_FIREBASE_UID, credenciais administrativas ou segredos do Worker.",
+    "Nunca inclua FIREBASE_SERVICE_ACCOUNT_JSON, ADMIN_FIREBASE_UID, credenciais administrativas ou segredos do backend.",
     `Pode ficar no cliente: API Base, Código de Integração ${project.integrationCode}, protocolo ${PROTOCOL_VERSION}, Project ID público e a chave PÚBLICA ES256.`,
     "A chave PRIVADA de assinatura nunca é enviada ao cliente e não aparece no contrato.",
     "",
