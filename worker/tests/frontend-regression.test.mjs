@@ -112,3 +112,30 @@ test("frontend usa o próprio domínio como API base e não depende do Worker le
   assert.equal(source.includes("GitHub Pages"), false);
   assert.equal(source.includes("Cloudflare Workers"), false);
 });
+
+
+test("autenticação do painel usa sessão, Google/e-mail e refresh controlado do ID token", () => {
+  assert.match(source, /browserSessionPersistence/);
+  assert.match(source, /signInWithPopup\(auth, provider\)/);
+  assert.match(source, /signInWithEmailAndPassword\(/);
+  assert.match(source, /onAuthStateChanged\(auth/);
+  assert.match(source, /signOut\(auth\)/);
+  assert.match(source, /getIdToken\(false\)/);
+  assert.match(source, /response\.status === 401 && retry/);
+  assert.match(source, /getIdToken\(true\)/);
+  assert.match(source, /"Authorization": `Bearer \$\{token\}`/);
+});
+
+test("manageProjects possui ações de arquivar e restaurar fora das configurações do projeto", () => {
+  assert.match(source, /const canLifecycle = hasPermission\("manageProjects"\)/);
+  assert.match(source, /archive-project-card/);
+  assert.match(source, /\.archive-project-card"\)\?\.addEventListener/);
+  assert.match(source, /method: "DELETE"/);
+  assert.match(source, /restore-project/);
+  assert.match(source, /JSON\.stringify\(\{ status: "active" \}\)/);
+});
+
+test("texto publicado referencia API/backend e não chama o runtime principal de Worker", () => {
+  assert.equal(source.includes("receberia do Worker"), false);
+  assert.equal(source.includes("segredos do Worker"), false);
+});
