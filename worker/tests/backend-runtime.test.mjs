@@ -15,8 +15,8 @@ const core = await readFile(new URL("../src/index.js", import.meta.url), "utf8")
 test("backend Firebase usa Node 22 e SDKs suportados", () => {
   assert.equal(packageJson.engines.node, "22");
   assert.equal(packageJson.main, "src/firebase-entry.js");
-  assert.match(packageJson.dependencies["firebase-admin"], /^\^14\./);
-  assert.match(packageJson.dependencies["firebase-functions"], /^\^7\./);
+  assert.match(packageJson.dependencies["firebase-admin"], /^14\./);
+  assert.match(packageJson.dependencies["firebase-functions"], /^7\./);
 });
 
 test("firebase.json registra codebase Functions v2 no diretório do backend", () => {
