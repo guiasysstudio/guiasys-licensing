@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 
 import { handleRequest } from "../src/index.js";
+import { verifyEntitlementToken } from "../../assets/js/entitlement-verifier.js";
 
 const PROJECT_ID = "prj_0123456789abcdefabcd";
 const PLAN_ID = "plan_0123456789abcdefabcd";
@@ -496,6 +497,204 @@ test("origem web não autorizada é recusada antes de qualquer migração do pro
   assert.equal(project.integrationCode, undefined);
   assert.equal(
     services.store.has(`projects/${PROJECT_ID}/internal/signing`),
+    false
+  );
+});
+
+
+async function signingFixture() {
+  const keyPair = await crypto.subtle.generateKey(
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign", "verify"]
+  );
+  const privateJwk = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
+  const publicJwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
+  const keyId = "sig_c12regression";
+  const createdAt = new Date().toISOString();
+
+  return {
+    keyId,
+    algorithm: "ES256",
+    privateJwk,
+    publicJwk,
+    createdAt,
+    updatedAt: createdAt
+  };
+}
+
+test("fluxo público ativa, valida idempotência, aplica limite, desativa e verifica entitlement", async () => {
+  const signing = await signingFixture();
+  const licenseLookup = sha256(LICENSE_KEY);
+  const deviceId = "DEVICE-C12-LICENSE-01";
+  const deviceHash = sha256(deviceId);
+
+  const project = {
+    name: "Projeto Teste",
+    slug: "projeto-teste",
+    prefix: "GSS",
+    status: "active",
+    integrationCode: "GSLI-ABCD-EFGH-JKLM",
+    publicCatalog: false,
+    allowedOrigins: [],
+    trialEnabled: true,
+    trialDays: 7,
+    trialValidationHours: 24,
+    trialOfflineHours: 24,
+    offlineDays: 7,
+    validationHours: 24,
+    signingKeyId: signing.keyId,
+    signingAlgorithm: "ES256",
+    signingPublicJwk: signing.publicJwk,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z"
+  };
+
+  const services = memoryServices({
+    [`projects/${PROJECT_ID}`]: project,
+    [`projects/${PROJECT_ID}/internal/signing`]: signing,
+    [`projects/${PROJECT_ID}/licenseKeys/${licenseLookup}`]: {
+      licenseId: LICENSE_ID
+    },
+    [`projects/${PROJECT_ID}/licenses/${LICENSE_ID}`]: {
+      key: LICENSE_KEY,
+      customerId: "cus_0123456789abcdefabcd",
+      customerName: "Cliente",
+      customerEmail: "cliente@example.com",
+      planId: "",
+      planName: "Mensal",
+      durationDays: 30,
+      renewalDaysTotal: 0,
+      renewalCount: 0,
+      lifetime: false,
+      maxDevices: 1,
+      startMode: "first_activation",
+      status: "pending",
+      activatedAt: null,
+      expiresAt: null,
+      source: "admin",
+      externalOrderId: "",
+      notes: "",
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z"
+    }
+  });
+
+  const env = {
+    FIREBASE_PROJECT_ID: "guiasys-licensing",
+    ADMIN_FIREBASE_UID: "uid-master-test",
+    __services: services
+  };
+
+  const publicRequest = (path, body) => new Request(
+    `https://painel.licencas.guiasys.online${path}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId: PROJECT_ID,
+        licenseKey: LICENSE_KEY,
+        ...body
+      })
+    }
+  );
+
+  const activate = await handleRequest(
+    publicRequest("/api/v1/license/activate", {
+      deviceId,
+      deviceName: "PC Principal",
+      platform: "Windows",
+      appVersion: "1.0.0",
+      requestId: "req-c12-activate"
+    }),
+    env
+  );
+
+  assert.equal(activate.status, 200);
+  const activatedBody = await activate.json();
+  assert.equal(activatedBody.ok, true);
+  assert.equal(activatedBody.license.status, "active");
+  assert.equal(activatedBody.license.activationPerformed, true);
+  assert.equal(activatedBody.license.activeDevices, 1);
+  assert.ok(activatedBody.license.expiresAt);
+  assert.ok(activatedBody.license.offlineUntil);
+  assert.ok(activatedBody.license.entitlement?.token);
+
+  const entitlementCheck = await verifyEntitlementToken(
+    activatedBody.license.entitlement.token,
+    signing.publicJwk,
+    {
+      protocolVersion: "GSL-v1",
+      type: "license",
+      projectId: PROJECT_ID,
+      integrationCode: project.integrationCode,
+      deviceHash,
+      status: "active",
+      keyId: signing.keyId
+    }
+  );
+  assert.equal(entitlementCheck.valid, true);
+
+  const secondDevice = await handleRequest(
+    publicRequest("/api/v1/license/activate", {
+      deviceId: "DEVICE-C12-LICENSE-02",
+      requestId: "req-c12-second"
+    }),
+    env
+  );
+  assert.equal(secondDevice.status, 409);
+  assert.equal((await secondDevice.json()).error, "device_limit");
+
+  const firstValidation = await handleRequest(
+    publicRequest("/api/v1/license/validate", {
+      deviceId,
+      appVersion: "1.0.1",
+      requestId: "req-c12-validate"
+    }),
+    env
+  );
+  assert.equal(firstValidation.status, 200);
+  const firstValidationBody = await firstValidation.json();
+  assert.equal(firstValidationBody.license.validationCount, 1);
+  assert.equal(firstValidationBody.license.revalidationReplay, false);
+
+  const replayValidation = await handleRequest(
+    publicRequest("/api/v1/license/validate", {
+      deviceId,
+      appVersion: "1.0.1",
+      requestId: "req-c12-validate"
+    }),
+    env
+  );
+  assert.equal(replayValidation.status, 200);
+  const replayBody = await replayValidation.json();
+  assert.equal(replayBody.license.validationCount, 1);
+  assert.equal(replayBody.license.revalidationReplay, true);
+
+  const deactivate = await handleRequest(
+    publicRequest("/api/v1/license/deactivate", {
+      deviceId,
+      requestId: "req-c12-deactivate"
+    }),
+    env
+  );
+  assert.equal(deactivate.status, 200);
+  const deactivateBody = await deactivate.json();
+  assert.equal(deactivateBody.result.deactivated, true);
+  assert.equal(deactivateBody.result.alreadyInactive, false);
+
+  const afterDeactivate = await handleRequest(
+    publicRequest("/api/v1/license/validate", {
+      deviceId,
+      requestId: "req-c12-after-deactivate"
+    }),
+    env
+  );
+  assert.equal(afterDeactivate.status, 403);
+  assert.equal((await afterDeactivate.json()).error, "device_not_authorized");
+
+  assert.equal(
+    services.store.get(`projects/${PROJECT_ID}/devices/${deviceHash}`).active,
     false
   );
 });
