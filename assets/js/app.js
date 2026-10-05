@@ -52,6 +52,7 @@ const state = {
   route: "dashboard",
   cache: new Map(),
   inflight: new Map(),
+  cacheRequests: new Map(),
   cacheGeneration: 0,
   renderRequested: 0,
   renderCompleted: 0,
@@ -355,9 +356,20 @@ async function cachedLoad(key, loader, { force = false, ttlMs = CACHE_TTL_MS } =
   }
 
   const generation = state.cacheGeneration;
+  const requestVersion = (state.cacheRequests.get(key) || 0) + 1;
+  state.cacheRequests.set(key, requestVersion);
+
   const pending = Promise.resolve()
     .then(loader)
-    .then(value => cacheWrite(key, value, generation))
+    .then(value => {
+      if (
+        generation === state.cacheGeneration &&
+        state.cacheRequests.get(key) === requestVersion
+      ) {
+        cacheWrite(key, value, generation);
+      }
+      return value;
+    })
     .finally(() => {
       if (state.inflight.get(key) === pending) state.inflight.delete(key);
     });
@@ -382,7 +394,9 @@ function resetAdministrativeState() {
   state.administrator = null;
   state.cache.clear();
   state.inflight.clear();
+  state.cacheRequests.clear();
   state.cacheGeneration++;
+  state.renderRequested++;
   state.projects = [];
   state.dashboard = null;
   state.selectedProjectId = "";
@@ -633,12 +647,36 @@ function topModal() {
 }
 
 document.addEventListener("keydown", event => {
-  if (event.key !== "Escape") return;
   const current = topModal();
   if (!current) return;
-  event.preventDefault();
-  if (typeof current.onEscape === "function") {
-    current.onEscape();
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    if (typeof current.onEscape === "function") current.onEscape();
+    return;
+  }
+
+  if (event.key !== "Tab") return;
+
+  const focusable = [...current.backdrop.querySelectorAll(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+  )].filter(node => !node.closest("[hidden]") && node.offsetParent !== null);
+
+  if (!focusable.length) {
+    event.preventDefault();
+    current.backdrop.querySelector(".modal-card")?.focus();
+    return;
+  }
+
+  const first = focusable[0];
+  const last = focusable.at(-1);
+
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
   }
 });
 
@@ -3227,6 +3265,11 @@ async function renderContent() {
   if (!state.renderRunner) {
     state.renderRunner = (async () => {
       while (state.renderCompleted < state.renderRequested) {
+        if (!state.user) {
+          state.renderCompleted = state.renderRequested;
+          break;
+        }
+
         const target = state.renderRequested;
         await performRender(target);
         state.renderCompleted = target;
