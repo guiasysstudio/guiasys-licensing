@@ -9,6 +9,7 @@
       "README.md"
     ],
     "predeploy": [
+      "npm --prefix \"$RESOURCE_DIR\" install --no-audit --no-fund --package-lock=false",
       "npm --prefix \"$RESOURCE_DIR\" test",
       "npm --prefix \"$RESOURCE_DIR\" run check"
     ]
