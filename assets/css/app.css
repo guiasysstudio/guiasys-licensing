@@ -315,7 +315,6 @@ button:disabled {
   background: rgba(15, 27, 46, 0.72);
   color: var(--text);
   padding: 0 14px;
-  outline: none;
 }
 
 .login-field input:focus {
@@ -1105,7 +1104,6 @@ button:disabled {
   border: 1px solid var(--line);
   background: rgba(2, 8, 23, 0.32);
   color: var(--text);
-  outline: 0;
 }
 
 .compact-input:focus {
@@ -1169,7 +1167,6 @@ button:disabled {
   color: var(--text);
   border-radius: 11px;
   padding: 11px 12px;
-  outline: 0;
   transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
