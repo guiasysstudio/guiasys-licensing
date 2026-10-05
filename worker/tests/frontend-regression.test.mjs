@@ -104,3 +104,11 @@ test("ações críticas usam lock de botão e erro comum", () => {
   assert.ok((source.match(/runButtonAction\(/g) || []).length >= 7);
   assert.match(source, /window\.addEventListener\("unhandledrejection"/);
 });
+
+
+test("frontend usa o próprio domínio como API base e não depende do Worker legado", () => {
+  assert.match(source, /const API_BASE = window\.location\.origin;/);
+  assert.equal(source.includes("workers.dev"), false);
+  assert.equal(source.includes("GitHub Pages"), false);
+  assert.equal(source.includes("Cloudflare Workers"), false);
+});
