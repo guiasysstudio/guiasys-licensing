@@ -21,7 +21,7 @@ Não é necessário nem permitido configurar `FIREBASE_SERVICE_ACCOUNT_JSON` par
 
 ## Cloudflare Worker legado
 
-O código continua compatível com o Worker durante a janela de migração para permitir rollback seguro. O Worker não é mais a arquitetura de destino e será retirado do tráfego após o corte de Hosting/implantação.
+O diretório mantém compatibilidade histórica com o Cloudflare Worker apenas para rollback controlado. O runtime de produção é Firebase Functions v2 e o Worker não participa do fluxo normal de implantação.
 
 ## Configuração necessária
 
