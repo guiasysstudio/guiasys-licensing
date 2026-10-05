@@ -8,6 +8,7 @@ on:
     paths:
       - "worker/**"
       - "assets/js/app.js"
+      - "assets/css/app.css"
       - "assets/js/entitlement-verifier.js"
       - "index.html"
       - ".github/workflows/worker-security-tests.yml"
@@ -17,6 +18,7 @@ on:
     paths:
       - "worker/**"
       - "assets/js/app.js"
+      - "assets/css/app.css"
       - "assets/js/entitlement-verifier.js"
       - "index.html"
       - ".github/workflows/worker-security-tests.yml"
