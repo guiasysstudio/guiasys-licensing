@@ -6,7 +6,7 @@
 - Frontend migrado da dependência operacional de GitHub Pages/Cloudflare para Firebase Hosting + Functions v2.
 - API base do painel passa a usar `window.location.origin`.
 - Rewrites `/api/**` e `/health` apontam para `licensingApi` em `southamerica-east1`.
-- Hosting usa `pinTag` para sincronizar conteúdo estático e Function v2.
+- Rewrites do Hosting não usam `pinTag`; Functions e Hosting são implantados separadamente para evitar mutação de tags/tráfego do Cloud Run durante a finalização.
 - Novo staging `.hosting-dist/` com allowlist estrita de `index.html` e `assets/`.
 - Removido `CNAME` do GitHub Pages.
 - Adicionados headers de segurança e política explícita de cache.
