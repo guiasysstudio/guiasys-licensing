@@ -79,7 +79,8 @@ const el = {
   content: document.querySelector("#content"),
   apiStatusDot: document.querySelector("#api-status-dot"),
   apiStatusText: document.querySelector("#api-status-text"),
-  mobileMenuButton: document.querySelector("#mobile-menu-button")
+  mobileMenuButton: document.querySelector("#mobile-menu-button"),
+  sidebarBackdrop: document.querySelector("#sidebar-backdrop")
 };
 
 const globalItems = [
@@ -611,11 +612,15 @@ function toast(message, tone = "success") {
     host = document.createElement("div");
     host.id = "toast-host";
     host.className = "toast-host";
+    host.setAttribute("aria-live", "polite");
+    host.setAttribute("aria-atomic", "false");
+    host.setAttribute("aria-label", "Notificações");
     document.body.appendChild(host);
   }
 
   const node = document.createElement("div");
   node.className = `toast toast-${tone}`;
+  node.setAttribute("role", tone === "danger" ? "alert" : "status");
   node.textContent = message;
   host.appendChild(node);
 
@@ -800,7 +805,7 @@ function renderNavigation() {
   el.globalNav.innerHTML = globalItems
     .filter(([, , , permission]) => hasPermission(permission))
     .map(([route, icon, label]) => `
-      <button class="nav-button ${state.route === route ? "active" : ""}" data-route="${route}" type="button">
+      <button class="nav-button ${state.route === route ? "active" : ""}" data-route="${route}" type="button" ${state.route === route ? 'aria-current="page"' : ""}>
         <span class="nav-icon">${iconSvg(icon)}</span><span>${label}</span>
       </button>
     `).join("");
@@ -808,7 +813,7 @@ function renderNavigation() {
   el.projectNav.innerHTML = projectItems
     .filter(([, , , permission]) => hasPermission(permission))
     .map(([route, icon, label]) => `
-      <button class="nav-button ${state.route === route ? "active" : ""}" data-route="${route}" type="button">
+      <button class="nav-button ${state.route === route ? "active" : ""}" data-route="${route}" type="button" ${state.route === route ? 'aria-current="page"' : ""}>
         <span class="nav-icon">${iconSvg(icon)}</span><span>${label}</span>
       </button>
     `).join("");
@@ -820,7 +825,7 @@ function renderNavigation() {
       state.route = button.dataset.route;
       renderNavigation();
       await renderContent();
-      document.body.classList.remove("sidebar-open");
+      setSidebarOpen(false);
     });
   });
 }
@@ -896,12 +901,13 @@ function loadingView() {
   `;
 }
 
-function table(headers, rows, emptyText = "Nenhum registro encontrado.") {
+function table(headers, rows, emptyText = "Nenhum registro encontrado.", caption = "Tabela de dados") {
   if (!rows.length) return emptyState("Sem registros", emptyText);
   return `
-    <div class="data-table-wrap">
+    <div class="data-table-wrap" tabindex="0" role="region" aria-label="${e(caption)}">
       <table class="data-table">
-        <thead><tr>${headers.map(h => `<th>${e(h)}</th>`).join("")}</tr></thead>
+        <caption class="sr-only">${e(caption)}</caption>
+        <thead><tr>${headers.map(h => `<th scope="col">${e(h)}</th>`).join("")}</tr></thead>
         <tbody>${rows.join("")}</tbody>
       </table>
     </div>
