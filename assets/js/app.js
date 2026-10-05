@@ -1403,7 +1403,8 @@ async function plansView() {
             <td class="table-actions"><button class="btn btn-ghost btn-sm edit-plan" data-id="${e(plan.id)}" type="button">Editar</button><button class="btn btn-ghost btn-sm delete-plan" data-id="${e(plan.id)}" type="button">Excluir</button></td>
           </tr>
         `),
-        "Cadastre um plano para emitir licenças."
+        "Cadastre um plano para emitir licenças.",
+        "Planos do projeto"
       )}
     </article>
   `;
@@ -1513,7 +1514,8 @@ async function customersView() {
             </td>
           </tr>
         `),
-        "Cadastre um cliente antes de gerar uma licença."
+        "Cadastre um cliente antes de gerar uma licença.",
+        "Clientes do projeto"
       )}
     </article>
   `;
@@ -1769,7 +1771,8 @@ async function licensesView() {
           </td>
         </tr>
       `),
-      "Nenhuma licença corresponde ao filtro."
+      "Nenhuma licença corresponde ao filtro.",
+      "Licenças emitidas"
     );
 
     document.querySelectorAll(".copy-key").forEach(button => button.onclick = async () => {
@@ -1977,7 +1980,8 @@ async function devicesView() {
             </tr>
           `;
         }),
-        "Nenhum dispositivo ativado ainda."
+        "Nenhum dispositivo ativado ainda.",
+        "Dispositivos vinculados às licenças"
       )}
     </article>
   `;
@@ -2025,7 +2029,8 @@ async function activationsView() {
             </tr>
           `;
         }),
-        "Nenhuma ativação registrada."
+        "Nenhuma ativação registrada.",
+        "Histórico de ativações e validações"
       )}
     </article>
   `;
@@ -2411,7 +2416,8 @@ async function trialView() {
             </tr>
           `;
         }),
-        "Nenhum dispositivo iniciou um trial ainda."
+        "Nenhum dispositivo iniciou um trial ainda.",
+        "Histórico de dispositivos em trial"
       )}
     </article>
   `;
@@ -2946,7 +2952,8 @@ async function logsView() {
             <td><code class="details-code">${e(JSON.stringify(log.details || {}))}</code></td>
           </tr>
         `),
-        "Nenhum log registrado."
+        "Nenhum log registrado.",
+        "Logs de auditoria do projeto"
       )}
     </article>
   `;
@@ -3186,7 +3193,8 @@ async function administratorsView() {
             </tr>
           `;
         }),
-        "Nenhum administrador adicional cadastrado."
+        "Nenhum administrador adicional cadastrado.",
+        "Administradores adicionais"
       )}
     </article>
 
@@ -3205,7 +3213,8 @@ async function administratorsView() {
             <td><code class="details-code">${e(JSON.stringify(log.details || {}))}</code></td>
           </tr>
         `),
-        "Nenhuma alteração administrativa registrada."
+        "Nenhuma alteração administrativa registrada.",
+        "Auditoria administrativa da plataforma"
       )}
     </article>
   `;
