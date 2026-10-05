@@ -104,11 +104,15 @@ if (
 }
 
 const catalog = await expectJson(`${PUBLIC_BASE}/api/v1/catalog`);
-if (catalog.body?.protocolVersion !== "GSL-v1" || !Array.isArray(catalog.body?.projects)) {
-  fail("catálogo público não respeita o contrato GSL-v1.");
+if (
+  catalog.body?.ok !== true ||
+  catalog.body?.catalog?.protocolVersion !== "GSL-v1" ||
+  !Array.isArray(catalog.body?.catalog?.projects)
+) {
+  fail("catálogo público não respeita o envelope da API nem o contrato GSL-v1.");
 }
 
 console.log("Production smoke OK.");
 console.log(`Admin:  ${ADMIN_BASE}`);
 console.log(`Public: ${PUBLIC_BASE}`);
-console.log(`Catalog projects: ${catalog.body.projects.length}`);
+console.log(`Catalog projects: ${catalog.body.catalog.projects.length}`);
