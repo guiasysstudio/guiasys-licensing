@@ -10,10 +10,15 @@ Existe um único motor de licenciamento e múltiplos ambientes independentes. Ca
 Hospeda apenas HTML, CSS e JavaScript do painel.
 
 ### Firebase Authentication
-Autentica o administrador usando Google. O Firebase ID Token é enviado ao Worker.
+Autentica o administrador usando Google ou e-mail/senha. O Firebase ID Token é enviado ao backend.
 
-### Cloudflare Worker
-Executa toda lógica privilegiada e valida o UID do administrador.
+### Firebase Functions v2
+É o runtime principal do backend a partir do C10. A função HTTP `licensingApi` executa a lógica privilegiada em Node.js 22, região `southamerica-east1`, usando Firebase Admin SDK e as credenciais nativas da service account do runtime.
+
+O UID do administrador master é lido de `ADMIN_FIREBASE_UID` via Secret Manager. O backend Firebase não utiliza chave JSON de service account persistida no repositório nem em variável de ambiente.
+
+### Cloudflare Worker legado
+Permanece temporariamente compatível apenas como rollback durante a transição. O corte definitivo de tráfego ocorre na etapa de Hosting/implantação; o contrato público `GSL-v1` não muda.
 
 ### Cloud Firestore
 Persiste projetos, planos, clientes, licenças, dispositivos, ativações e logs.
@@ -24,7 +29,7 @@ Persiste projetos, planos, clientes, licenças, dispositivos, ativações e logs
 Administrador
   -> Firebase Auth
   -> ID Token
-  -> Worker
+  -> Firebase Functions v2
   -> valida assinatura + UID
   -> Firestore
 ```
@@ -34,7 +39,7 @@ Administrador
 ```text
 Programa GuiaSys
   -> integrationCode + key/deviceId
-  -> Worker
+  -> Firebase Functions v2
   -> valida licença/trial
   -> Firestore
   -> assina entitlement ES256
@@ -77,7 +82,7 @@ Um projeto cliente conhece somente:
 - license key fornecida pelo usuário;
 - Device ID estável gerado pelo cliente.
 
-Planos e regras comerciais permanecem no servidor. O cliente recebe o estado efetivo da licença por `activate` e `validate`.
+Planos e regras comerciais permanecem no servidor. O cliente recebe o estado efetivo da licença por `activate` e `validate`. A migração de runtime não altera paths, payloads nem semântica do `GSL-v1`.
 
 A página `Integração` de cada projeto gera o documento oficial que deve ser seguido pelo projeto de destino. Mudanças incompatíveis no protocolo exigem uma nova versão do contrato.
 
@@ -100,7 +105,7 @@ Atualizar ou reinstalar o aplicativo não reinicia trial nem licença enquanto o
 
 ## Portal do cliente — fronteira futura
 
-O portal do cliente será uma aplicação separada. Ele poderá compartilhar Firebase Authentication e Firestore, mas o Worker continuará sendo a camada de autorização e regras. O catálogo público diferencia projetos e planos explicitamente disponibilizados para venda.
+O portal do cliente será uma aplicação separada. Ele poderá compartilhar Firebase Authentication e Firestore, mas Firebase Functions v2 continuará sendo a camada de autorização e regras. O catálogo público diferencia projetos e planos explicitamente disponibilizados para venda.
 
 
 ## Autorização offline assinada
@@ -130,3 +135,22 @@ Para aplicações Web, cada projeto possui `allowedOrigins`. Requisições com c
 ## Conversão de trial
 
 Ao ativar uma licença paga no mesmo Device ID, um trial existente é marcado como `converted`. Ele deixa de ser reutilizável e não soma tempo restante à licença paga.
+
+
+## Runtime do backend — C10
+
+O backend Firebase usa:
+
+- Cloud Functions for Firebase v2;
+- Node.js 22;
+- Firebase Admin SDK;
+- região `southamerica-east1`;
+- máximo de 20 instâncias;
+- Secret Manager para `ADMIN_FIREBASE_UID`;
+- `X-Request-Id` em todas as respostas;
+- logs estruturados de conclusão e erro;
+- transações nativas do Admin SDK para operações atômicas.
+
+O adaptador `firebase-runtime.js` preserva a interface de persistência usada pelo motor existente. Isso permite trocar a infraestrutura sem duplicar as regras de licenciamento, trial, RBAC, assinatura ES256 ou validação GSL-v1.
+
+A autenticação administrativa no runtime Firebase usa `verifyIdToken(..., true)`, consulta o estado real da conta e mantém a validação de provedor, revogação, conta desativada e autenticação recente já existente no domínio.
