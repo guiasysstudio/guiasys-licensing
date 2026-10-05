@@ -13,6 +13,8 @@ const app = await readFile(new URL("../../assets/js/app.js", import.meta.url), "
 const backend = await readFile(new URL("../src/index.js", import.meta.url), "utf8");
 const prepare = await readFile(new URL("../../scripts/prepare-hosting.mjs", import.meta.url), "utf8");
 const verify = await readFile(new URL("../../scripts/verify-hosting-dist.mjs", import.meta.url), "utf8");
+const preparePublic = await readFile(new URL("../../scripts/prepare-public-hosting.mjs", import.meta.url), "utf8");
+const verifyPublic = await readFile(new URL("../../scripts/verify-public-hosting-dist.mjs", import.meta.url), "utf8");
 
 test("Hosting admin usa target próprio e staging allowlist", () => {
   assert.equal(Array.isArray(firebase.hosting), true);
@@ -30,14 +32,28 @@ test("Hosting admin usa target próprio e staging allowlist", () => {
   assert.equal(existsSync(new URL("../../CNAME", import.meta.url)), false);
 });
 
-test("Hosting encaminha somente API/health para a Function v2 correta", () => {
-  const rewrites = firebase.hosting.find(item => item.target === "admin").rewrites;
-  assert.deepEqual(rewrites.map(item => item.source), ["/api/**", "/health"]);
+test("Hosting público usa target próprio como gateway mínimo da API", () => {
+  const publicHosting = firebase.hosting.find(item => item.target === "public");
+  assert.ok(publicHosting);
+  assert.deepEqual(rc.targets["guiasys-licensing"].hosting.public, ["guiasys-licensing"]);
+  assert.equal(publicHosting.public, ".hosting-public-dist");
+  assert.ok(publicHosting.predeploy.some(command => command.includes("prepare-public-hosting.mjs")));
+  assert.ok(publicHosting.predeploy.some(command => command.includes("verify-public-hosting-dist.mjs")));
+  assert.match(preparePublic, /\.hosting-public-dist/);
+  assert.match(preparePublic, /GSL-v1/);
+  assert.match(verifyPublic, /gateway público não deve executar conteúdo ativo/);
+});
 
-  for (const rewrite of rewrites) {
-    assert.equal(rewrite.function.functionId, "licensingApi");
-    assert.equal(rewrite.function.region, "southamerica-east1");
-    assert.equal("pinTag" in rewrite.function, false);
+test("Hosting admin e público encaminham somente API/health para a Function v2 correta", () => {
+  for (const target of ["admin", "public"]) {
+    const rewrites = firebase.hosting.find(item => item.target === target).rewrites;
+    assert.deepEqual(rewrites.map(item => item.source), ["/api/**", "/health"]);
+
+    for (const rewrite of rewrites) {
+      assert.equal(rewrite.function.functionId, "licensingApi");
+      assert.equal(rewrite.function.region, "southamerica-east1");
+      assert.equal("pinTag" in rewrite.function, false);
+    }
   }
 });
 
@@ -89,9 +105,11 @@ test("emulador Hosting usa porta conhecida para smoke local", () => {
 
 
 test("Hosting não usa pinTag para evitar alteração de tráfego no Cloud Run", () => {
-  const admin = firebase.hosting.find(item => item.target === "admin");
-  for (const rewrite of admin.rewrites) {
-    assert.equal("pinTag" in rewrite.function, false);
+  for (const target of ["admin", "public"]) {
+    const hosting = firebase.hosting.find(item => item.target === target);
+    for (const rewrite of hosting.rewrites) {
+      assert.equal("pinTag" in rewrite.function, false);
+    }
   }
 });
 
