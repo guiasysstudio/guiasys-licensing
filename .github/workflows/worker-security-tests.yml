@@ -13,7 +13,6 @@ on:
       - "assets/js/entitlement-verifier.js"
       - "index.html"
       - ".github/workflows/worker-security-tests.yml"
-      - ".github/workflows/firebase-production-deploy.yml"
   pull_request:
     branches:
       - main
@@ -25,7 +24,6 @@ on:
       - "assets/js/entitlement-verifier.js"
       - "index.html"
       - ".github/workflows/worker-security-tests.yml"
-      - ".github/workflows/firebase-production-deploy.yml"
 
 permissions:
   contents: read
