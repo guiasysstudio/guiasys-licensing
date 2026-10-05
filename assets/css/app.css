@@ -1574,8 +1574,12 @@ button:disabled {
   font-size: 11px;
   line-height: 1;
   cursor: help;
-  outline: 0;
   user-select: none;
+}
+
+.help-tip:focus-visible {
+  outline: 3px solid rgba(147, 197, 253, 0.9);
+  outline-offset: 2px;
 }
 
 .help-tip:hover,
