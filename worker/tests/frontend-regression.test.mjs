@@ -133,6 +133,8 @@ test("manageProjects possui ações de arquivar e restaurar fora das configuraç
   assert.match(source, /method: "DELETE"/);
   assert.match(source, /restore-project/);
   assert.match(source, /JSON\.stringify\(\{ status: "active" \}\)/);
+  assert.match(source, /hasPermission\("manageProjects"\)[\s\S]*?id="archive-project"/);
+  assert.match(source, /#archive-project"\)\?\.addEventListener/);
 });
 
 test("texto publicado referencia API/backend e não chama o runtime principal de Worker", () => {
