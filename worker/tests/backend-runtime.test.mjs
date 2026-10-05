@@ -17,6 +17,7 @@ test("backend Firebase usa Node 22 e SDKs suportados", () => {
   assert.equal(packageJson.main, "src/firebase-entry.js");
   assert.match(packageJson.dependencies["firebase-admin"], /^14\./);
   assert.match(packageJson.dependencies["firebase-functions"], /^7\./);
+  assert.equal(packageJson.overrides?.["gaxios@6.7.1"]?.uuid, "11.1.1");
 });
 
 test("firebase.json registra codebase Functions v2 no diretório do backend", () => {
