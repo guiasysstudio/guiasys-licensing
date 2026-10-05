@@ -437,6 +437,7 @@ button:disabled {
 
 .sidebar-footer {
   margin-top: auto;
+  flex: 0 0 auto;
   border-top: 1px solid var(--line);
   padding: 16px 8px 0;
 }
@@ -484,6 +485,10 @@ button:disabled {
   border-bottom: 1px solid var(--line);
   background: rgba(7, 17, 31, 0.84);
   backdrop-filter: blur(18px);
+}
+
+.topbar > * {
+  min-width: 0;
 }
 
 .project-switcher-wrap {
@@ -1025,6 +1030,12 @@ button:disabled {
 .data-table-wrap {
   width: 100%;
   overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: stable;
+}
+
+.data-table-wrap:focus-visible {
+  outline-offset: 4px;
 }
 
 .data-table {
@@ -1991,5 +2002,33 @@ button:disabled {
 
   .integration-code-card .btn {
     width: 100%;
+  }
+}
+
+
+/* ===== C09 — acessibilidade e preferências de movimento ===== */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .spinner {
+    animation: none !important;
+    border-color: rgba(148, 163, 184, 0.35);
+    border-top-color: var(--primary);
+  }
+
+  .btn:hover {
+    transform: none;
   }
 }
