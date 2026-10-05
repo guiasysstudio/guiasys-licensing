@@ -20,7 +20,7 @@ function element(tag, className, text) {
 function safeHttpsUrl(value) {
   try {
     const url = new URL(String(value || ""));
-    return url.protocol === "https:" ? url.href : "";
+    return url.protocol === "https:" && !url.username && !url.password ? url.href : "";
   } catch {
     return "";
   }
