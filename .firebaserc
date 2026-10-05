@@ -1,5 +1,14 @@
 {
   "projects": {
     "default": "guiasys-licensing"
+  },
+  "targets": {
+    "guiasys-licensing": {
+      "hosting": {
+        "admin": [
+          "guiasys-licensing-admin"
+        ]
+      }
+    }
   }
 }
