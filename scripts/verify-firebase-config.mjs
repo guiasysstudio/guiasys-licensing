@@ -105,7 +105,8 @@ const requiredSecurityHeaders = [
   "Referrer-Policy",
   "Permissions-Policy",
   "Cross-Origin-Opener-Policy",
-  "Strict-Transport-Security"
+  "Strict-Transport-Security",
+  "Content-Security-Policy"
 ];
 for (const header of requiredSecurityHeaders) {
   if (!globalHeaders.some(item => item?.key === header && String(item?.value || "").trim())) {
