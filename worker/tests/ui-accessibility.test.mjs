@@ -123,3 +123,7 @@ test("cliente não mantém cabeçalho duplicado e modais têm foco programático
 test("workflow de segurança também dispara para alterações exclusivas de CSS", () => {
   assert.ok((workflow.match(/assets\/css\/app\.css/g) || []).length >= 2);
 });
+
+test("ações de projeto podem quebrar linha sem overflow em telas estreitas", () => {
+  assert.match(css, /\.project-actions\s*\{[\s\S]*?flex-wrap:\s*wrap/);
+});
