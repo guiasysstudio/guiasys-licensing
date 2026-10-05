@@ -12,6 +12,7 @@
 - Desativações administrativas de dispositivos também entram no histórico técnico de ativações.
 - Updates administrativos rejeitam nomes vazios e identificadores de projeto inválidos.
 - Contrato de integração usa `https://licencas.guiasys.online` como API pública, mantendo o painel administrativo same-origin.
+- Target `public` passa a ser versionado como gateway mínimo da API GSL-v1, sem publicar o painel nem depender do Worker legado.
 - Hosting administrativo ganha Content-Security-Policy e revalidação imediata dos assets após deploy.
 - Adicionado smoke test não destrutivo para painel, health, headers e catálogo público.
 - CI e documentação foram limpos de referências antigas ao workflow de deploy de produção e atualizados para o fluxo Firebase CLI local.
