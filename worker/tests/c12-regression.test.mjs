@@ -909,3 +909,60 @@ test("desativação administrativa também entra no histórico de ativações", 
   assert.equal(activations[0].source, "admin");
   assert.equal(activations[0].deviceHash, deviceHash);
 });
+
+
+test("emissão administrativa é idempotente para integrações de venda", async () => {
+  const customerId = "cus_0123456789abcdefabcd";
+  const services = memoryServices({
+    [`projects/${PROJECT_ID}`]: {
+      name: "Projeto Teste",
+      prefix: "GSS",
+      status: "active"
+    },
+    [`projects/${PROJECT_ID}/customers/${customerId}`]: {
+      name: "Cliente",
+      email: "cliente@example.com",
+      status: "active"
+    }
+  });
+  const env = authenticatedEnv(services);
+
+  const path = `/api/v1/admin/projects/${PROJECT_ID}/licenses`;
+  const payload = {
+    customerId,
+    planName: "Personalizada",
+    durationDays: 30,
+    maxDevices: 1,
+    startMode: "first_activation",
+    idempotencyKey: "order-c12-0001",
+    source: "portal",
+    externalOrderId: "pedido-0001"
+  };
+
+  const first = await handleRequest(jsonRequest(path, "POST", payload), env);
+  assert.equal(first.status, 201);
+  const firstBody = await first.json();
+  assert.equal(firstBody.license.idempotentReplay, false);
+
+  const replay = await handleRequest(jsonRequest(path, "POST", payload), env);
+  assert.equal(replay.status, 201);
+  const replayBody = await replay.json();
+  assert.equal(replayBody.license.idempotentReplay, true);
+  assert.equal(replayBody.license.id, firstBody.license.id);
+  assert.equal(replayBody.license.key, firstBody.license.key);
+
+  const licensePaths = [...services.store.keys()]
+    .filter(key => key.startsWith(`projects/${PROJECT_ID}/licenses/`));
+  assert.equal(licensePaths.length, 1);
+
+  const conflict = await handleRequest(
+    jsonRequest(path, "POST", { ...payload, durationDays: 60 }),
+    env
+  );
+  assert.equal(conflict.status, 409);
+  assert.equal((await conflict.json()).error, "idempotency_conflict");
+  assert.equal(
+    [...services.store.keys()].filter(key => key.startsWith(`projects/${PROJECT_ID}/licenses/`)).length,
+    1
+  );
+});
