@@ -13,4 +13,5 @@ firestore-debug.log*
 storage-debug.log*
 ui-debug.log*
 .hosting-dist/
+.hosting-admin-dist/
 gha-creds-*.json
