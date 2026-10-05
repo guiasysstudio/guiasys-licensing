@@ -1,11 +1,14 @@
 import {
   assertAdminId,
+  assertCommerceId,
   assertEntityId,
   assertFirestorePath,
   assertProjectId,
   assertSafePathSegment,
   decodeAdminPathSegments
 } from "./security.js";
+import { assertCents, moneyToCents, transitionOrderStatus } from "./commerce-policy.js";
+import { issueLicenseInTransaction } from "./license-service.js";
 import { fetchWithTimeout } from "./network.js";
 import { createFirestoreAtomicClient } from "./firestore-atomic.js";
 import {
@@ -30,11 +33,13 @@ import {
   validateCustomerPayload,
   validateLicenseActionPayload,
   validateLicenseCreatePayload,
+  validateOrderCreatePayload,
   validatePlanPayload,
   validateProjectPayload,
   validatePublicLicensePayload,
   validatePublicProjectPayload,
-  validatePublicTrialPayload
+  validatePublicTrialPayload,
+  validateRenewalOrderPayload
 } from "./validation.js";
 
 // GuiaSys Licensing API — runtime principal em Firebase Functions v2; Worker legado somente para rollback
@@ -74,6 +79,9 @@ const DEFAULT_ADMIN_PERMISSIONS = {
   manageDevices: false,
   viewActivations: false,
   viewLogs: false,
+  viewOrders: false,
+  manageOrders: false,
+  viewPayments: false,
   manageProjectSettings: false,
   managePlatformSettings: false
 };
@@ -517,7 +525,7 @@ async function resolveAdminIdentity(env, baseUser) {
   return { adminId, record };
 }
 
-async function requireAdmin(request, env) {
+async function requireFirebaseUser(request, env) {
   const token = bearerToken(request);
   if (!token) {
     return { ok: false, status: 401, error: "authentication_required", message: "Autenticação Firebase obrigatória." };
@@ -539,7 +547,22 @@ async function requireAdmin(request, env) {
       signInProvider: String(user.firebase?.sign_in_provider || "")
     };
 
-    if (user.sub === env.ADMIN_FIREBASE_UID) {
+    return { ok: true, user: baseUser };
+  } catch (error) {
+    if (Number(error?.status) >= 500) {
+      return { ok: false, status: Number(error.status), error: error.reason || "auth_unavailable", message: "Serviço de autenticação temporariamente indisponível." };
+    }
+    return { ok: false, status: 401, error: error.reason || "invalid_token", message: error.message };
+  }
+}
+
+async function requireAdmin(request, env) {
+  const auth = await requireFirebaseUser(request, env);
+  if (!auth.ok) return auth;
+
+  try {
+    const baseUser = auth.user;
+    if (baseUser.uid === env.ADMIN_FIREBASE_UID) {
       return {
         ok: true,
         user: {
@@ -1477,6 +1500,7 @@ async function createPlan(env, projectId, body, admin) {
       name,
       description: String(body.description || "").trim(),
       price: Math.max(0, Number(body.price || 0)),
+      priceCents: moneyToCents(body.price || 0),
       durationDays: lifetime ? 0 : requestedDurationDays,
       lifetime,
       deviceLimit: Math.max(1, Number(body.deviceLimit || 1)),
@@ -1638,80 +1662,44 @@ async function createLicense(env, projectId, body, admin) {
 
     const id = randomId("lic");
     const createdAt = nowIso();
-    const lifetime = plan ? Boolean(plan.lifetime) : Boolean(body.lifetime);
-    const durationDays = lifetime
-      ? 0
-      : Math.max(1, Number(plan ? plan.durationDays : (body.durationDays || 30)));
-    const maxDevices = Math.max(1, Number(plan ? plan.deviceLimit : (body.maxDevices || 1)));
-    const requestedStartMode = plan ? plan.startMode : body.startMode;
-    const startMode = ["first_activation", "immediate"].includes(requestedStartMode)
-      ? requestedStartMode
-      : "first_activation";
-    const key = generateLicenseKey(project.prefix);
-
-    let activatedAt = null;
-    let expiresAt = null;
-    let status = "pending";
-
-    if (startMode === "immediate") {
-      activatedAt = createdAt;
-      expiresAt = lifetime ? null : plusDays(createdAt, durationDays);
-      status = "active";
-    }
-
-    const license = {
-      key,
+    const selectedPlan = plan || {
+      id: "",
+      name: String(body.planName || "Personalizada"),
+      lifetime: Boolean(body.lifetime),
+      durationDays: body.durationDays || 30,
+      deviceLimit: body.maxDevices || 1,
+      startMode: body.startMode || "first_activation"
+    };
+    const result = await issueLicenseInTransaction({
+      tx,
+      project,
+      projectId,
+      customer,
       customerId,
-      customerName: customer.name,
-      customerEmail: customer.email,
-      planId: plan?.id || "",
-      planName: plan?.name || String(body.planName || "Personalizada"),
-      durationDays,
-      renewalDaysTotal: 0,
-      renewalCount: 0,
-      lifetime,
-      maxDevices,
-      startMode,
-      status,
-      activatedAt,
-      expiresAt,
+      plan: selectedPlan,
+      now: createdAt,
       source: String(body.source || "admin"),
       externalOrderId: String(body.externalOrderId || ""),
-      notes: String(body.notes || "").trim(),
-      createdAt,
-      updatedAt: createdAt
-    };
-
-    const lookupId = await sha256Hex(normalizeLicenseKey(key));
-    tx.create(`${entityPath(projectId, "licenses")}/${id}`, license);
-    tx.create(`projects/${projectId}/licenseKeys/${lookupId}`, {
-      licenseId: id,
-      createdAt
+      notes: body.notes,
+      id,
+      key: generateLicenseKey(project.prefix),
+      hashLicenseKey: value => sha256Hex(normalizeLicenseKey(value)),
+      plusDays,
+      queueLog: queueLogInTransaction,
+      actor: admin?.email || admin?.uid || "admin"
     });
 
     if (idempotencyPath) {
       tx.create(idempotencyPath, {
         licenseId: id,
         requestHash,
-        source: license.source,
-        externalOrderId: license.externalOrderId,
+        source: result.source,
+        externalOrderId: result.externalOrderId,
         createdAt
       });
     }
 
-    queueLogInTransaction(tx, projectId, "license.created", {
-      licenseId: id,
-      customerId,
-      planId: plan?.id || null,
-      lifetime,
-      durationDays,
-      maxDevices,
-      source: license.source,
-      externalOrderId: license.externalOrderId || null,
-      idempotent: Boolean(idempotencyPath)
-    }, admin?.email || admin?.uid || license.source || "system", createdAt);
-
-    return { id, ...license, idempotentReplay: false };
+    return { ...result, idempotentReplay: false };
   });
 }
 
@@ -1728,7 +1716,10 @@ async function updateEntity(env, projectId, entity, id, body, admin) {
     }
 
     if (entity === "plans") {
-      if ("price" in clean) clean.price = Math.max(0, Number(clean.price || 0));
+      if ("price" in clean) {
+        clean.price = Math.max(0, Number(clean.price || 0));
+        clean.priceCents = moneyToCents(clean.price);
+      }
       if ("deviceLimit" in clean) clean.deviceLimit = Math.max(1, Number(clean.deviceLimit || 1));
       if ("startMode" in clean && !["first_activation", "immediate"].includes(clean.startMode)) {
         clean.startMode = "first_activation";
@@ -2599,11 +2590,12 @@ function catalogImageUrl(value) {
 }
 
 function publicCatalogPlanView(plan) {
+  const priceCents = planPriceCents(plan);
   return {
     id: plan.id,
     name: plan.name,
     description: plan.description || "",
-    price: catalogNonNegativeNumber(plan.price),
+    price: priceCents / 100,
     durationDays: catalogNonNegativeNumber(plan.durationDays),
     lifetime: Boolean(plan.lifetime),
     deviceLimit: Math.max(1, catalogNonNegativeNumber(plan.deviceLimit, 1)),
@@ -2649,6 +2641,387 @@ async function publicCatalog(env) {
   for (const project of projects) items.push(await catalogProjectCandidate(env, project));
   items.sort((a, b) => compareCatalogItems(a, b, "projectId"));
   return { protocolVersion: PROTOCOL_VERSION, projects: items, serverTime: nowIso() };
+}
+
+function customerAccountView(account) {
+  return {
+    accountId: account.id || account.accountId,
+    email: account.email || "",
+    emailVerified: Boolean(account.emailVerified),
+    displayName: account.displayName || "",
+    phone: account.phone || "",
+    status: account.status || "active",
+    createdAt: account.createdAt,
+    updatedAt: account.updatedAt
+  };
+}
+
+function customerOrderView(order) {
+  const { firebaseUid: _uid, idempotencyKey: _key, ...safe } = order;
+  return safe;
+}
+
+async function ensureCustomerAccount(env, user) {
+  if (!user.email || !user.emailVerified) {
+    throw Object.assign(new Error("Confirme seu e-mail antes de realizar compras."), {
+      status: 403,
+      reason: "verified_email_required"
+    });
+  }
+  const accountId = `acct_${(await sha256Hex(user.uid)).slice(0, 20)}`;
+  return await atomicClient(env).runTransaction(async tx => {
+    const path = `customerAccounts/${accountId}`;
+    const current = await tx.get(path);
+    if (current && current.firebaseUid !== user.uid) {
+      throw Object.assign(new Error("Identidade global inconsistente."), { status: 403, reason: "account_identity_mismatch" });
+    }
+    if (current?.status === "blocked") {
+      throw Object.assign(new Error("Esta conta está bloqueada para compras."), { status: 403, reason: "account_blocked" });
+    }
+    const now = nowIso();
+    const account = {
+      accountId,
+      firebaseUid: user.uid,
+      email: String(user.email).toLowerCase(),
+      emailVerified: true,
+      displayName: user.name || current?.displayName || "",
+      phone: current?.phone || "",
+      status: current?.status || "active",
+      createdAt: current?.createdAt || now,
+      updatedAt: now
+    };
+    current ? tx.set(path, account) : tx.create(path, account);
+    return { id: accountId, ...account };
+  });
+}
+
+async function projectCustomerIdentity(accountId, projectId) {
+  return `cus_${(await sha256Hex(`${accountId}|${projectId}`)).slice(0, 20)}`;
+}
+
+async function ensureProjectCustomerInTransaction(tx, account, projectId, now) {
+  const mappingPath = `customerAccounts/${account.id}/projectCustomers/${projectId}`;
+  const mapping = await tx.get(mappingPath);
+  const customerId = mapping?.customerId || await projectCustomerIdentity(account.id, projectId);
+  const customerPath = `projects/${projectId}/customers/${customerId}`;
+  const customer = await tx.get(customerPath);
+  if (mapping && mapping.customerId !== customerId) {
+    throw Object.assign(new Error("Vínculo de cliente inconsistente."), { status: 500, reason: "customer_mapping_inconsistent" });
+  }
+  const record = customer || {
+    name: account.displayName || account.email,
+    email: account.email,
+    phone: account.phone || "",
+    notes: "Criado automaticamente pelo comércio.",
+    status: "active",
+    accountId: account.id,
+    createdAt: now,
+    updatedAt: now
+  };
+  if (customer?.accountId && customer.accountId !== account.id) {
+    throw Object.assign(new Error("Cliente de projeto pertence a outra conta."), { status: 403, reason: "customer_ownership_mismatch" });
+  }
+  if (!customer) tx.create(customerPath, record);
+  if (!mapping) tx.create(mappingPath, { projectId, customerId, createdAt: now, updatedAt: now });
+  return { id: customerId, ...record };
+}
+
+function planPriceCents(plan) {
+  const cents = Number.isSafeInteger(plan.priceCents) && plan.priceCents >= 0
+    ? plan.priceCents
+    : moneyToCents(plan.price);
+  return assertCents(cents, "unitPriceCents");
+}
+
+function canonicalPlanPriceInTransaction(tx, path, plan) {
+  const cents = planPriceCents(plan);
+  if (!Number.isSafeInteger(plan.priceCents) || plan.priceCents < 0) {
+    const { id: _id, ...storedPlan } = plan;
+    tx.set(path, { ...storedPlan, priceCents: cents });
+  }
+  return cents;
+}
+
+async function buildNewOrderItem(tx, input) {
+  const project = await tx.get(`projects/${input.projectId}`);
+  if (!project || project.status !== "active" || project.publicCatalog !== true) {
+    throw Object.assign(new Error("Produto indisponível para compra."), { status: 409, reason: "project_not_purchasable" });
+  }
+  const planPath = `projects/${input.projectId}/plans/${input.planId}`;
+  const plan = await tx.get(planPath);
+  if (!plan) throw Object.assign(new Error("Plano não encontrado."), { status: 404, reason: "plan_not_found" });
+  if (plan.active === false || plan.publicCatalog !== true) {
+    throw Object.assign(new Error("Plano indisponível para compra."), { status: 409, reason: "plan_not_purchasable" });
+  }
+  const unitPriceCents = canonicalPlanPriceInTransaction(tx, planPath, plan);
+  return {
+    type: "new_license",
+    projectId: input.projectId,
+    planId: input.planId,
+    projectNameSnapshot: project.name || "Produto GuiaSys",
+    planNameSnapshot: plan.name || "Plano",
+    unitPriceCents,
+    quantity: input.quantity,
+    durationDaysSnapshot: Boolean(plan.lifetime) ? 0 : Math.max(1, Number(plan.durationDays || 30)),
+    lifetimeSnapshot: Boolean(plan.lifetime),
+    deviceLimitSnapshot: Math.max(1, Number(plan.deviceLimit || 1)),
+    startModeSnapshot: plan.startMode === "immediate" ? "immediate" : "first_activation",
+    lineTotalCents: unitPriceCents * input.quantity
+  };
+}
+
+async function createCustomerOrder(env, account, rawBody) {
+  const body = validateOrderCreatePayload(rawBody);
+  const idempotencyHash = await sha256Hex(body.idempotencyKey);
+  const requestHash = await sha256Hex(JSON.stringify(body.items));
+  return await atomicClient(env).runTransaction(async tx => {
+    const requestPath = `customerAccounts/${account.id}/orderRequests/${idempotencyHash}`;
+    const replay = await tx.get(requestPath);
+    if (replay) {
+      if (replay.requestHash !== requestHash) {
+        throw Object.assign(new Error("A chave de idempotência já foi usada com outro pedido."), { status: 409, reason: "idempotency_conflict" });
+      }
+      const existing = await tx.get(`orders/${assertCommerceId("orders", replay.orderId)}`);
+      if (!existing || existing.accountId !== account.id) {
+        throw Object.assign(new Error("Registro idempotente inconsistente."), { status: 500, reason: "idempotency_orphan" });
+      }
+      return { ...customerOrderView(existing), idempotentReplay: true };
+    }
+
+    const items = [];
+    for (const input of body.items) items.push(await buildNewOrderItem(tx, input));
+    const subtotalCents = items.reduce((sum, item) => sum + item.lineTotalCents, 0);
+    assertCents(subtotalCents, "subtotalCents");
+    const orderId = randomId("ord");
+    const now = nowIso();
+    const order = {
+      orderId,
+      accountId: account.id,
+      firebaseUid: account.firebaseUid,
+      status: "pending_payment",
+      currency: "BRL",
+      subtotalCents,
+      totalCents: subtotalCents,
+      items,
+      provider: "pagbank",
+      providerOrderId: "",
+      paymentStatus: "pending",
+      processingStatus: "pending",
+      fulfillmentStatus: "pending",
+      idempotencyKey: body.idempotencyKey,
+      resultingLicenses: [],
+      createdAt: now,
+      updatedAt: now,
+      paidAt: null,
+      cancelledAt: null
+    };
+    tx.create(`orders/${orderId}`, order);
+    tx.create(`customerAccounts/${account.id}/orders/${orderId}`, { orderId, createdAt: now });
+    tx.create(requestPath, { orderId, requestHash, createdAt: now });
+    queuePlatformLogInTransaction(tx, "order.created", { orderId, accountId: account.id, totalCents: subtotalCents, itemCount: items.length }, account.email, now);
+    return { ...customerOrderView(order), idempotentReplay: false };
+  });
+}
+
+async function getOwnedOrder(env, accountId, orderId) {
+  orderId = assertCommerceId("orders", orderId);
+  const reference = await getDoc(env, `customerAccounts/${accountId}/orders/${orderId}`);
+  const order = reference ? await getDoc(env, `orders/${orderId}`) : null;
+  if (!order || order.accountId !== accountId) {
+    throw Object.assign(new Error("Pedido não encontrado."), { status: 404, reason: "order_not_found" });
+  }
+  return customerOrderView(order);
+}
+
+async function listOwnedOrders(env, accountId) {
+  const refs = await listCollection(env, `customerAccounts/${accountId}/orders`);
+  const orders = [];
+  for (const ref of refs.slice(0, 100)) {
+    const order = await getDoc(env, `orders/${assertCommerceId("orders", ref.orderId || ref.id)}`);
+    if (order?.accountId === accountId) orders.push(customerOrderView(order));
+  }
+  return orders.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+async function cancelOwnedOrder(env, accountId, orderId, actor) {
+  orderId = assertCommerceId("orders", orderId);
+  return await atomicClient(env).runTransaction(async tx => {
+    const order = await tx.get(`orders/${orderId}`);
+    const reference = await tx.get(`customerAccounts/${accountId}/orders/${orderId}`);
+    if (!order || !reference || order.accountId !== accountId) {
+      throw Object.assign(new Error("Pedido não encontrado."), { status: 404, reason: "order_not_found" });
+    }
+    if (!["pending_payment", "payment_failed"].includes(order.status)) {
+      throw Object.assign(new Error("Somente pedidos não pagos podem ser cancelados."), { status: 409, reason: "order_not_cancellable" });
+    }
+    transitionOrderStatus(order.status, "cancelled");
+    const now = nowIso();
+    const next = { ...order, status: "cancelled", paymentStatus: "cancelled", processingStatus: "cancelled", cancelledAt: now, updatedAt: now };
+    tx.set(`orders/${orderId}`, next);
+    queuePlatformLogInTransaction(tx, "order.cancelled", { orderId, accountId }, actor, now);
+    return customerOrderView(next);
+  });
+}
+
+async function listOwnedLicenses(env, accountId) {
+  const refs = await listCollection(env, `customerAccounts/${accountId}/licenses`);
+  const result = [];
+  for (const ref of refs.slice(0, 200)) {
+    const projectId = assertProjectId(ref.projectId);
+    const licenseId = assertEntityId("licenses", ref.licenseId || ref.id);
+    const license = await getDoc(env, `projects/${projectId}/licenses/${licenseId}`);
+    if (license?.accountId === accountId) result.push(normalizeLicenseStatus({ id: licenseId, projectId, ...license }));
+  }
+  return result.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+async function createRenewalOrder(env, account, licenseId, rawBody) {
+  licenseId = assertEntityId("licenses", licenseId);
+  const body = validateRenewalOrderPayload(rawBody);
+  const owned = await getDoc(env, `customerAccounts/${account.id}/licenses/${licenseId}`);
+  if (!owned) throw Object.assign(new Error("Licença não encontrada."), { status: 404, reason: "license_not_found" });
+  const projectId = assertProjectId(owned.projectId);
+  const idempotencyHash = await sha256Hex(body.idempotencyKey);
+  const requestHash = await sha256Hex(JSON.stringify({ projectId, licenseId, planId: body.planId }));
+  return await atomicClient(env).runTransaction(async tx => {
+    const requestPath = `customerAccounts/${account.id}/orderRequests/${idempotencyHash}`;
+    const replay = await tx.get(requestPath);
+    if (replay) {
+      if (replay.requestHash !== requestHash) throw Object.assign(new Error("A chave de idempotência já foi usada com outro pedido."), { status: 409, reason: "idempotency_conflict" });
+      const existing = await tx.get(`orders/${assertCommerceId("orders", replay.orderId)}`);
+      return { ...customerOrderView(existing), idempotentReplay: true };
+    }
+    const license = await tx.get(`projects/${projectId}/licenses/${licenseId}`);
+    if (!license || license.accountId !== account.id) throw Object.assign(new Error("Licença não encontrada."), { status: 404, reason: "license_not_found" });
+    if (license.status === "revoked") throw Object.assign(new Error("Licença revogada não pode ser renovada."), { status: 409, reason: "license_revoked" });
+    if (license.lifetime) throw Object.assign(new Error("Licença vitalícia não precisa de renovação."), { status: 409, reason: "license_lifetime" });
+    const project = await tx.get(`projects/${projectId}`);
+    const planPath = `projects/${projectId}/plans/${body.planId}`;
+    const plan = await tx.get(planPath);
+    if (!project || project.status !== "active" || project.publicCatalog !== true || !plan || plan.active === false || plan.publicCatalog !== true) {
+      throw Object.assign(new Error("Oferta de renovação indisponível."), { status: 409, reason: "renewal_plan_not_purchasable" });
+    }
+    const unitPriceCents = canonicalPlanPriceInTransaction(tx, planPath, plan);
+    const item = {
+      type: "renewal", projectId, planId: body.planId, licenseId,
+      projectNameSnapshot: project.name || "Produto GuiaSys", planNameSnapshot: plan.name || "Renovação",
+      unitPriceCents, quantity: 1, durationDaysSnapshot: Boolean(plan.lifetime) ? 0 : Math.max(1, Number(plan.durationDays || 30)),
+      lifetimeSnapshot: Boolean(plan.lifetime), deviceLimitSnapshot: Math.max(1, Number(plan.deviceLimit || 1)),
+      startModeSnapshot: plan.startMode === "immediate" ? "immediate" : "first_activation", lineTotalCents: unitPriceCents
+    };
+    const orderId = randomId("ord");
+    const now = nowIso();
+    const order = {
+      orderId, accountId: account.id, firebaseUid: account.firebaseUid, status: "pending_payment", currency: "BRL",
+      subtotalCents: unitPriceCents, totalCents: unitPriceCents, items: [item], provider: "pagbank", providerOrderId: "",
+      paymentStatus: "pending", processingStatus: "pending", fulfillmentStatus: "pending", idempotencyKey: body.idempotencyKey,
+      resultingLicenses: [], createdAt: now, updatedAt: now, paidAt: null, cancelledAt: null
+    };
+    tx.create(`orders/${orderId}`, order);
+    tx.create(`customerAccounts/${account.id}/orders/${orderId}`, { orderId, createdAt: now });
+    tx.create(requestPath, { orderId, requestHash, createdAt: now });
+    queuePlatformLogInTransaction(tx, "order.created", { orderId, accountId: account.id, type: "renewal", licenseId, totalCents: unitPriceCents }, account.email, now);
+    return { ...customerOrderView(order), idempotentReplay: false };
+  });
+}
+
+export async function finalizePaidOrder(env, orderId, paymentContext) {
+  orderId = assertCommerceId("orders", orderId);
+  const paymentId = assertCommerceId("payments", paymentContext?.paymentId);
+  if (paymentContext?.status !== "paid") {
+    throw Object.assign(new Error("O fulfillment exige pagamento confirmado."), { status: 409, reason: "payment_not_paid" });
+  }
+  return await atomicClient(env).runTransaction(async tx => {
+    const order = await tx.get(`orders/${orderId}`);
+    if (!order) throw Object.assign(new Error("Pedido não encontrado."), { status: 404, reason: "order_not_found" });
+    if (order.fulfillmentStatus === "fulfilled") return { order: customerOrderView(order), idempotentReplay: true };
+    if (["cancelled", "refunded"].includes(order.status)) throw Object.assign(new Error("Pedido não pode ser processado."), { status: 409, reason: "order_not_fulfillable" });
+    let fulfillmentTransition = order.status;
+    if (["pending_payment", "payment_failed"].includes(fulfillmentTransition)) fulfillmentTransition = transitionOrderStatus(fulfillmentTransition, "payment_processing");
+    if (fulfillmentTransition === "payment_processing") fulfillmentTransition = transitionOrderStatus(fulfillmentTransition, "paid");
+    if (fulfillmentTransition === "paid") fulfillmentTransition = transitionOrderStatus(fulfillmentTransition, "fulfilling");
+    transitionOrderStatus(fulfillmentTransition, "fulfilled");
+    if (paymentContext.orderId && paymentContext.orderId !== orderId) throw Object.assign(new Error("Pagamento pertence a outro pedido."), { status: 409, reason: "payment_order_mismatch" });
+    if (paymentContext.accountId && paymentContext.accountId !== order.accountId) throw Object.assign(new Error("Pagamento pertence a outra conta."), { status: 409, reason: "payment_account_mismatch" });
+    assertCents(paymentContext.amountCents, "amountCents");
+    if (paymentContext.amountCents !== order.totalCents || paymentContext.currency !== "BRL") {
+      throw Object.assign(new Error("Valor ou moeda do pagamento não confere com o pedido."), { status: 409, reason: "payment_amount_mismatch" });
+    }
+    const existingPayment = await tx.get(`payments/${paymentId}`);
+    if (existingPayment && (existingPayment.orderId !== orderId || existingPayment.status !== "paid")) {
+      throw Object.assign(new Error("Pagamento inconsistente."), { status: 409, reason: "payment_conflict" });
+    }
+    const accountRecord = await tx.get(`customerAccounts/${order.accountId}`);
+    if (!accountRecord) throw Object.assign(new Error("Conta do pedido não encontrada."), { status: 500, reason: "account_not_found" });
+    const account = { id: order.accountId, ...accountRecord };
+    const now = nowIso();
+    const results = [];
+    for (const item of order.items) {
+      const project = await tx.get(`projects/${item.projectId}`);
+      if (!project) throw Object.assign(new Error("Produto do pedido não encontrado."), { status: 409, reason: "order_snapshot_orphan" });
+      if (item.type === "new_license") {
+        const customer = await ensureProjectCustomerInTransaction(tx, account, item.projectId, now);
+        for (let index = 0; index < item.quantity; index++) {
+          const id = randomId("lic");
+          const license = await issueLicenseInTransaction({
+            tx, project, projectId: item.projectId, customer, customerId: customer.id,
+            plan: { id: item.planId, name: item.planNameSnapshot, lifetime: item.lifetimeSnapshot, durationDays: item.durationDaysSnapshot, deviceLimit: item.deviceLimitSnapshot, startMode: item.startModeSnapshot },
+            now, source: "order", externalOrderId: orderId, accountId: order.accountId, paymentId, id,
+            key: generateLicenseKey(project.prefix), hashLicenseKey: value => sha256Hex(normalizeLicenseKey(value)), plusDays,
+            queueLog: queueLogInTransaction, actor: "payment.fulfillment"
+          });
+          tx.create(`customerAccounts/${order.accountId}/licenses/${id}`, { licenseId: id, projectId: item.projectId, customerId: customer.id, orderId, paymentId, createdAt: now });
+          results.push({ type: "new_license", projectId: item.projectId, licenseId: id, key: license.key });
+        }
+      } else if (item.type === "renewal") {
+        const licensePath = `projects/${item.projectId}/licenses/${item.licenseId}`;
+        const license = await tx.get(licensePath);
+        const ownership = await tx.get(`customerAccounts/${order.accountId}/licenses/${item.licenseId}`);
+        if (!license || !ownership || license.accountId !== order.accountId) throw Object.assign(new Error("Licença de renovação não pertence à conta."), { status: 403, reason: "license_ownership_mismatch" });
+        const renewal = transitionLicense(license, "renew", item.lifetimeSnapshot ? { lifetime: true } : { days: item.durationDaysSnapshot }, now, plusDays);
+        const next = { ...renewal.license, orderId, paymentId, updatedAt: now };
+        tx.set(licensePath, next);
+        queueLogInTransaction(tx, item.projectId, "license.renewed_from_order", { licenseId: item.licenseId, orderId, paymentId, days: item.durationDaysSnapshot, lifetime: item.lifetimeSnapshot }, "payment.fulfillment", now);
+        results.push({ type: "renewal", projectId: item.projectId, licenseId: item.licenseId, key: next.key });
+      }
+    }
+    const payment = existingPayment || {
+      paymentId, orderId, accountId: order.accountId, provider: String(paymentContext.provider || "pagbank"),
+      providerPaymentId: String(paymentContext.providerPaymentId || ""), status: "paid", amountCents: order.totalCents,
+      currency: "BRL", method: String(paymentContext.method || "unknown"), createdAt: now, updatedAt: now,
+      paidAt: String(paymentContext.paidAt || now), failedAt: null, cancelledAt: null
+    };
+    existingPayment ? tx.set(`payments/${paymentId}`, { ...payment, updatedAt: now }) : tx.create(`payments/${paymentId}`, payment);
+    const fulfilled = { ...order, status: "fulfilled", paymentStatus: "paid", processingStatus: "completed", fulfillmentStatus: "fulfilled", paymentId, provider: payment.provider, providerOrderId: payment.providerPaymentId, paidAt: payment.paidAt, fulfilledAt: now, updatedAt: now, resultingLicenses: results };
+    tx.set(`orders/${orderId}`, fulfilled);
+    queuePlatformLogInTransaction(tx, "order.fulfillment_started", { orderId, paymentId }, "payment.fulfillment", now);
+    queuePlatformLogInTransaction(tx, "order.fulfilled", { orderId, paymentId, resultCount: results.length }, "payment.fulfillment", now);
+    return { order: customerOrderView(fulfilled), idempotentReplay: false };
+  });
+}
+
+async function handleCustomer(request, env, origin, url, user) {
+  const account = await ensureCustomerAccount(env, user);
+  const path = url.pathname.replace(/^\/api\/v1\/customer\/?/, "");
+  const parts = decodeAdminPathSegments(path);
+  if (parts.length === 1 && parts[0] === "me" && request.method === "GET") {
+    return json({ ok: true, account: customerAccountView(account) }, 200, origin);
+  }
+  if (parts.length === 1 && parts[0] === "orders") {
+    if (request.method === "GET") return json({ ok: true, orders: await listOwnedOrders(env, account.id) }, 200, origin);
+    if (request.method === "POST") return json({ ok: true, order: await createCustomerOrder(env, account, await readJson(request)) }, 201, origin);
+  }
+  if (parts[0] === "orders" && parts[1]) {
+    if (parts.length === 2 && request.method === "GET") return json({ ok: true, order: await getOwnedOrder(env, account.id, parts[1]) }, 200, origin);
+    if (parts.length === 3 && parts[2] === "cancel" && request.method === "POST") return json({ ok: true, order: await cancelOwnedOrder(env, account.id, parts[1], account.email) }, 200, origin);
+  }
+  if (parts.length === 1 && parts[0] === "licenses" && request.method === "GET") {
+    return json({ ok: true, licenses: await listOwnedLicenses(env, account.id) }, 200, origin);
+  }
+  if (parts.length === 3 && parts[0] === "licenses" && parts[2] === "renewal-order" && request.method === "POST") {
+    return json({ ok: true, order: await createRenewalOrder(env, account, parts[1], await readJson(request)) }, 201, origin);
+  }
+  return errorResponse(origin, 404, "not_found", "Rota do cliente não encontrada.");
 }
 
 function adminRecordView(record) {
@@ -2823,6 +3196,32 @@ async function handleAdmin(request, env, origin, url, admin) {
       return errorResponse(origin, 405, "method_not_allowed", "Use GET para esta rota.", { expectedMethods: ["GET"] });
     }
     return json({ ok: true, authorized: true, administrator: admin }, 200, origin);
+  }
+
+  if (parts[0] === "orders") {
+    requirePermission(admin, "viewOrders", "Você não possui permissão para visualizar pedidos.");
+    if (request.method !== "GET") return errorResponse(origin, 405, "method_not_allowed", "Pedidos são somente leitura no painel.", { expectedMethods: ["GET"] });
+    if (parts.length === 1) {
+      const orders = (await listCollection(env, "orders")).map(customerOrderView)
+        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      return json({ ok: true, orders: orders.slice(0, 200) }, 200, origin);
+    }
+    const order = await getDoc(env, `orders/${assertCommerceId("orders", parts[1])}`);
+    if (!order) return errorResponse(origin, 404, "order_not_found", "Pedido não encontrado.");
+    return json({ ok: true, order: customerOrderView(order) }, 200, origin);
+  }
+
+  if (parts[0] === "payments") {
+    requirePermission(admin, "viewPayments", "Você não possui permissão para visualizar pagamentos.");
+    if (request.method !== "GET") return errorResponse(origin, 405, "method_not_allowed", "Pagamentos são somente leitura no painel.", { expectedMethods: ["GET"] });
+    if (parts.length === 1) {
+      const payments = (await listCollection(env, "payments"))
+        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      return json({ ok: true, payments: payments.slice(0, 200) }, 200, origin);
+    }
+    const payment = await getDoc(env, `payments/${assertCommerceId("payments", parts[1])}`);
+    if (!payment) return errorResponse(origin, 404, "payment_not_found", "Pagamento não encontrado.");
+    return json({ ok: true, payment }, 200, origin);
   }
 
   if (parts[0] === "admins") {
@@ -3356,6 +3755,13 @@ async function routeRequest(request, env) {
         const auth = await requireAdmin(request, env);
         if (!auth.ok) return errorResponse(origin, auth.status, auth.error, auth.message);
         return await handleAdmin(request, env, origin, url, auth.user);
+      }
+
+      if (url.pathname.startsWith("/api/v1/customer/")) {
+        await enforceRateLimit(env, request, "customer-api", 180, 60);
+        const auth = await requireFirebaseUser(request, env);
+        if (!auth.ok) return errorResponse(origin, auth.status, auth.error, auth.message);
+        return await handleCustomer(request, env, origin, url, auth.user);
       }
 
       if (request.method === "POST" && url.pathname === "/api/v1/license/activate") {

@@ -11,6 +11,13 @@ const ENTITY_ID_PATTERNS = Object.freeze({
   logs: /^log_[a-f0-9]{20}$/
 });
 
+const COMMERCE_ID_PATTERNS = Object.freeze({
+  accounts: /^acct_[a-f0-9]{20}$/,
+  orders: /^ord_[a-f0-9]{20}$/,
+  payments: /^pay_[a-f0-9]{20}$/,
+  paymentEvents: /^pevt_[a-f0-9]{20}$/
+});
+
 function invalidIdentifier(label) {
   return Object.assign(new Error(`${label} inválido.`), {
     status: 400,
@@ -51,6 +58,16 @@ export function assertEntityId(entity, value) {
   const entityId = assertSafePathSegment(value, `${safeEntity}Id`);
   if (!pattern.test(entityId)) throw invalidIdentifier(`${safeEntity}Id`);
   return entityId;
+}
+
+export function assertCommerceId(entity, value) {
+  const safeEntity = assertSafePathSegment(entity, "Entidade comercial");
+  const pattern = COMMERCE_ID_PATTERNS[safeEntity];
+  if (!pattern) throw invalidIdentifier("Entidade comercial");
+
+  const id = assertSafePathSegment(value, `${safeEntity}Id`);
+  if (!pattern.test(id)) throw invalidIdentifier(`${safeEntity}Id`);
+  return id;
 }
 
 export function assertFirestorePath(path) {
