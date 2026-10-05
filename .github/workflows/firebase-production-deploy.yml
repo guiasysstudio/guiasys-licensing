@@ -67,12 +67,21 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
 
-      - name: Deploy Functions and Hosting
+      - name: Deploy Functions
         env:
           CI: "true"
         run: >
           npx --yes firebase-tools@15.32.1 deploy
-          --only functions:licensing,hosting
+          --only functions:licensing
+          --project guiasys-licensing
+          --non-interactive
+
+      - name: Deploy Hosting
+        env:
+          CI: "true"
+        run: >
+          npx --yes firebase-tools@15.32.1 deploy
+          --only hosting
           --project guiasys-licensing
           --non-interactive
 
