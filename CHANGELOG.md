@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.16.0 — 2026-10-05
+
+### C13 — domínio comercial e catálogo dinâmico
+- Painel atualizado para v0.16.0 e API para v2.1.0, preservando integralmente o GSL-v1.
+- `projects/{projectId}` permanece como programa/produto e `plans` como ofertas, sem coleção paralela.
+- Projetos recebem descrição curta, imagem HTTPS, destaque e ordem; planos recebem ordem de catálogo.
+- Validação estrita bloqueia URLs inseguras, preço negativo, ordem inválida e tipos coercíveis.
+- `GET /api/v1/catalog` usa projeção por allowlist, filtros de publicação/atividade e ordenação determinística.
+- Prévia autenticada no ADM mostra o payload comercial sanitizado e respeita o RBAC existente para alterações.
+- Target público passa a hospedar catálogo responsivo e acessível, com estados de loading, vazio e erro.
+- Renderização pública usa DOM seguro sem interpolação de HTML dinâmico; imagens externas são restritas a HTTPS.
+- CTA registra somente `projectId` e `planId`, sem simular checkout, pagamento ou emissão.
+- Staging público possui allowlist exclusiva de quatro arquivos e mantém rewrites `/api/**` e `/health`.
+- PagBank, pedidos, pagamentos, webhooks e emissão automática permanecem explicitamente fora do C13 e começam no C14.
+
 ## 0.15.0 — 2026-10-05
 
 ### C12 — regressão final e preparação de produção

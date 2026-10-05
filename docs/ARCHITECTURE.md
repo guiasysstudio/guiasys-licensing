@@ -7,7 +7,7 @@ Existe um único motor de licenciamento e múltiplos ambientes independentes. Ca
 ## Componentes
 
 ### Firebase Hosting
-Opera em arquitetura multi-site no mesmo projeto Firebase. O site `guiasys-licensing` funciona como gateway público da API GSL-v1 em `licencas.guiasys.online`; o site `guiasys-licensing-admin` hospeda o painel em `painel.licencas.guiasys.online`. O painel é preparado em `.hosting-admin-dist/`; o gateway público usa `.hosting-public-dist/` mínimo. Ambos reescrevem `/api/**` e `/health` para a Function `licensingApi`, enquanto o painel usa `window.location.origin` para chamadas administrativas.
+Opera em arquitetura multi-site no mesmo projeto Firebase. O site `guiasys-licensing` hospeda o catálogo comercial e funciona como gateway público da API GSL-v1 em `licencas.guiasys.online`; o site `guiasys-licensing-admin` hospeda o painel em `painel.licencas.guiasys.online`. O painel é preparado em `.hosting-admin-dist/`; o frontend público isolado é preparado em `.hosting-public-dist/`. Ambos reescrevem `/api/**` e `/health` para a Function `licensingApi`.
 
 ### Firebase Authentication
 Autentica o administrador usando Google ou e-mail/senha. O Firebase ID Token é enviado ao backend.
@@ -68,6 +68,27 @@ rateLimits/{sha256(client|bucket)}
 
 As coleções de cada projeto nunca são consultadas como dados globais pelos módulos do projeto. O dashboard global é a exceção administrativa e agrega os ambientes.
 
+## Domínio comercial e catálogo — C13
+
+`projects/{projectId}` é simultaneamente a raiz técnica de isolamento e o programa/produto comercial. `projects/{projectId}/plans/{planId}` continua sendo a oferta comercial. O C13 não introduz uma coleção `products` nem um segundo domínio de licenças.
+
+```text
+Programa/Projeto
+  -> Planos/Ofertas
+  -> Catálogo público
+  -> futuro Pedido
+  -> futuro Pagamento
+  -> futura Licença
+```
+
+Programa adiciona `shortDescription`, `imageUrl`, `featured` e `displayOrder`. Plano adiciona somente `displayOrder`. Os demais campos comerciais já existentes são preservados.
+
+O catálogo aplica uma projeção explícita por allowlist. Programa precisa ter `status == "active"` e `publicCatalog == true`; plano precisa ter `active != false` e `publicCatalog == true`. Produtos e ofertas são ordenados por `displayOrder`, nome e ID. A mesma projeção sanitizada alimenta `GET /api/v1/catalog` e a prévia autenticada do ADM.
+
+O `integrationCode` permanece no catálogo por compatibilidade deliberada com o contrato público GSL-v1. Chaves privadas, origens permitidas, permissões, clientes, logs, tokens e configurações internas não são projetados.
+
+O site em `public/` usa DOM seguro (`textContent`/`createElement`), restringe imagens a HTTPS, oferece estados de loading/vazio/erro e registra apenas `projectId`/`planId` no CTA. Não existe pagamento simulado. PagBank, pedido, pagamento e emissão automática começam no C14.
+
 
 ## Contrato de integração
 
@@ -107,7 +128,7 @@ Atualizar ou reinstalar o aplicativo não reinicia trial nem licença enquanto o
 
 ## Portal do cliente — fronteira futura
 
-O portal do cliente será uma aplicação separada. Ele poderá compartilhar Firebase Authentication e Firestore, mas Firebase Functions v2 continuará sendo a camada de autorização e regras. O catálogo público diferencia projetos e planos explicitamente disponibilizados para venda.
+O catálogo comercial público existe desde o C13, mas conta de cliente, pedidos e pagamentos continuam como módulos futuros. Eles poderão compartilhar Firebase Authentication e Firestore, mantendo Firebase Functions v2 como camada de autorização e regras.
 
 
 ## Autorização offline assinada
@@ -160,7 +181,7 @@ A autenticação administrativa no runtime Firebase usa `verifyIdToken(..., true
 
 ## Hosting e cutover — C11
 
-O target `admin` publica somente `index.html` e `assets/`, preparados por script em `.hosting-admin-dist/`. Backend, documentação, Rules e arquivos operacionais não entram no artefato administrativo. O target `public` publica apenas um placeholder estático mínimo em `.hosting-public-dist/` e os rewrites da API; ele não contém o painel nem antecipa o futuro portal de cliente.
+O target `admin` publica somente `index.html` e `assets/`, preparados por script em `.hosting-admin-dist/`. Backend, documentação, Rules e arquivos operacionais não entram no artefato administrativo. O target `public` publica somente `public/index.html`, `public/404.html` e `public/assets/` em `.hosting-public-dist/`; ele não contém o painel administrativo.
 
 Os rewrites `/api/**` e `/health` apontam para `licensingApi` em `southamerica-east1` sem `pinTag`. Functions e Hosting são implantados separadamente para que o Hosting não precise modificar tags/tráfego do serviço Cloud Run durante a finalização. O path e a query originais são preservados pelo Hosting ao encaminhar a requisição.
 

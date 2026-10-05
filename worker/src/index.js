@@ -39,7 +39,7 @@ import {
 
 // GuiaSys Licensing API — runtime principal em Firebase Functions v2; Worker legado somente para rollback
 const PROTOCOL_VERSION = "GSL-v1";
-const API_VERSION = "2.0.1";
+const API_VERSION = "2.1.0";
 const ALLOWED_ORIGINS = [
   "http://127.0.0.1:5500",
   "http://127.0.0.1:5501",
@@ -1349,8 +1349,12 @@ function projectSummaryView(project) {
     slug: project.slug || "",
     prefix: project.prefix || "",
     description: project.description || "",
+    shortDescription: project.shortDescription || "",
+    imageUrl: project.imageUrl || "",
     status: project.status || "inactive",
     publicCatalog: Boolean(project.publicCatalog),
+    featured: Boolean(project.featured),
+    displayOrder: Math.max(0, Number(project.displayOrder || 0)),
     trialEnabled: Boolean(project.trialEnabled),
     trialDays: Math.max(0, Number(project.trialDays || 0)),
     offlineDays: Math.max(0, Number(project.offlineDays || 0)),
@@ -1411,8 +1415,12 @@ async function createProject(env, body, admin) {
       prefix: normalizePrefix(body.prefix || name.slice(0, 4)) || "GSS",
       integrationCode,
       description: String(body.description || "").trim(),
+      shortDescription: String(body.shortDescription || "").trim(),
+      imageUrl: String(body.imageUrl || "").trim(),
       status: body.status === "inactive" ? "inactive" : "active",
       publicCatalog: Boolean(body.publicCatalog),
+      featured: Boolean(body.featured),
+      displayOrder: Math.max(0, Number(body.displayOrder || 0)),
       allowedOrigins: normalizeAllowedOrigins(body.allowedOrigins || []),
       trialEnabled: Boolean(body.trialEnabled ?? trialDays > 0),
       trialDays,
@@ -1475,6 +1483,7 @@ async function createPlan(env, projectId, body, admin) {
       startMode,
       active: body.active !== false,
       publicCatalog: Boolean(body.publicCatalog),
+      displayOrder: Math.max(0, Number(body.displayOrder || 0)),
       createdAt,
       updatedAt: createdAt
     };
@@ -2567,42 +2576,78 @@ async function publicTrialValidate(env, body, origin = "") {
   );
 }
 
+function compareCatalogItems(a, b, idField = "id") {
+  return (
+    a.displayOrder - b.displayOrder ||
+    String(a.name || "").localeCompare(String(b.name || ""), "pt-BR") ||
+    String(a[idField] || "").localeCompare(String(b[idField] || ""))
+  );
+}
+
+function catalogNonNegativeNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : fallback;
+}
+
+function catalogImageUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "https:" && !url.username && !url.password ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function publicCatalogPlanView(plan) {
+  return {
+    id: plan.id,
+    name: plan.name,
+    description: plan.description || "",
+    price: catalogNonNegativeNumber(plan.price),
+    durationDays: catalogNonNegativeNumber(plan.durationDays),
+    lifetime: Boolean(plan.lifetime),
+    deviceLimit: Math.max(1, catalogNonNegativeNumber(plan.deviceLimit, 1)),
+    startMode: plan.startMode || "first_activation",
+    displayOrder: catalogNonNegativeNumber(plan.displayOrder)
+  };
+}
+
+function publicCatalogProjectView(project, plans) {
+  return {
+    projectId: project.id,
+    integrationCode: project.integrationCode,
+    name: project.name,
+    slug: project.slug,
+    prefix: project.prefix,
+    description: project.description || "",
+    shortDescription: project.shortDescription || "",
+    imageUrl: catalogImageUrl(project.imageUrl),
+    featured: Boolean(project.featured),
+    displayOrder: catalogNonNegativeNumber(project.displayOrder),
+    trial: {
+      enabled: Boolean(project.trialEnabled && Number(project.trialDays || 0) > 0),
+      days: catalogNonNegativeNumber(project.trialDays)
+    },
+    plans
+  };
+}
+
+async function catalogProjectCandidate(env, project) {
+  project = await ensureProjectIntegrationCode(env, project);
+  const plans = (await listCollection(env, `projects/${project.id}/plans`))
+    .filter(plan => plan.active !== false && plan.publicCatalog === true)
+    .map(publicCatalogPlanView)
+    .sort((a, b) => compareCatalogItems(a, b));
+  return publicCatalogProjectView(project, plans);
+}
+
 async function publicCatalog(env) {
   const projects = (await listCollection(env, "projects"))
     .filter(project => project.status === "active" && project.publicCatalog === true);
 
   const items = [];
-  for (let project of projects) {
-    project = await ensureProjectIntegrationCode(env, project);
-    const plans = (await listCollection(env, `projects/${project.id}/plans`))
-      .filter(plan => plan.active !== false && plan.publicCatalog === true)
-      .map(plan => ({
-        id: plan.id,
-        name: plan.name,
-        description: plan.description || "",
-        price: Number(plan.price || 0),
-        durationDays: Number(plan.durationDays || 0),
-        lifetime: Boolean(plan.lifetime),
-        deviceLimit: Number(plan.deviceLimit || 1),
-        startMode: plan.startMode || "first_activation"
-      }));
-
-    items.push({
-      projectId: project.id,
-      integrationCode: project.integrationCode,
-      name: project.name,
-      slug: project.slug,
-      prefix: project.prefix,
-      description: project.description || "",
-      trial: {
-        enabled: Boolean(project.trialEnabled && Number(project.trialDays || 0) > 0),
-        days: Number(project.trialDays || 0)
-      },
-      plans
-    });
-  }
-
-  items.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  for (const project of projects) items.push(await catalogProjectCandidate(env, project));
+  items.sort((a, b) => compareCatalogItems(a, b, "projectId"));
   return { protocolVersion: PROTOCOL_VERSION, projects: items, serverTime: nowIso() };
 }
 
@@ -2880,6 +2925,21 @@ async function handleAdmin(request, env, origin, url, admin) {
     }
 
     requireProjectAccess(admin, projectId);
+
+    if (parts.length === 3 && parts[2] === "catalog-preview") {
+      if (method !== "GET") {
+        return errorResponse(origin, 405, "method_not_allowed", "Use GET para esta rota.", { expectedMethods: ["GET"] });
+      }
+      const rawProject = await getDoc(env, projectPath(projectId));
+      const candidate = await catalogProjectCandidate(env, rawProject);
+      return json({
+        ok: true,
+        preview: {
+          published: rawProject.status === "active" && rawProject.publicCatalog === true,
+          project: candidate
+        }
+      }, 200, origin);
+    }
 
     if (parts.length === 2) {
       if (method === "GET") {

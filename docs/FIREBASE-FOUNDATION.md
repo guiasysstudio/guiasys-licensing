@@ -1,4 +1,4 @@
-# Firebase Foundation — estado de produção após C11
+# Firebase Foundation — configuração versionada após C13
 
 Projeto Firebase: `guiasys-licensing`.
 
@@ -28,10 +28,18 @@ O runtime Firebase usa as credenciais nativas da service account da Function. N�
 
 Targets versionados em `.firebaserc`:
 
-- `public` -> `guiasys-licensing`, gateway público GSL-v1 em `licencas.guiasys.online`;
+- `public` -> `guiasys-licensing`, catálogo comercial e gateway público GSL-v1 em `licencas.guiasys.online`;
 - `admin` -> `guiasys-licensing-admin`, painel em `painel.licencas.guiasys.online`.
 
-Enquanto o portal de cliente ainda não foi desenvolvido, o target `public` publica apenas um staging mínimo (`.hosting-public-dist/`) e encaminha `/api/**` e `/health` para a Function. Nenhum artefato administrativo é publicado nesse site.
+O target `public` publica o staging `.hosting-public-dist/`, gerado exclusivamente de `public/index.html`, `public/404.html` e `public/assets/`, e encaminha `/api/**` e `/health` para a Function. Nenhum artefato administrativo é publicado nesse site.
+
+O frontend busca `GET /api/v1/catalog` no mesmo origin. A CSP permite scripts e estilos apenas locais, chamadas de rede same-origin e imagens HTTPS. A allowlist do staging e a ausência de APIs inseguras de renderização são verificadas antes do deploy.
+
+## Dados comerciais
+
+O C13 reutiliza `projects/{projectId}` como programa/produto e `projects/{projectId}/plans/{planId}` como oferta. Não existe coleção paralela de produtos. O endpoint público serializa somente a projeção comercial permitida e preserva o `integrationCode` público do GSL-v1.
+
+Fluxo previsto: `Programa/Projeto -> Planos/Ofertas -> Catálogo -> futuro Pedido -> futuro Pagamento -> futura Licença`. PagBank é escopo do C14 e não está implementado no C13.
 
 O painel administrativo publica `.hosting-admin-dist/`, criada no predeploy. A allowlist contém somente:
 
@@ -62,6 +70,8 @@ Toda operação de dados da aplicação passa pelo backend privilegiado.
 ```powershell
 node scripts/prepare-hosting.mjs
 node scripts/verify-hosting-dist.mjs
+node scripts/prepare-public-hosting.mjs
+node scripts/verify-public-hosting-dist.mjs
 node scripts/verify-firebase-config.mjs
 npx --yes firebase-tools@15.32.1 emulators:exec --project guiasys-licensing --only firestore,storage "node scripts/verify-firebase-config.mjs"
 ```

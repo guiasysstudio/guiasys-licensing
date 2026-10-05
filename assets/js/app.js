@@ -26,7 +26,7 @@ const firebaseConfig = {
 
 const API_BASE = window.location.origin;
 const PUBLIC_API_BASE = "https://licencas.guiasys.online";
-const PANEL_VERSION = "0.15.0";
+const PANEL_VERSION = "0.16.0";
 const PROTOCOL_VERSION = "GSL-v1";
 
 const firebaseApp = initializeApp(firebaseConfig);
@@ -1230,15 +1230,31 @@ function projectForm(project = {}) {
       </label>
       <label class="field check-field">
         <input name="publicCatalog" type="checkbox" value="true" ${project.publicCatalog ? "checked" : ""}>
-        ${fieldTitle("Disponível no portal do cliente", "Quando ativado, este produto poderá aparecer no futuro site GuiaSys Licensing Client. Somente planos marcados para venda serão exibidos.")}
+        ${fieldTitle("Publicado no catálogo", "Exibe este programa no site público quando o status também estiver ativo.")}
+      </label>
+      <label class="field check-field">
+        <input name="featured" type="checkbox" value="true" ${project.featured ? "checked" : ""}>
+        ${fieldTitle("Destacar no catálogo", "Aplica destaque visual ao programa no site público.")}
+      </label>
+      <label class="field">
+        ${fieldTitle("Ordem no catálogo", "Menores números aparecem primeiro. Empates são ordenados por nome e ID.")}
+        <input name="displayOrder" inputmode="numeric" data-mask="integer" data-max-digits="5" value="${e(project.displayOrder ?? 0)}">
+      </label>
+      <label class="field">
+        ${fieldTitle("URL HTTPS da imagem", "Logo ou imagem comercial pública. Apenas URLs HTTPS sem credenciais são aceitas.")}
+        <input name="imageUrl" type="url" maxlength="2048" value="${e(project.imageUrl || "")}" placeholder="https://exemplo.com/logo.png">
       </label>
       <label class="field field-full">
         ${fieldTitle("Domínios permitidos para integração Web", "Um domínio por linha. Sites JavaScript/TypeScript só poderão chamar a API pública deste projeto a partir destas origens. Aplicativos desktop/mobile não usam esta restrição de navegador.")}
         <textarea name="allowedOrigins" rows="3" placeholder="https://app.exemplo.com&#10;https://www.exemplo.com">${e((project.allowedOrigins || []).join("\n"))}</textarea>
       </label>
       <label class="field field-full">
-        ${fieldTitle("Descrição", "Descrição interna para ajudar a identificar o projeto.")}
-        <textarea name="description" rows="3" maxlength="300" placeholder="Descrição interna do projeto">${e(project.description || "")}</textarea>
+        ${fieldTitle("Descrição curta do catálogo", "Resumo de até 180 caracteres exibido junto ao nome do programa.")}
+        <textarea name="shortDescription" rows="2" maxlength="180" placeholder="Resumo comercial do programa">${e(project.shortDescription || "")}</textarea>
+      </label>
+      <label class="field field-full">
+        ${fieldTitle("Descrição", "Descrição comercial completa exibida no catálogo público.")}
+        <textarea name="description" rows="3" maxlength="300" placeholder="Descrição comercial do programa">${e(project.description || "")}</textarea>
       </label>
     </div>
   `;
@@ -1248,6 +1264,8 @@ function projectPayload(values, form = null) {
   return {
     ...values,
     publicCatalog: form ? form.elements.publicCatalog?.checked === true : Boolean(values.publicCatalog),
+    featured: form ? form.elements.featured?.checked === true : Boolean(values.featured),
+    displayOrder: Math.max(0, Number(values.displayOrder || 0)),
     offlineDays: Number(values.offlineDays || 0),
     validationHours: Math.max(1, Number(values.validationHours || 24))
   };
@@ -1392,12 +1410,16 @@ function planForm(plan = {}) {
         <input name="active" type="checkbox" value="true" ${plan.active !== false ? "checked" : ""}>
         ${fieldTitle("Plano ativo", "Planos inativos deixam de aparecer para novas emissões, mas licenças já emitidas continuam existindo.")}
       </label>
+      <label class="field">
+        ${fieldTitle("Ordem no catálogo", "Menores números aparecem primeiro. Empates são ordenados por nome e ID.")}
+        <input name="displayOrder" inputmode="numeric" data-mask="integer" data-max-digits="5" value="${e(plan.displayOrder ?? 0)}">
+      </label>
       <label class="field check-field">
         <input name="publicCatalog" type="checkbox" value="true" ${plan.publicCatalog ? "checked" : ""}>
-        ${fieldTitle("Disponível para venda no portal", "Quando ativado, este plano poderá ser exibido no GuiaSys Licensing Client se o projeto também estiver público.")}
+        ${fieldTitle("Publicado no catálogo", "Exibe esta oferta no site público quando o plano e o programa também estiverem ativos.")}
       </label>
       <label class="field field-full">
-        ${fieldTitle("Descrição", "Informação interna sobre o plano.")}
+        ${fieldTitle("Descrição comercial", "Texto público apresentado no card desta oferta.")}
         <textarea name="description" rows="3">${e(plan.description || "")}</textarea>
       </label>
     </div>
@@ -1405,7 +1427,11 @@ function planForm(plan = {}) {
 }
 
 async function plansView() {
-  const plans = await loadEntity("plans");
+  const [plans, previewData] = await Promise.all([
+    loadEntity("plans"),
+    api(`/api/v1/admin/projects/${state.selectedProjectId}/catalog-preview`)
+  ]);
+  const preview = previewData.preview;
 
   el.content.innerHTML = `
     ${pageHeader("Planos", "Configure tipos de licença, duração, preço e limite de dispositivos.",
@@ -1413,13 +1439,14 @@ async function plansView() {
     <article class="card table-shell">
       <div class="table-toolbar"><h3>Planos cadastrados</h3><span class="badge">${plans.length} registro(s)</span></div>
       ${table(
-        ["Plano", "Preço", "Duração", "Dispositivos", "Status", "Portal", ""],
+        ["Plano", "Preço", "Duração", "Dispositivos", "Ordem", "Status", "Catálogo", ""],
         plans.map(plan => `
           <tr>
             <td><strong>${e(plan.name)}</strong><small>${e(plan.description || "")}</small></td>
             <td>${formatMoney(plan.price)}</td>
             <td>${plan.lifetime ? '<span class="badge badge-success">Vitalício</span>' : `${e(plan.durationDays)} dias`}</td>
             <td>${e(plan.deviceLimit)}</td>
+            <td>${e(plan.displayOrder ?? 0)}</td>
             <td>${plan.active ? '<span class="badge badge-success">Ativo</span>' : '<span class="badge badge-muted">Inativo</span>'}</td>
             <td>${plan.publicCatalog ? '<span class="badge badge-success">Venda</span>' : '<span class="badge badge-muted">Oculto</span>'}</td>
             <td class="table-actions"><button class="btn btn-ghost btn-sm edit-plan" data-id="${e(plan.id)}" type="button">Editar</button><button class="btn btn-ghost btn-sm delete-plan" data-id="${e(plan.id)}" type="button">Excluir</button></td>
@@ -1428,6 +1455,19 @@ async function plansView() {
         "Cadastre um plano para emitir licenças.",
         "Planos do projeto"
       )}
+    </article>
+    <article class="card card-section catalog-preview-card">
+      <div class="section-heading">
+        <div>
+          <span class="eyebrow">PRÉVIA DO CATÁLOGO</span>
+          <h3>Payload comercial sanitizado</h3>
+        </div>
+        ${preview.published
+          ? '<span class="badge badge-success">Programa publicado</span>'
+          : '<span class="badge badge-muted">Programa fora do catálogo</span>'}
+      </div>
+      <p>Esta é a projeção exata do programa e das ofertas elegíveis. Campos técnicos privados e dados administrativos não são incluídos.</p>
+      <pre class="details-code catalog-preview-json">${e(JSON.stringify(preview.project, null, 2))}</pre>
     </article>
   `;
 
@@ -1462,7 +1502,8 @@ function openPlan(plan = null) {
         startMode: values.startMode || "first_activation",
         lifetime: form.elements.lifetime.checked,
         active: form.elements.active.checked,
-        publicCatalog: form.elements.publicCatalog.checked
+        publicCatalog: form.elements.publicCatalog.checked,
+        displayOrder: Math.max(0, Number(values.displayOrder || 0))
       };
       const path = plan
         ? `/api/v1/admin/projects/${state.selectedProjectId}/plans/${plan.id}`
