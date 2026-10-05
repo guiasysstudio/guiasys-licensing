@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, "..");
-const dist = path.join(root, ".hosting-dist");
+const dist = path.join(root, ".hosting-admin-dist");
 
 const sources = [
   ["index.html", "index.html"],
@@ -34,4 +34,4 @@ for (const [sourceRel, targetRel] of sources) {
   }
 }
 
-console.log("Firebase Hosting staging preparado com index.html + assets/.");
+console.log("Firebase Hosting admin staging preparado com index.html + assets/.");
