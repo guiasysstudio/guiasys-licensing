@@ -470,8 +470,8 @@ async function syncAuthorization(force = false) {
     lastAuthorizationSyncAt = Date.now();
 
     if (before !== after) {
-      state.cache.clear();
-      await loadProjects();
+      invalidate();
+      await loadProjects(true);
 
       if (!routeAllowed(state.route)) {
         state.route = state.selectedProjectId ? defaultProjectRoute() : "projects";
@@ -550,7 +550,7 @@ async function api(path, options = {}, retry = true) {
       response.status === 403 &&
       ["permission_denied", "project_access_denied"].includes(data.error)
     ) {
-      state.cache.clear();
+      invalidate();
       lastAuthorizationSyncAt = 0;
     }
 
@@ -1193,6 +1193,7 @@ function openProjectCreate() {
         method: "POST",
         body: JSON.stringify(projectPayload(values, form))
       });
+      invalidate();
       state.projects.push(data.project);
       state.projects.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
       renderProjectSwitcher();
