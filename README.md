@@ -44,10 +44,10 @@ O navegador nunca recebe credencial administrativa do Firestore. As Security Rul
 
 O projeto usa arquitetura multi-site:
 
-- target `public` -> site `guiasys-licensing`, reservado ao portal público em `licencas.guiasys.online`;
+- target `public` -> site `guiasys-licensing`, gateway público da API GSL-v1 em `licencas.guiasys.online`;
 - target `admin` -> site `guiasys-licensing-admin`, dedicado ao painel administrativo em `painel.licencas.guiasys.online`.
 
-O C11 publica **somente o target administrativo**. O portal público ainda não é implantado por esta configuração.
+O target `public` não publica o painel nem um portal de cliente nesta fase: ele contém somente um placeholder mínimo e os rewrites `/api/**` e `/health` para a Function. O portal comercial/cliente continua fora do escopo deste deploy.
 
 Antes de cada deploy do painel:
 
@@ -55,7 +55,7 @@ Antes de cada deploy do painel:
 2. somente `index.html` e `assets/` são copiados;
 3. `scripts/verify-hosting-dist.mjs` bloqueia qualquer arquivo fora dessa allowlist.
 
-Rewrites versionados no target admin:
+Rewrites versionados nos targets `admin` e `public`:
 
 - `/api/** -> licensingApi`
 - `/health -> licensingApi`
@@ -188,7 +188,7 @@ O GitHub é usado somente como repositório/versionamento e para validações de
 
 A produção é implantada diretamente no Firebase pela Firebase CLI autenticada na máquina de desenvolvimento.
 
-## Deploy C11
+## Deploy C11/C12
 
 Antes do primeiro deploy ao vivo:
 
@@ -198,15 +198,17 @@ Antes do primeiro deploy ao vivo:
 4. publicar Functions + Hosting;
 5. validar `/health` e login;
 6. publicar e validar o site administrativo `guiasys-licensing-admin.web.app`;
-7. conectar `painel.licencas.guiasys.online` ao target admin;
-8. manter `licencas.guiasys.online` reservado ao futuro portal público;
-9. manter o Worker antigo disponível somente durante a janela de rollback.
+7. publicar o target `public` como gateway da API e validar `guiasys-licensing.web.app/health`;
+8. conectar `painel.licencas.guiasys.online` ao target admin;
+9. conectar `licencas.guiasys.online` ao target public e validar `/health` + `/api/v1/catalog`;
+10. manter o Worker antigo disponível somente durante a janela de rollback.
 
 Com Firebase CLI autenticada localmente:
 
 ```bash
 firebase deploy --only functions:licensing --project guiasys-licensing
 firebase deploy --only hosting:admin --project guiasys-licensing
+firebase deploy --only hosting:public --project guiasys-licensing
 ```
 
 GitHub Actions não realiza deploy no Firebase.
