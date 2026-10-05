@@ -25,7 +25,7 @@ const firebaseConfig = {
 };
 
 const API_BASE = "https://guiasys-licensing-api.lindolfoandrew0.workers.dev";
-const PANEL_VERSION = "0.11.0";
+const PANEL_VERSION = "0.12.0";
 const PROTOCOL_VERSION = "GSL-v1";
 
 const firebaseApp = initializeApp(firebaseConfig);
@@ -47,7 +47,6 @@ const state = {
   administrator: null,
   apiOnline: false,
   projects: [],
-  dashboard: null,
   selectedProjectId: "",
   route: "dashboard",
   cache: new Map(),
@@ -398,7 +397,6 @@ function resetAdministrativeState() {
   state.cacheGeneration++;
   state.renderRequested++;
   state.projects = [];
-  state.dashboard = null;
   state.selectedProjectId = "";
   lastAuthorizationSyncAt = 0;
 }
@@ -1006,8 +1004,6 @@ function logText(log) {
 
 async function dashboardView() {
   const data = await loadDashboard();
-  state.dashboard = data;
-
   const logs = (data.recentLogs || []).map(log => `
     <div class="activity-row">
       <div class="activity-dot"></div>
