@@ -1,57 +1,90 @@
-# Firebase Foundation
+# Firebase Foundation — estado após C11
 
-Este repositório versiona a configuração base do projeto Firebase `guiasys-licensing`.
+Projeto Firebase: `guiasys-licensing`.
 
-## Estado do C03
+## Recursos versionados
 
-- Firestore Rules: **deny-all para clientes**
-- Storage Rules: **deny-all para clientes**
-- Firestore indexes: versionados
-- Firebase project alias: versionado
-- Hosting: ainda **não configurado**
-- Functions: ainda **não configurado**
+- Firestore Rules: deny-all para clientes
+- Storage Rules: deny-all para clientes
+- Firestore indexes
+- Firebase Functions v2
+- Firebase Hosting
+- Local Emulator Suite
+- scripts de validação e staging
 
-O Worker atual usa credencial server-side e não depende das Security Rules de cliente para acessar o Firestore.
+## Functions
 
-## Regra de segurança
+- source: `worker/`
+- codebase: `licensing`
+- runtime: Node.js 22
+- Function HTTP: `licensingApi`
+- região: `southamerica-east1`
+- Admin SDK para Auth/Firestore
+- Secret Manager: `ADMIN_FIREBASE_UID`
 
-Enquanto o backend definitivo não estiver migrado para Firebase Functions/Admin SDK e os fluxos de cliente não estiverem formalizados, nenhuma aplicação Web/Mobile deve acessar Firestore ou Storage diretamente.
+O runtime Firebase não usa Service Account JSON versionada nem variável `FIREBASE_SERVICE_ACCOUNT_JSON`.
 
-Por isso, as Rules deste bloco usam:
+## Hosting
+
+O Hosting publica `.hosting-dist/`, criada em predeploy.
+
+A allowlist contém somente:
+
+- `index.html`
+- `assets/**`
+
+Rewrites:
+
+- `/api/** -> licensingApi`
+- `/health -> licensingApi`
+
+Headers de segurança e cache são definidos no `firebase.json`.
+
+## Segurança
+
+As Rules continuam:
 
 ```
 allow read, write: if false;
 ```
 
-Qualquer abertura futura deve ser feita por coleção/caso de uso específico, com testes antes do deploy.
+Toda operação de dados passa pelo backend privilegiado.
 
 ## Validação local
 
-Com Node.js 22 e Java instalados:
-
 ```powershell
+node scripts/prepare-hosting.mjs
+node scripts/verify-hosting-dist.mjs
 node scripts/verify-firebase-config.mjs
 npx --yes firebase-tools@15.32.1 emulators:exec --project guiasys-licensing --only firestore,storage "node scripts/verify-firebase-config.mjs"
 ```
 
 ## Deploy
 
-Não execute deploy de Rules sem revisar o projeto selecionado:
+Confirme primeiro:
 
 ```powershell
 firebase use
 ```
 
-O alvo esperado é:
+Projeto esperado:
 
 ```
 guiasys-licensing
 ```
 
-Depois da validação e somente quando aprovado:
+O secret master deve existir:
 
 ```powershell
-firebase deploy --only firestore:rules,firestore:indexes,storage --project guiasys-licensing
+firebase functions:secrets:set ADMIN_FIREBASE_UID --project guiasys-licensing
 ```
 
-Nunca versione Service Account JSON, tokens ou arquivos de segredo.
+Depois dos gates e do smoke em emulator:
+
+```powershell
+firebase deploy --only functions:licensing,hosting --project guiasys-licensing
+```
+
+Somente após validar a URL Firebase Hosting, conecte `licencas.guiasys.online` ao site e altere DNS conforme os valores apresentados pelo Firebase Console.
+
+Nunca versione Service Account JSON, tokens, UID master ou outros segredos.
