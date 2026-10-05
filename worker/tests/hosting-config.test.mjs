@@ -61,7 +61,8 @@ test("Hosting aplica headers de cache e hardening", () => {
     "Referrer-Policy",
     "Permissions-Policy",
     "Cross-Origin-Opener-Policy",
-    "Strict-Transport-Security"
+    "Strict-Transport-Security",
+    "Content-Security-Policy"
   ]) {
     assert.ok(globalHeaders.some(item => item.key === header), `header ausente: ${header}`);
   }
@@ -92,4 +93,20 @@ test("Hosting não usa pinTag para evitar alteração de tráfego no Cloud Run",
   for (const rewrite of admin.rewrites) {
     assert.equal("pinTag" in rewrite.function, false);
   }
+});
+
+
+test("CSP permite Firebase Auth sem liberar execução arbitrária", () => {
+  const admin = firebase.hosting.find(item => item.target === "admin");
+  const globalHeaders = admin.headers.find(item => item.source === "**")?.headers || [];
+  const csp = globalHeaders.find(item => item.key === "Content-Security-Policy")?.value || "";
+
+  assert.match(csp, /default-src 'self'/);
+  assert.match(csp, /script-src 'self' https:\/\/www\.gstatic\.com https:\/\/apis\.google\.com/);
+  assert.match(csp, /connect-src 'self' https:\/\/identitytoolkit\.googleapis\.com https:\/\/securetoken\.googleapis\.com/);
+  assert.match(csp, /frame-src https:\/\/guiasys-licensing\.firebaseapp\.com https:\/\/accounts\.google\.com/);
+  assert.match(csp, /object-src 'none'/);
+  assert.match(csp, /frame-ancestors 'none'/);
+  assert.equal(/script-src[^;]*'unsafe-inline'/.test(csp), false);
+  assert.equal(/script-src[^;]*'unsafe-eval'/.test(csp), false);
 });
