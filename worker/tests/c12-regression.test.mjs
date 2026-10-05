@@ -359,3 +359,71 @@ test("manageProjects restaura projeto arquivado sem conceder edição de configu
     "Projeto Arquivado"
   );
 });
+
+
+test("trial não reinicia em dispositivo que já foi vinculado a licença paga", async () => {
+  const deviceId = "DEVICE-C12-PAID-FIRST";
+  const deviceHash = sha256(deviceId);
+  const future = new Date(Date.now() + 5 * 86400000).toISOString();
+  const started = new Date(Date.now() - 86400000).toISOString();
+
+  const services = memoryServices({
+    [`projects/${PROJECT_ID}`]: {
+      name: "Projeto Teste",
+      prefix: "GSS",
+      status: "active",
+      integrationCode: "GSLI-ABCD-EFGH-JKLM",
+      allowedOrigins: [],
+      trialEnabled: true,
+      trialDays: 7,
+      trialValidationHours: 24,
+      trialOfflineHours: 24,
+      offlineDays: 7,
+      validationHours: 24
+    },
+    [`projects/${PROJECT_ID}/devices/${deviceHash}`]: {
+      licenseId: LICENSE_ID,
+      active: false,
+      deviceHash,
+      updatedAt: started
+    },
+    [`projects/${PROJECT_ID}/trials/${deviceHash}`]: {
+      deviceHash,
+      status: "active",
+      startedAt: started,
+      expiresAt: future,
+      durationDays: 7,
+      validationHours: 24,
+      offlineHours: 24,
+      validationCount: 0,
+      createdAt: started,
+      updatedAt: started
+    }
+  });
+
+  const response = await handleRequest(
+    new Request("https://painel.licencas.guiasys.online/api/v1/trial/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId: PROJECT_ID,
+        deviceId
+      })
+    }),
+    {
+      FIREBASE_PROJECT_ID: "guiasys-licensing",
+      ADMIN_FIREBASE_UID: "uid-master-test",
+      __services: services
+    }
+  );
+
+  assert.equal(response.status, 403);
+  const body = await response.json();
+  assert.equal(body.error, "trial_converted");
+  assert.equal(body.details.licenseId, LICENSE_ID);
+
+  const trial = services.store.get(`projects/${PROJECT_ID}/trials/${deviceHash}`);
+  assert.equal(trial.status, "converted");
+  assert.equal(trial.convertedLicenseId, LICENSE_ID);
+  assert.ok(trial.convertedAt);
+});
