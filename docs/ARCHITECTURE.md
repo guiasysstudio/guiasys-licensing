@@ -165,3 +165,17 @@ Os rewrites `/api/**` e `/health` apontam para `licensingApi` em `southamerica-e
 O domínio `painel.licencas.guiasys.online` deve ser conectado ao site `guiasys-licensing-admin` somente depois do smoke test em `guiasys-licensing-admin.web.app`. O domínio `licencas.guiasys.online` permanece reservado ao portal público. O antigo `CNAME` de GitHub Pages não faz mais parte do repositório.
 
 Durante a janela de migração, Cloudflare pode permanecer online para rollback operacional, mas não é mais referência do frontend nem da documentação de integração.
+
+
+## Fluxo de versionamento e deploy
+
+O GitHub é mantido como repositório de código, histórico e validação de testes. Produção não é publicada por GitHub Actions.
+
+O deploy operacional é feito diretamente da máquina de desenvolvimento autenticada na Firebase CLI:
+
+```bash
+firebase deploy --only functions:licensing --project guiasys-licensing
+firebase deploy --only hosting:admin --project guiasys-licensing
+```
+
+Workload Identity Federation (WIF) não faz parte da arquitetura de implantação deste projeto.
