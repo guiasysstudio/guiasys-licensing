@@ -4,10 +4,10 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, "..");
-const dist = path.join(root, ".hosting-dist");
+const dist = path.join(root, ".hosting-admin-dist");
 
 function fail(message) {
-  console.error(`Hosting dist check failed: ${message}`);
+  console.error(`Hosting admin dist check failed: ${message}`);
   process.exit(1);
 }
 
@@ -79,4 +79,4 @@ if (/workers\.dev|Cloudflare Worker|GitHub Pages/.test(app)) {
   fail("frontend publicado ainda contém dependência operacional legada.");
 }
 
-console.log(`Hosting dist OK: ${files.length} arquivos públicos permitidos.`);
+console.log(`Hosting admin dist OK: ${files.length} arquivos públicos permitidos.`);
