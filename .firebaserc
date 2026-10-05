@@ -7,6 +7,9 @@
       "hosting": {
         "admin": [
           "guiasys-licensing-admin"
+        ],
+        "public": [
+          "guiasys-licensing"
         ]
       }
     }
