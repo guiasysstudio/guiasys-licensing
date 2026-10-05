@@ -1128,17 +1128,19 @@ async function projectsView() {
       openProjectEdit(await loadProjectDetail(id, true));
     });
 
-    card.querySelector(".restore-project")?.addEventListener("click", async () => {
-      if (!await confirmAction("Restaurar projeto", `Restaurar "${project.name}" e voltar a permitir operações?`, "Restaurar", "primary")) return;
+    card.querySelector(".restore-project")?.addEventListener("click", event => {
+      runButtonAction(event.currentTarget, async () => {
+        if (!await confirmAction("Restaurar projeto", `Restaurar "${project.name}" e voltar a permitir operações?`, "Restaurar", "primary")) return;
 
-      await api(`/api/v1/admin/projects/${encodeURIComponent(id)}`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: "active" })
+        await api(`/api/v1/admin/projects/${encodeURIComponent(id)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "active" })
+        });
+        invalidate(id);
+        await loadProjects(true);
+        toast("Projeto restaurado.");
+        await renderContent();
       });
-      invalidate(id);
-      await loadProjects(true);
-      toast("Projeto restaurado.");
-      await renderContent();
     });
   });
 }
@@ -1379,13 +1381,15 @@ async function plansView() {
 
   document.querySelector("#new-plan").onclick = () => openPlan();
   document.querySelectorAll(".edit-plan").forEach(button => button.onclick = () => openPlan(plans.find(p => p.id === button.dataset.id)));
-  document.querySelectorAll(".delete-plan").forEach(button => button.onclick = async () => {
-    const plan = plans.find(p => p.id === button.dataset.id);
-    if (!await confirmAction("Excluir plano", `Excluir o plano "${plan.name}"? Licenças já emitidas mantêm o snapshot do plano.`, "Excluir")) return;
-    await api(`/api/v1/admin/projects/${state.selectedProjectId}/plans/${plan.id}`, { method: "DELETE" });
-    invalidate(state.selectedProjectId);
-    toast("Plano excluído.");
-    await renderContent();
+  document.querySelectorAll(".delete-plan").forEach(button => button.onclick = () => {
+    runButtonAction(button, async () => {
+      const plan = plans.find(p => p.id === button.dataset.id);
+      if (!await confirmAction("Excluir plano", `Excluir o plano "${plan.name}"? Licenças já emitidas mantêm o snapshot do plano.`, "Excluir")) return;
+      await api(`/api/v1/admin/projects/${state.selectedProjectId}/plans/${plan.id}`, { method: "DELETE" });
+      invalidate(state.selectedProjectId);
+      toast("Plano excluído.");
+      await renderContent();
+    });
   });
 }
 
@@ -1488,25 +1492,29 @@ async function customersView() {
   document.querySelector("#new-customer").onclick = () => openCustomer();
   document.querySelectorAll(".edit-customer").forEach(button => button.onclick = () => openCustomer(customers.find(c => c.id === button.dataset.id)));
 
-  document.querySelectorAll(".disable-customer").forEach(button => button.onclick = async () => {
-    const customer = customers.find(c => c.id === button.dataset.id);
-    const nextStatus = customer.status === "inactive" ? "active" : "inactive";
-    await api(`/api/v1/admin/projects/${state.selectedProjectId}/customers/${customer.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ status: nextStatus })
+  document.querySelectorAll(".disable-customer").forEach(button => button.onclick = () => {
+    runButtonAction(button, async () => {
+      const customer = customers.find(c => c.id === button.dataset.id);
+      const nextStatus = customer.status === "inactive" ? "active" : "inactive";
+      await api(`/api/v1/admin/projects/${state.selectedProjectId}/customers/${customer.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: nextStatus })
+      });
+      invalidate(state.selectedProjectId);
+      toast(nextStatus === "active" ? "Cliente reativado." : "Cliente desativado.");
+      await renderContent();
     });
-    invalidate(state.selectedProjectId);
-    toast(nextStatus === "active" ? "Cliente reativado." : "Cliente desativado.");
-    await renderContent();
   });
 
-  document.querySelectorAll(".delete-customer").forEach(button => button.onclick = async () => {
-    const customer = customers.find(c => c.id === button.dataset.id);
-    if (!await confirmAction("Excluir cliente", `Excluir "${customer.name}" deste projeto?`, "Excluir")) return;
-    await api(`/api/v1/admin/projects/${state.selectedProjectId}/customers/${customer.id}`, { method: "DELETE" });
-    invalidate(state.selectedProjectId);
-    toast("Cliente excluído.");
-    await renderContent();
+  document.querySelectorAll(".delete-customer").forEach(button => button.onclick = () => {
+    runButtonAction(button, async () => {
+      const customer = customers.find(c => c.id === button.dataset.id);
+      if (!await confirmAction("Excluir cliente", `Excluir "${customer.name}" deste projeto?`, "Excluir")) return;
+      await api(`/api/v1/admin/projects/${state.selectedProjectId}/customers/${customer.id}`, { method: "DELETE" });
+      invalidate(state.selectedProjectId);
+      toast("Cliente excluído.");
+      await renderContent();
+    });
   });
 }
 
@@ -1945,15 +1953,17 @@ async function devicesView() {
     </article>
   `;
 
-  document.querySelectorAll(".deactivate-device").forEach(button => button.onclick = async () => {
-    if (!await confirmAction("Desativar dispositivo", "A ativação será liberada para outro dispositivo.", "Desativar")) return;
-    await api(`/api/v1/admin/projects/${state.selectedProjectId}/devices/${button.dataset.id}/deactivate`, {
-      method: "POST",
-      body: JSON.stringify({})
+  document.querySelectorAll(".deactivate-device").forEach(button => button.onclick = () => {
+    runButtonAction(button, async () => {
+      if (!await confirmAction("Desativar dispositivo", "A ativação será liberada para outro dispositivo.", "Desativar")) return;
+      await api(`/api/v1/admin/projects/${state.selectedProjectId}/devices/${button.dataset.id}/deactivate`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      invalidate(state.selectedProjectId);
+      toast("Dispositivo desativado.");
+      await renderContent();
     });
-    invalidate(state.selectedProjectId);
-    toast("Dispositivo desativado.");
-    await renderContent();
   });
 }
 
@@ -2942,17 +2952,19 @@ async function projectSettingsView() {
     toast("Configurações salvas.");
   });
 
-  document.querySelector("#archive-project").onclick = async () => {
-    if (!await confirmAction("Arquivar projeto", "O projeto deixará de aparecer no seletor principal e não aceitará novas ativações.", "Arquivar")) return;
-    await api(`/api/v1/admin/projects/${project.id}`, { method: "DELETE" });
-    invalidate(project.id);
-    await loadProjects(true);
-    state.selectedProjectId = "";
-    state.route = "projects";
-    renderProjectSwitcher();
-    renderNavigation();
-    toast("Projeto arquivado.");
-    await renderContent();
+  document.querySelector("#archive-project").onclick = event => {
+    runButtonAction(event.currentTarget, async () => {
+      if (!await confirmAction("Arquivar projeto", "O projeto deixará de aparecer no seletor principal e não aceitará novas ativações.", "Arquivar")) return;
+      await api(`/api/v1/admin/projects/${project.id}`, { method: "DELETE" });
+      invalidate(project.id);
+      await loadProjects(true);
+      state.selectedProjectId = "";
+      state.route = "projects";
+      renderProjectSwitcher();
+      renderNavigation();
+      toast("Projeto arquivado.");
+      await renderContent();
+    });
   };
 }
 
@@ -3176,12 +3188,14 @@ async function administratorsView() {
     button.onclick = () => openAdmin(admins.find(item => item.id === button.dataset.id), refresh);
   });
   document.querySelectorAll(".delete-admin").forEach(button => {
-    button.onclick = async () => {
-      const admin = admins.find(item => item.id === button.dataset.id);
-      if (!await confirmAction("Excluir administrador", `Remover o acesso de ${admin.email}?`, "Excluir")) return;
-      await api(`/api/v1/admin/admins/${encodeURIComponent(admin.id)}`, { method: "DELETE" });
-      toast("Administrador removido.");
-      await renderContent();
+    button.onclick = () => {
+      runButtonAction(button, async () => {
+        const admin = admins.find(item => item.id === button.dataset.id);
+        if (!await confirmAction("Excluir administrador", `Remover o acesso de ${admin.email}?`, "Excluir")) return;
+        await api(`/api/v1/admin/admins/${encodeURIComponent(admin.id)}`, { method: "DELETE" });
+        toast("Administrador removido.");
+        await renderContent();
+      });
     };
   });
 }
