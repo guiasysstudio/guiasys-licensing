@@ -707,7 +707,7 @@ function openModal({ title, subtitle = "", body, submitLabel = "Salvar", onSubmi
   const titleId = `modal-title-${++modalSequence}`;
   backdrop.className = "modal-backdrop";
   backdrop.innerHTML = `
-    <div class="modal-card ${wide ? "modal-wide" : ""}" role="dialog" aria-modal="true" aria-labelledby="${titleId}">
+    <div class="modal-card ${wide ? "modal-wide" : ""}" role="dialog" aria-modal="true" aria-labelledby="${titleId}" tabindex="-1">
       <div class="modal-header">
         <div>
           <h2 id="${titleId}">${e(title)}</h2>
@@ -766,7 +766,7 @@ function confirmAction(title, message, confirmLabel = "Confirmar", tone = "dange
     const titleId = `modal-title-${++modalSequence}`;
     backdrop.className = "modal-backdrop";
     backdrop.innerHTML = `
-      <div class="modal-card modal-confirm" role="dialog" aria-modal="true" aria-labelledby="${titleId}">
+      <div class="modal-card modal-confirm" role="dialog" aria-modal="true" aria-labelledby="${titleId}" tabindex="-1">
         <div class="modal-header">
           <div>
             <h2 id="${titleId}">${e(title)}</h2>
@@ -799,6 +799,22 @@ function confirmAction(title, message, confirmLabel = "Confirmar", tone = "dange
     });
     setTimeout(() => backdrop.querySelector(".confirm")?.focus(), 30);
   });
+}
+
+function setSidebarOpen(open) {
+  const isOpen = Boolean(open);
+  document.body.classList.toggle("sidebar-open", isOpen);
+  el.mobileMenuButton.setAttribute("aria-expanded", String(isOpen));
+  el.mobileMenuButton.setAttribute("aria-label", isOpen ? "Fechar menu" : "Abrir menu");
+}
+
+function updateDocumentTitle() {
+  const routeItem = [...globalItems, ...projectItems].find(([route]) => route === state.route);
+  const routeLabel = routeItem?.[2] || "Painel";
+  const project = selectedProject();
+  document.title = project && projectItems.some(([route]) => route === state.route)
+    ? `${routeLabel} · ${project.name} · GuiaSys Licensing`
+    : `${routeLabel} · GuiaSys Licensing`;
 }
 
 function renderNavigation() {
@@ -1463,7 +1479,7 @@ async function customersView() {
     <article class="card table-shell">
       <div class="table-toolbar"><h3>Clientes</h3><span class="badge">${customers.length} registro(s)</span></div>
       ${table(
-        ["Cliente", "E-mail", "Cliente", "Status da licença", "Licenças", "Cadastro", ""],
+        ["Cliente", "E-mail", "Status", "Status da licença", "Licenças", "Cadastro", ""],
         customers.map(customer => `
           <tr>
             <td>
@@ -1712,7 +1728,7 @@ async function licensesView() {
     <article class="card table-shell">
       <div class="table-toolbar">
         <h3>Licenças emitidas</h3>
-        <div class="toolbar-actions"><input id="license-search" class="compact-input" placeholder="Buscar cliente ou key"><span class="badge">${licenses.length} registro(s)</span></div>
+        <div class="toolbar-actions"><input id="license-search" class="compact-input" aria-label="Buscar licença por cliente ou chave" placeholder="Buscar cliente ou key"><span class="badge">${licenses.length} registro(s)</span></div>
       </div>
       <div id="licenses-table"></div>
     </article>
@@ -3251,6 +3267,8 @@ async function performRender(renderId) {
       renderNavigation();
     }
 
+    updateDocumentTitle();
+
     const routes = {
       dashboard: dashboardView,
       projects: projectsView,
@@ -3423,11 +3441,33 @@ el.projectSwitcher.addEventListener("change", async () => {
     ? defaultProjectRoute()
     : (hasPermission("viewDashboard") ? "dashboard" : "projects");
   renderNavigation();
+  setSidebarOpen(false);
   await renderContent();
 });
 
 el.mobileMenuButton.addEventListener("click", () => {
-  document.body.classList.toggle("sidebar-open");
+  setSidebarOpen(!document.body.classList.contains("sidebar-open"));
+});
+
+el.sidebarBackdrop.addEventListener("click", () => {
+  setSidebarOpen(false);
+});
+
+document.addEventListener("keydown", event => {
+  if (
+    event.key === "Escape" &&
+    !topModal() &&
+    document.body.classList.contains("sidebar-open")
+  ) {
+    setSidebarOpen(false);
+    el.mobileMenuButton.focus({ preventScroll: true });
+  }
+});
+
+window.addEventListener("resize", () => {
+  if (window.innerWidth > 820 && document.body.classList.contains("sidebar-open")) {
+    setSidebarOpen(false);
+  }
 });
 
 window.addEventListener("focus", () => {
