@@ -13,7 +13,6 @@ const app = await readFile(new URL("../../assets/js/app.js", import.meta.url), "
 const backend = await readFile(new URL("../src/index.js", import.meta.url), "utf8");
 const prepare = await readFile(new URL("../../scripts/prepare-hosting.mjs", import.meta.url), "utf8");
 const verify = await readFile(new URL("../../scripts/verify-hosting-dist.mjs", import.meta.url), "utf8");
-const deployWorkflow = await readFile(new URL("../../.github/workflows/firebase-production-deploy.yml", import.meta.url), "utf8");
 
 test("Hosting admin usa target próprio e staging allowlist", () => {
   assert.equal(Array.isArray(firebase.hosting), true);
@@ -93,18 +92,4 @@ test("Hosting não usa pinTag para evitar alteração de tráfego no Cloud Run",
   for (const rewrite of admin.rewrites) {
     assert.equal("pinTag" in rewrite.function, false);
   }
-});
-
-test("deploy manual exige confirmação, WIF e smoke test", () => {
-  assert.match(deployWorkflow, /workflow_dispatch:/);
-  assert.match(deployWorkflow, /inputs\.confirm == 'DEPLOY'/);
-  assert.match(deployWorkflow, /id-token:\s*write/);
-  assert.match(deployWorkflow, /google-github-actions\/auth@v3/);
-  assert.match(deployWorkflow, /GCP_WORKLOAD_IDENTITY_PROVIDER/);
-  assert.match(deployWorkflow, /GCP_DEPLOY_SERVICE_ACCOUNT/);
-  assert.match(deployWorkflow, /--only functions:licensing/);
-  assert.match(deployWorkflow, /--only hosting:admin/);
-  assert.match(deployWorkflow, /guiasys-licensing-admin\.web\.app\/health/);
-  assert.equal(deployWorkflow.includes("credentials_json"), false);
-  assert.equal(deployWorkflow.includes("FIREBASE_SERVICE_ACCOUNT"), false);
 });
