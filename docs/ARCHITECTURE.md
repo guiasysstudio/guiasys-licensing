@@ -7,7 +7,7 @@ Existe um único motor de licenciamento e múltiplos ambientes independentes. Ca
 ## Componentes
 
 ### Firebase Hosting
-Hospeda o painel estático a partir de uma pasta de staging allowlist (`.hosting-dist/`). O frontend usa o próprio `window.location.origin` e os caminhos `/api/**` e `/health` são reescritos para a Function `licensingApi`.
+Opera em arquitetura multi-site no mesmo projeto Firebase. O site `guiasys-licensing` fica reservado ao portal público em `licencas.guiasys.online`; o site `guiasys-licensing-admin` hospeda o painel em `painel.licencas.guiasys.online`. O painel é preparado em `.hosting-admin-dist/`, usa `window.location.origin` e reescreve `/api/**` e `/health` para a Function `licensingApi`.
 
 ### Firebase Authentication
 Autentica o administrador usando Google ou e-mail/senha. O Firebase ID Token é enviado ao backend.
@@ -158,10 +158,10 @@ A autenticação administrativa no runtime Firebase usa `verifyIdToken(..., true
 
 ## Hosting e cutover — C11
 
-O Firebase Hosting publica somente `index.html` e `assets/`, preparados por script em `.hosting-dist/`. Backend, documentação, Rules e arquivos operacionais não entram no artefato público.
+O target `admin` publica somente `index.html` e `assets/`, preparados por script em `.hosting-admin-dist/`. Backend, documentação, Rules e arquivos operacionais não entram no artefato administrativo. O target `public` está mapeado ao site `guiasys-licensing`, mas não é implantado pelo C11 até o portal público existir.
 
 Os rewrites `/api/**` e `/health` apontam para `licensingApi` em `southamerica-east1` sem `pinTag`. Functions e Hosting são implantados separadamente para que o Hosting não precise modificar tags/tráfego do serviço Cloud Run durante a finalização. O path e a query originais são preservados pelo Hosting ao encaminhar a requisição.
 
-O domínio oficial `licencas.guiasys.online` deve ser conectado ao Firebase Hosting somente depois do smoke test na URL `web.app`. O antigo `CNAME` de GitHub Pages não faz mais parte do repositório.
+O domínio `painel.licencas.guiasys.online` deve ser conectado ao site `guiasys-licensing-admin` somente depois do smoke test em `guiasys-licensing-admin.web.app`. O domínio `licencas.guiasys.online` permanece reservado ao portal público. O antigo `CNAME` de GitHub Pages não faz mais parte do repositório.
 
 Durante a janela de migração, Cloudflare pode permanecer online para rollback operacional, mas não é mais referência do frontend nem da documentação de integração.
