@@ -46,7 +46,7 @@ if (!/fetch\("\/api\/v1\/catalog"/.test(app)) {
 if (/innerHTML|insertAdjacentHTML|document\.write/.test(app)) {
   fail("renderização do catálogo deve evitar APIs de HTML inseguras.");
 }
-if (/firebase|app\.js|entitlement-verifier/.test(index + app)) {
+if (!/customer-storefront/.test(app) || /entitlement-verifier/.test(index + app)) {
   fail("artefatos administrativos não podem integrar o frontend público.");
 }
 

@@ -26,7 +26,7 @@ const firebaseConfig = {
 
 const API_BASE = window.location.origin;
 const PUBLIC_API_BASE = "https://licencas.guiasys.online";
-const PANEL_VERSION = "0.16.0";
+const PANEL_VERSION = "0.17.0";
 const PROTOCOL_VERSION = "GSL-v1";
 
 const firebaseApp = initializeApp(firebaseConfig);
@@ -88,6 +88,8 @@ const el = {
 const globalItems = [
   ["dashboard", "dashboard", "Dashboard", "viewDashboard"],
   ["projects", "projects", "Projetos", null],
+  ["orders", "plans", "Pedidos", "viewOrders"],
+  ["payments", "logs", "Pagamentos", "viewPayments"],
   ["administrators", "users", "Administradores", "master"],
   ["platform-settings", "settings", "Configurações", "managePlatformSettings"]
 ];
@@ -118,6 +120,9 @@ const ADMIN_PERMISSION_LABELS = {
   manageDevices: "Gerenciar dispositivos",
   viewActivations: "Visualizar ativações",
   viewLogs: "Visualizar logs",
+  viewOrders: "Visualizar pedidos",
+  manageOrders: "Gerenciar pedidos (reservado para fluxos seguros)",
+  viewPayments: "Visualizar pagamentos",
   manageProjectSettings: "Alterar configurações dos projetos",
   managePlatformSettings: "Visualizar configurações da plataforma"
 };
@@ -3331,6 +3336,38 @@ function platformSettingsView() {
   `;
 }
 
+function commerceTable(rows, columns, emptyMessage) {
+  if (!rows.length) return `<article class="card card-section"><p>${e(emptyMessage)}</p></article>`;
+  return `<article class="card table-card"><div class="table-scroll"><table><thead><tr>${columns.map(column => `<th>${e(column.label)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${columns.map(column => `<td>${column.render ? column.render(row) : e(row[column.key] ?? "â€”")}</td>`).join("")}</tr>`).join("")}</tbody></table></div></article>`;
+}
+
+async function ordersView() {
+  const { orders } = await api("/api/v1/admin/orders");
+  el.content.innerHTML = `${pageHeader("Pedidos", "Pedidos comerciais em centavos, com financeiro e fulfillment separados.")}${commerceTable(orders, [
+    { label: "Pedido", render: row => `<code>${e(row.orderId)}</code>` },
+    { label: "Cliente", render: row => `<code>${e(row.accountId)}</code>` },
+    { label: "Itens", render: row => e(String((row.items || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0))) },
+    { label: "Valor", render: row => e(formatMoney(Number(row.totalCents || 0) / 100)) },
+    { label: "Status", render: row => `<span class="badge">${e(row.status)}</span>` },
+    { label: "Pagamento", render: row => e(row.paymentStatus || "pending") },
+    { label: "Fulfillment", render: row => e(row.fulfillmentStatus || "pending") },
+    { label: "Data", render: row => e(formatDate(row.createdAt, true)) }
+  ], "Nenhum pedido registrado.")}`;
+}
+
+async function paymentsView() {
+  const { payments } = await api("/api/v1/admin/payments");
+  el.content.innerHTML = `${pageHeader("Pagamentos", "Visão financeira somente leitura; aprovações só podem vir do adapter interno.")}${commerceTable(payments, [
+    { label: "Pagamento", render: row => `<code>${e(row.paymentId || row.id)}</code>` },
+    { label: "Pedido", render: row => `<code>${e(row.orderId)}</code>` },
+    { label: "Provedor", key: "provider" },
+    { label: "Método", key: "method" },
+    { label: "Valor", render: row => e(formatMoney(Number(row.amountCents || 0) / 100)) },
+    { label: "Status", render: row => `<span class="badge">${e(row.status)}</span>` },
+    { label: "Data", render: row => e(formatDate(row.createdAt, true)) }
+  ], "Nenhum pagamento registrado.")}`;
+}
+
 async function performRender(renderId) {
   el.content.innerHTML = loadingView();
 
@@ -3357,6 +3394,8 @@ async function performRender(renderId) {
     const routes = {
       dashboard: dashboardView,
       projects: projectsView,
+      orders: ordersView,
+      payments: paymentsView,
       administrators: administratorsView,
       "platform-settings": async () => platformSettingsView(),
       "project-dashboard": projectDashboardView,

@@ -160,6 +160,31 @@ h1 { max-width: 750px; margin-bottom: 24px; font-size: clamp(2.8rem, 7vw, 6.3rem
 .not-found { display: grid; min-height: 100vh; align-content: center; justify-items: start; }
 .not-found h1 { font-size: clamp(2.8rem, 8vw, 6rem); }
 .not-found p:not(.eyebrow) { color: var(--muted); }
+.header-actions, .auth-buttons { display: flex; align-items: center; gap: 10px; }
+.commerce-section { padding: 55px 0 80px; }
+.checkout-card { max-width: 760px; padding: 28px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+.checkout-card p { color: var(--muted); }
+.checkout-details { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 24px 0; }
+.checkout-details div { padding: 14px; border-radius: 12px; background: rgba(255,255,255,.04); }
+.checkout-details dt { color: var(--muted); font-size: .82rem; }
+.checkout-details dd { margin: 7px 0 0; font-weight: 700; }
+.quantity-field, .auth-dialog label { display: grid; gap: 7px; color: var(--muted); }
+.quantity-field input, .auth-dialog input { min-height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--background); color: var(--text); }
+.quantity-field input { width: 110px; }
+.checkout-total { display: flex; justify-content: space-between; margin: 22px 0; padding-top: 18px; border-top: 1px solid var(--line); font-size: 1.2rem; }
+.security-note { font-size: .82rem; }
+.account-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.account-grid .state-card { display: block; min-height: 240px; padding: 24px; text-align: left; }
+.account-record { display: grid; gap: 5px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.account-record span, .account-record small { color: var(--muted); overflow-wrap: anywhere; }
+.account-record select { min-width: 190px; min-height: 44px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--background); color: var(--text); }
+.auth-dialog { width: min(92vw, 480px); padding: 0; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.auth-dialog::backdrop { background: rgba(4, 8, 18, .82); }
+.auth-dialog form { display: grid; gap: 16px; padding: 26px; }
+.dialog-heading { display: flex; align-items: center; justify-content: space-between; }
+.dialog-heading h2 { margin: 0; }
+.dialog-heading button { border: 0; background: transparent; color: var(--text); font-size: 1.8rem; }
+.auth-divider { margin: 0; text-align: center; color: var(--muted); }
 
 @media (max-width: 760px) {
   .site-header, .site-footer, main { width: min(100% - 28px, 1180px); }
@@ -170,6 +195,8 @@ h1 { max-width: 750px; margin-bottom: 24px; font-size: clamp(2.8rem, 7vw, 6.3rem
   .product-header { align-items: flex-start; padding: 22px; }
   .product-logo, .product-monogram { width: 62px; height: 62px; border-radius: 15px; }
   .product-body { padding: 22px; }
+  .checkout-details, .account-grid { grid-template-columns: 1fr; }
+  .header-actions .header-link { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

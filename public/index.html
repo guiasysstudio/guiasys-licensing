@@ -15,7 +15,11 @@
       <span class="brand-mark" aria-hidden="true">G</span>
       <span><strong>GuiaSys</strong><small>Licensing</small></span>
     </a>
-    <a class="header-link" href="#catalog">Ver programas</a>
+    <nav class="header-actions" aria-label="Conta do cliente">
+      <a class="header-link" href="#catalog">Programas</a>
+      <button id="account-button" class="secondary-button" type="button">Entrar</button>
+      <button id="logout-button" class="secondary-button" type="button" hidden>Sair</button>
+    </nav>
   </header>
 
   <main>
@@ -58,7 +62,47 @@
       </div>
       <p id="selection-status" class="selection-status" role="status" aria-live="polite" hidden></p>
     </section>
+
+    <section id="checkout" class="commerce-section" aria-labelledby="checkout-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">CHECKOUT SEGURO</p><h2 id="checkout-title">Revise seu pedido</h2></div>
+        <p>O valor final é sempre validado no servidor.</p>
+      </div>
+      <div class="checkout-card">
+        <div><strong id="checkout-product"></strong><p id="checkout-plan"></p></div>
+        <dl class="checkout-details">
+          <div><dt>Preço unitário</dt><dd id="checkout-unit-price"></dd></div>
+          <div><dt>Duração</dt><dd id="checkout-duration"></dd></div>
+          <div><dt>Dispositivos</dt><dd id="checkout-devices"></dd></div>
+        </dl>
+        <label class="quantity-field">Quantidade <input id="checkout-quantity" type="number" min="1" max="50" value="1" inputmode="numeric"></label>
+        <div class="checkout-total"><span>Total visual</span><strong id="checkout-total"></strong></div>
+        <button id="create-order-button" class="offer-button" type="button">Criar pedido</button>
+        <p id="checkout-message" role="status" aria-live="polite"></p>
+        <p class="security-note">Nenhum dado de cartão ou PIX é coletado nesta etapa. O pagamento PagBank será conectado posteriormente.</p>
+      </div>
+    </section>
+
+    <section id="customer-area" class="commerce-section" aria-labelledby="customer-title" hidden>
+      <div class="section-heading"><div><p class="eyebrow">MINHA CONTA</p><h2 id="customer-title">Compras e licenças</h2></div><p id="customer-email"></p></div>
+      <div class="account-grid">
+        <article class="state-card"><h3>Meus pedidos</h3><div id="orders-list"></div></article>
+        <article class="state-card"><h3>Minhas licenças</h3><div id="licenses-list"></div></article>
+      </div>
+    </section>
   </main>
+
+  <dialog id="auth-dialog" class="auth-dialog">
+    <form id="auth-form" method="dialog">
+      <div class="dialog-heading"><h2>Acessar minha conta</h2><button id="auth-close" type="button" aria-label="Fechar">×</button></div>
+      <button id="google-login" class="offer-button" type="button">Continuar com Google</button>
+      <p class="auth-divider">ou</p>
+      <label>E-mail <input id="auth-email" type="email" autocomplete="email" maxlength="160" required></label>
+      <label>Senha <input id="auth-password" type="password" autocomplete="current-password" minlength="6" maxlength="256" required></label>
+      <div class="auth-buttons"><button id="email-login" class="secondary-button" type="button">Entrar</button><button id="email-signup" class="secondary-button" type="button">Criar conta</button></div>
+      <p id="auth-message" role="status" aria-live="polite"></p>
+    </form>
+  </dialog>
 
   <footer class="site-footer">
     <span>© <span id="current-year"></span> GuiaSys Studio</span>
