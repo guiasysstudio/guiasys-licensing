@@ -244,4 +244,4 @@ if (/allow\s+[^;]+:\s*if\s+true\s*;/.test(storageCompact)) {
   fail("Storage contém regra allow ... if true.");
 }
 
-console.log("Firebase foundation + Functions C10 + Hosting multi-site/commerce C11-C14-A config OK.");
+console.log("Firebase foundation + Functions C10 + Hosting multi-site/commerce C11-C14-C config OK.");

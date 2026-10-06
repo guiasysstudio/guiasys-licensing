@@ -1,18 +1,45 @@
-# Pagamentos C14-A
+# Pagamentos C14-C
+
+## Provider operacional: PIX manual
+
+O provider ativo é `manual_pix`. A Function recebe `PAYMENT_PROVIDER=manual_pix` e `PAGBANK_ENABLED=false` por default. O PagBank permanece versionado para recuperação futura, mas seus secrets não são vinculados à Function, o checkout não o chama, os webhooks retornam `pagbank_disabled` sem consultar rede ou Firestore e a reconciliação administrativa fica bloqueada.
+
+As configurações financeiras ficam em `platformSettings/payments` e podem ser lidas/alteradas apenas pelo backend. O admin usa `GET|PATCH /api/v1/admin/payment-settings`, com permissão `managePlatformSettings` e autenticação recente no PATCH. `GET /api/v1/payment-config` entrega somente a projeção pública necessária ao pagamento. Na ausência do documento, os defaults de bootstrap são:
+
+- provider `manual_pix`, habilitado;
+- chave EVP `821fee6e-dbdd-46ea-adfc-8afffc89d422`;
+- marca `GuiaSys`, titular `Andrew Lindolfo`, cidade BR Code `JI PARANA`;
+- WhatsApp `5569993082084`;
+- confirmação manual habilitada.
+
+O backend gera localmente o payload EMV/BR Code com valor exato, moeda 986, país BR, GUI `br.gov.bcb.pix`, chave EVP, TXID próprio do pedido e CRC16/CCITT-FALSE. A biblioteca `qrcode` transforma exatamente esse mesmo payload em PNG data URL; não existe serviço bancário ou de QR Code externo.
+
+O fluxo é:
+
+1. o backend cria o pedido com preço obtido do projeto/plano e número `GS-NNNNNN` alocado por contador transacional;
+2. `POST /api/v1/customer/orders/{orderId}/payment` cria ou reutiliza o pagamento PIX manual;
+3. `POST /api/v1/customer/orders/{orderId}/payment-reported` aceita corpo vazio e move somente `pending_payment -> payment_reported`;
+4. o navegador abre o WhatsApp após a gravação, sem enviar mensagem automaticamente;
+5. um administrador com `viewOrders` + `manageOrders`, escopo no pedido e autenticação recente confirma em `POST /api/v1/admin/orders/{orderId}/confirm-payment`;
+6. a mesma transação marca o pagamento, executa o núcleo existente de emissão/renovação, vincula a licença e conclui o fulfillment uma única vez.
+
+Replays da criação, informação ou confirmação do pagamento são idempotentes. O cliente nunca informa preço, status pago, `paidAt`, UID, `licenseId` ou dados de fulfillment.
+
+## Modelo comum
 
 `payments/{paymentId}` armazena valor em centavos, moeda, provedor, referencia externa, metodo e timestamps. `paymentEvents/{eventId}` armazena somente metadados normalizados; payload bruto, PAN, CVV, senha, token e dados bancarios nao sao persistidos.
 
-Estados: `pending`, `processing`, `paid`, `failed`, `cancelled`, `refunded`. As transicoes sao validadas em `commerce-policy.js`. Tentativas e eventos possuem registros idempotentes.
+Estados incluem `pending`, `reported`, `processing`, `paid`, `failed`, `cancelled` e `refunded`. As transições são validadas em `commerce-policy.js`. Tentativas e eventos possuem registros idempotentes.
 
-O painel e somente leitura sob `viewPayments`. Nao existe endpoint publico ou administrativo que marque pagamento como pago. `finalizePaidOrder(orderId, paymentContext)` e interno, exige status pago, mesmo pedido/conta, BRL e valor exato, e executa emissao/renovacao junto ao marcador de fulfillment em uma transacao.
+O painel financeiro é somente leitura sob `viewPayments`; a única confirmação manual disponível fica no módulo de pedidos e exige `manageOrders`. `finalizePaidOrder(orderId, paymentContext)` continua interno, exige o mesmo pedido/conta, BRL e valor exato, e executa emissão/renovação junto ao marcador de fulfillment em uma transação.
 
-## C14-B
+## C14-B — histórico congelado
 
-O C14-B integra o PagBank real sem versionar credenciais.
+O código abaixo registra a implementação preservada da C14-B. Ela não está operacional na C14-C.
 
 ### C14-B.14 — fundacao do adapter e webhook
 
-- `PAGBANK_TOKEN` e `PAGBANK_SANDBOX_TOKEN` ficam no Secret Manager e sao vinculados explicitamente a Function.
+- Historicamente, `PAGBANK_TOKEN` e `PAGBANK_SANDBOX_TOKEN` ficavam no Secret Manager. Na C14-C eles não são lidos nem vinculados à Function.
 - Producao usa somente `https://api.pagseguro.com`; Sandbox usa somente `https://sandbox.api.pagseguro.com`. Nao existe fallback automatico entre ambientes.
 - O adapter consulta a chave publica `webhook`, mantem cache em memoria e valida `x-payload-signature` sobre os bytes originais com ECDSA + SHA-256 antes de interpretar o JSON.
 - O endpoint de producao e `POST /api/v1/webhooks/pagbank`.

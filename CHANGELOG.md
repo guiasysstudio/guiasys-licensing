@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.18.0 — 2026-10-06
+
+### C14-C — checkout PIX manual
+
+- provider operacional `manual_pix`, com PagBank preservado e congelado por kill switch;
+- BR Code/QR Code local, TXID por pedido e numeração transacional `GS-NNNNNN`;
+- fluxo cliente `pending_payment -> payment_reported` e envio manual de comprovante pelo WhatsApp;
+- confirmação administrativa idempotente, fulfillment único e licença em Minhas Compras;
+- configuração financeira restrita ao admin, testes de segurança, ownership, CRC16 e zero rede PagBank.
+
 ## 0.17.0 — 2026-10-05
 
 ### C14-A — fundação comercial e checkout

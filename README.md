@@ -2,15 +2,15 @@
 
 Central universal de licenciamento multi-projeto da GuiaSys Studio.
 
-## Comércio C14-A
+## Comércio C14-C
 
-A plataforma inclui conta global Firebase, checkout com pedidos multi-item, valores autoritativos em centavos, renovação da mesma key, pagamentos provider-agnostic e fulfillment interno idempotente. O site público usa uma sessão Firebase nomeada e acessa dados exclusivamente pela Function.
+A plataforma inclui conta global Firebase, checkout PIX manual, pedidos numerados, valores autoritativos em centavos, renovação da mesma key e fulfillment interno idempotente. O site público usa uma sessão Firebase nomeada e acessa dados exclusivamente pela Function.
 
-O adapter PagBank apenas responde `payment_provider_not_configured`; credenciais, cobrança, PIX, cartão e webhook real pertencem ao C14-B. Consulte [docs/COMMERCE.md](docs/COMMERCE.md) e [docs/PAYMENTS.md](docs/PAYMENTS.md).
+O PagBank da C14-B permanece preservado, porém congelado por `PAYMENT_PROVIDER=manual_pix` e `PAGBANK_ENABLED=false`; seus tokens não são necessários no runtime atual. Consulte [docs/COMMERCE.md](docs/COMMERCE.md), [docs/PAYMENTS.md](docs/PAYMENTS.md) e [docs/RELATORIO-C14C-MANUAL-PIX.md](docs/RELATORIO-C14C-MANUAL-PIX.md).
 
 ## Estado
 
-**Painel:** v0.16.0
+**Painel:** v0.18.0
 
 **API:** v2.1.0
 
@@ -57,7 +57,7 @@ O projeto usa arquitetura multi-site:
 
 O target `public` publica somente o frontend comercial em `public/`. Ele consome `GET /api/v1/catalog` pelo mesmo origin, mantém os rewrites `/api/**` e `/health` e nunca inclui os assets do painel administrativo.
 
-O C13 não implementa checkout, pedido, pagamento, webhook ou emissão automática. O CTA apenas conserva `projectId` e `planId` para o fluxo futuro. A integração PagBank começa no C14.
+O C14-C conecta o catálogo ao checkout PIX manual, à confirmação administrativa e ao mesmo núcleo de licenciamento já usado pelo painel. Cartão, boleto e PagBank não aparecem no checkout atual.
 
 Antes de cada deploy do painel:
 

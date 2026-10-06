@@ -1,4 +1,4 @@
-# Comercio C14-A
+# Comércio C14-C
 
 ## Modelo
 
@@ -6,6 +6,8 @@
 - `customerAccounts/{accountId}/projectCustomers/{projectId}`: vinculo idempotente com um unico customer por projeto.
 - `customerAccounts/{accountId}/orders/{orderId}` e `/licenses/{licenseId}`: referencias de ownership e listagem escalavel.
 - `orders/{orderId}`: snapshot da oferta, totais inteiros em centavos e estados separados.
+- `counters/orders`: contador transacional para números amigáveis `GS-NNNNNN`, sem usar contagem de documentos.
+- `platformSettings/payments`: configuração administrativa do provider e dos dados públicos do PIX.
 - `projects/{projectId}/customers/{customerId}` e `/licenses/{licenseId}`: modelos de licenciamento preservados.
 
 Planos novos ou alterados recebem `priceCents`. No primeiro pedido, planos legados sao convertidos de `price` por arredondamento decimal estrito e atualizados na mesma transacao; o navegador nunca envia preco, duracao ou limite de dispositivos.
@@ -15,7 +17,8 @@ Planos novos ou alterados recebem `priceCents`. No primeiro pedido, planos legad
 - `GET /api/v1/customer/me`
 - `GET|POST /api/v1/customer/orders`
 - `GET /api/v1/customer/orders/{orderId}`
-- `POST /api/v1/customer/orders/{orderId}/payment` (somente PIX Sandbox)
+- `POST /api/v1/customer/orders/{orderId}/payment` (PIX manual operacional)
+- `POST /api/v1/customer/orders/{orderId}/payment-reported`
 - `POST /api/v1/customer/orders/{orderId}/cancel`
 - `GET /api/v1/customer/licenses`
 - `POST /api/v1/customer/licenses/{licenseId}/renewal-order`
@@ -30,7 +33,17 @@ Renovacao valida ownership e cria item `renewal`, sem alterar a licenca. Apos co
 
 Hashes de idempotency keys ficam em subcolecoes da conta. Tentativas, eventos e fulfillment tambem sao transacionais e idempotentes.
 
-## Pagamento PIX Sandbox
+## Pagamento PIX manual
+
+O pedido nasce em `pending_payment`, com snapshots de cliente, produto, plano, duração e preço, além de `paymentProvider=manual_pix`, `paymentMethod=pix` e TXID determinístico. O pagamento local contém o BR Code e o QR Code correspondente. Informar pagamento move pedido/pagamento para `payment_reported`/`reported`, sem marcar como pago e sem emitir licença.
+
+O administrador confirma somente pedidos informados. A confirmação chama o mesmo `finalizePaidOrder()` já usado pelo comércio, valida pagamento, conta, valor e moeda novamente e cria ou renova a licença dentro da transação de fulfillment. O replay retorna o pedido já concluído e não duplica licença, renovação ou logs críticos.
+
+As listas do cliente partem das referências em `customerAccounts/{accountId}` e nunca aceitam um UID no payload. Firestore e Storage permanecem `deny-all` para clientes; leituras e mutações passam pela Function autenticada.
+
+## PagBank Sandbox — histórico congelado
+
+Esta seção descreve a C14-B preservada. Na C14-C ela só pode ser exercitada em testes históricos quando `PAYMENT_PROVIDER=pagbank` e `PAGBANK_ENABLED=true` são definidos explicitamente. O runtime publicado usa os defaults opostos e não vincula tokens PagBank.
 
 O início do pagamento valida autenticação, ownership e estado do pedido. A rota fica fechada por padrão e exige simultaneamente `PAGBANK_SANDBOX_CHECKOUT_ENABLED=true` e o Firebase UID em `PAGBANK_SANDBOX_TESTER_UIDS` (lista separada por vírgulas). Uma tentativa `payments/{paymentId}` com `provider=pagbank`, `providerEnvironment=sandbox` e IDs externos inicialmente vazios é criada antes do acesso ao PagBank. O backend usa os snapshots do pedido e o cadastro persistido da conta para construir a cobrança; preço, descrição, produto e comprador enviados pelo navegador não são aceitos.
 
