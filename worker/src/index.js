@@ -11,7 +11,13 @@ import { assertCents, moneyToCents, transitionOrderStatus } from "./commerce-pol
 import { issueLicenseInTransaction } from "./license-service.js";
 import { fetchWithTimeout } from "./network.js";
 import { PagBankProvider } from "./payments/payment-provider.js";
-import { recordPaymentEvent } from "./payments/payment-service.js";
+import {
+  claimPaymentSubmission,
+  createPaymentAttempt,
+  linkPaymentProviderResult,
+  recordPaymentEvent,
+  recordPaymentSubmissionFailure
+} from "./payments/payment-service.js";
 import { createFirestoreAtomicClient } from "./firestore-atomic.js";
 import {
   assertLicenseCanActivate,
@@ -36,6 +42,8 @@ import {
   validateLicenseActionPayload,
   validateLicenseCreatePayload,
   validateOrderCreatePayload,
+  validatePaymentCreatePayload,
+  validatePaymentReconcilePayload,
   validatePlanPayload,
   validateProjectPayload,
   validatePublicLicensePayload,
@@ -2701,6 +2709,7 @@ async function ensureCustomerAccount(env, user) {
       emailVerified: true,
       displayName,
       phone: current?.phone || "",
+      taxId: current?.taxId || "",
       status: current?.status || "active",
       createdAt: current?.createdAt || now,
       updatedAt: now
@@ -2820,6 +2829,7 @@ async function createCustomerOrder(env, account, rawBody) {
       items,
       provider: "pagbank",
       providerOrderId: "",
+      activePaymentId: "",
       paymentStatus: "pending",
       processingStatus: "pending",
       fulfillmentStatus: "pending",
@@ -2856,6 +2866,360 @@ async function listOwnedOrders(env, accountId) {
     if (order?.accountId === accountId) orders.push(customerOrderView(order));
   }
   return orders.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+function pagBankCustomerFromAccount(account) {
+  const name = String(account.displayName || "").trim();
+  const email = String(account.email || "").trim().toLowerCase();
+  const taxId = String(account.taxId || "").replace(/\D/g, "");
+  if (!name || name.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !validBrazilianTaxId(taxId)) {
+    throw Object.assign(new Error("Complete nome, e-mail verificado e CPF/CNPJ no cadastro antes de pagar."), {
+      status: 409,
+      reason: "payment_customer_incomplete"
+    });
+  }
+
+  const customer = { name, email, tax_id: taxId };
+  const phone = String(account.phone || "").replace(/\D/g, "");
+  if (phone) {
+    const national = phone.startsWith("55") && phone.length >= 12 ? phone.slice(2) : phone;
+    if (!/^\d{10,11}$/.test(national)) {
+      throw Object.assign(new Error("O telefone do cadastro não possui formato brasileiro válido."), {
+        status: 409,
+        reason: "payment_customer_incomplete"
+      });
+    }
+    customer.phones = [{
+      country: "55",
+      area: national.slice(0, 2),
+      number: national.slice(2),
+      type: national.length === 11 ? "MOBILE" : "LANDLINE"
+    }];
+  }
+  return customer;
+}
+
+function validBrazilianTaxId(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!/^(?:\d{11}|\d{14})$/.test(digits) || /^(\d)\1+$/.test(digits)) return false;
+
+  const checkDigit = (base, weights) => {
+    const sum = weights.reduce((total, weight, index) => total + Number(base[index]) * weight, 0);
+    const remainder = sum % 11;
+    return remainder < 2 ? 0 : 11 - remainder;
+  };
+
+  if (digits.length === 11) {
+    const first = checkDigit(digits.slice(0, 9), [10, 9, 8, 7, 6, 5, 4, 3, 2]);
+    const second = checkDigit(`${digits.slice(0, 9)}${first}`, [11, 10, 9, 8, 7, 6, 5, 4, 3, 2]);
+    return digits.endsWith(`${first}${second}`);
+  }
+
+  const first = checkDigit(digits.slice(0, 12), [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+  const second = checkDigit(`${digits.slice(0, 12)}${first}`, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+  return digits.endsWith(`${first}${second}`);
+}
+
+function sandboxCheckoutTesterUids(env) {
+  return new Set(
+    String(env.PAGBANK_SANDBOX_TESTER_UIDS || "")
+      .split(/[\s,;]+/)
+      .map(value => value.trim())
+      .filter(Boolean)
+  );
+}
+
+function requireSandboxCheckoutAccess(env, account) {
+  if (String(env.PAGBANK_SANDBOX_CHECKOUT_ENABLED || "").trim().toLowerCase() !== "true") {
+    throw Object.assign(new Error("Checkout Sandbox está desabilitado."), {
+      status: 403,
+      reason: "sandbox_checkout_disabled"
+    });
+  }
+  if (!sandboxCheckoutTesterUids(env).has(String(account.firebaseUid || ""))) {
+    throw Object.assign(new Error("Esta conta não está autorizada para homologação Sandbox."), {
+      status: 403,
+      reason: "sandbox_checkout_forbidden"
+    });
+  }
+}
+
+function pagBankItemsFromOrder(order) {
+  if (!Array.isArray(order.items) || !order.items.length) {
+    throw Object.assign(new Error("Pedido não possui snapshots de itens válidos."), {
+      status: 409,
+      reason: "order_snapshot_orphan"
+    });
+  }
+  let total = 0;
+  const items = order.items.map((item, index) => {
+    const quantity = Number(item.quantity);
+    const unitAmount = Number(item.unitPriceCents);
+    const lineTotal = Number(item.lineTotalCents);
+    const name = [item.projectNameSnapshot, item.planNameSnapshot]
+      .map(value => String(value || "").trim())
+      .filter(Boolean)
+      .join(" - ")
+      .slice(0, 100);
+    if (
+      !name ||
+      !Number.isSafeInteger(quantity) || quantity < 1 ||
+      !Number.isSafeInteger(unitAmount) || unitAmount < 1 ||
+      !Number.isSafeInteger(lineTotal) || lineTotal !== unitAmount * quantity
+    ) {
+      throw Object.assign(new Error("Snapshot de item do pedido é inválido."), {
+        status: 409,
+        reason: "order_snapshot_invalid"
+      });
+    }
+    total += lineTotal;
+    return {
+      reference_id: `${order.orderId}-${index + 1}`,
+      name,
+      quantity,
+      unit_amount: unitAmount
+    };
+  });
+  if (!Number.isSafeInteger(total) || total !== order.totalCents || order.currency !== "BRL") {
+    throw Object.assign(new Error("Total ou moeda do pedido é inválido."), {
+      status: 409,
+      reason: "payment_amount_mismatch"
+    });
+  }
+  return items;
+}
+
+function pagBankPixPayload(order, account, paymentId) {
+  return {
+    reference_id: order.orderId,
+    customer: pagBankCustomerFromAccount(account),
+    items: pagBankItemsFromOrder(order),
+    charges: [{
+      reference_id: paymentId,
+      description: `Pedido ${order.orderId}`,
+      amount: {
+        value: order.totalCents,
+        currency: "BRL"
+      },
+      payment_method: {
+        type: "PIX"
+      }
+    }]
+  };
+}
+
+function customerPaymentView(payment, idempotentReplay) {
+  return {
+    paymentId: payment.paymentId,
+    orderId: payment.orderId,
+    status: payment.status,
+    method: payment.method,
+    amountCents: payment.amountCents,
+    currency: payment.currency,
+    providerOrderId: payment.providerOrderId,
+    providerChargeId: payment.providerChargeId,
+    pixCode: payment.pixCode || "",
+    pixExpiration: payment.pixExpiration || null,
+    pixQrCodeUrl: payment.pixQrCodeUrl || "",
+    idempotentReplay: Boolean(idempotentReplay)
+  };
+}
+
+async function linkPagBankPayment(env, provider, account, order, payment, payload) {
+  const normalized = provider.normalizePayment(payload, {
+    orderId: order.orderId,
+    paymentId: payment.paymentId
+  });
+  return await linkPaymentProviderResult({
+    atomicClient: atomicClient(env),
+    paymentId: payment.paymentId,
+    orderId: order.orderId,
+    accountId: account.id,
+    provider: "pagbank",
+    providerEnvironment: "sandbox",
+    result: normalized,
+    now: nowIso
+  });
+}
+
+async function startSandboxPixPayment(env, account, orderId, rawBody) {
+  orderId = assertCommerceId("orders", orderId);
+  const body = validatePaymentCreatePayload(rawBody);
+  requireSandboxCheckoutAccess(env, account);
+  await getOwnedOrder(env, account.id, orderId);
+  const attempt = await createPaymentAttempt({
+    atomicClient: atomicClient(env),
+    orderId,
+    accountId: account.id,
+    provider: "pagbank",
+    providerEnvironment: "sandbox",
+    method: body.method,
+    idempotencyKey: body.idempotencyKey,
+    hash: sha256Hex,
+    randomId,
+    now: nowIso
+  });
+  const payment = attempt.payment;
+  const order = await getDoc(env, `orders/${orderId}`);
+  if (!order || order.accountId !== account.id) {
+    throw Object.assign(new Error("Pedido não encontrado."), { status: 404, reason: "order_not_found" });
+  }
+  const provider = pagBankProvider(env, "sandbox");
+
+  if (payment.providerOrderId) {
+    const current = await provider.getPayment(payment.providerOrderId);
+    const linked = await linkPagBankPayment(env, provider, account, order, payment, current);
+    return customerPaymentView(linked.payment, true);
+  }
+
+  const providerPayload = pagBankPixPayload(order, account, payment.paymentId);
+  await claimPaymentSubmission({
+    atomicClient: atomicClient(env),
+    paymentId: payment.paymentId,
+    orderId,
+    accountId: account.id,
+    provider: "pagbank",
+    providerEnvironment: "sandbox",
+    now: nowIso
+  });
+
+  let providerResponse;
+  try {
+    providerResponse = await provider.createPayment(providerPayload);
+  } catch (error) {
+    const uncertain = error?.reason !== "pagbank_request_rejected";
+    try {
+      await recordPaymentSubmissionFailure({
+        atomicClient: atomicClient(env),
+        paymentId: payment.paymentId,
+        orderId,
+        accountId: account.id,
+        provider: "pagbank",
+        providerEnvironment: "sandbox",
+        uncertain,
+        providerHttpStatus: Number.isInteger(error?.details?.providerStatus)
+          ? error.details.providerStatus
+          : null,
+        providerErrorCode: error?.details?.providerCode || "",
+        providerErrorCategory: error?.details?.category || (uncertain ? "uncertain" : "definitive"),
+        now: nowIso
+      });
+    } catch (recordError) {
+      structuredLog(env, "error", "pagbank.payment_submission_state_write_failed", {
+        paymentId: payment.paymentId,
+        orderId,
+        reason: recordError?.reason || "unknown"
+      });
+    }
+    throw error;
+  }
+
+  try {
+    const linked = await linkPagBankPayment(env, provider, account, order, payment, providerResponse);
+    return customerPaymentView(linked.payment, attempt.idempotentReplay);
+  } catch (error) {
+    try {
+      await recordPaymentSubmissionFailure({
+        atomicClient: atomicClient(env),
+        paymentId: payment.paymentId,
+        orderId,
+        accountId: account.id,
+        provider: "pagbank",
+        providerEnvironment: "sandbox",
+        uncertain: true,
+        now: nowIso
+      });
+    } catch (recordError) {
+      structuredLog(env, "error", "pagbank.payment_link_state_write_failed", {
+        paymentId: payment.paymentId,
+        orderId,
+        reason: recordError?.reason || "unknown"
+      });
+    }
+    throw error;
+  }
+}
+
+function adminPaymentReconciliationView(payment) {
+  return {
+    ...customerPaymentView(payment, true),
+    providerEnvironment: payment.providerEnvironment,
+    providerStatus: payment.providerStatus || "",
+    submissionState: payment.submissionState || "",
+    pixQrCodeId: payment.pixQrCodeId || "",
+    providerPaidAt: payment.providerPaidAt || null,
+    updatedAt: payment.updatedAt
+  };
+}
+
+async function reconcileSandboxPaymentAsAdmin(env, admin, paymentId, rawBody) {
+  paymentId = assertCommerceId("payments", paymentId);
+  const body = validatePaymentReconcilePayload(rawBody);
+  const payment = await getDoc(env, `payments/${paymentId}`);
+  const order = payment?.orderId
+    ? await getDoc(env, `orders/${assertCommerceId("orders", payment.orderId)}`)
+    : null;
+  if (!payment || !order || !adminCanViewCommerceOrder(admin, order)) {
+    throw Object.assign(new Error("Pagamento não encontrado."), { status: 404, reason: "payment_not_found" });
+  }
+  if (payment.provider !== "pagbank" || payment.providerEnvironment !== "sandbox") {
+    throw Object.assign(new Error("Somente pagamentos PagBank Sandbox podem ser reconciliados nesta operação."), {
+      status: 409,
+      reason: "payment_environment_mismatch"
+    });
+  }
+  if (!["unknown", "submitting", "linked"].includes(payment.submissionState)) {
+    throw Object.assign(new Error("Pagamento não está em estado reconciliável."), {
+      status: 409,
+      reason: "payment_not_reconcilable"
+    });
+  }
+
+  const suppliedProviderOrderId = String(body.providerOrderId || "");
+  if (
+    payment.providerOrderId &&
+    suppliedProviderOrderId &&
+    payment.providerOrderId !== suppliedProviderOrderId
+  ) {
+    throw Object.assign(new Error("O Order ID informado diverge do vínculo local."), {
+      status: 409,
+      reason: "payment_provider_order_mismatch"
+    });
+  }
+  const providerOrderId = payment.providerOrderId || suppliedProviderOrderId;
+  if (!providerOrderId) {
+    throw Object.assign(new Error("Informe o ORDE_ identificado operacionalmente no PagBank."), {
+      status: 409,
+      reason: "provider_order_id_required"
+    });
+  }
+
+  const provider = pagBankProvider(env, "sandbox");
+  const remote = await provider.getPayment(providerOrderId);
+  let linked;
+  try {
+    linked = await linkPagBankPayment(env, provider, { id: payment.accountId }, order, payment, remote);
+  } catch (error) {
+    if ([
+      "payment_provider_order_mismatch",
+      "payment_provider_charge_mismatch",
+      "payment_amount_mismatch",
+      "payment_method_mismatch",
+      "invalid_pagbank_response"
+    ].includes(error?.reason)) {
+      throw Object.assign(error, { status: 409 });
+    }
+    throw error;
+  }
+  structuredLog(env, "info", "pagbank.sandbox_payment_reconciled", {
+    paymentId,
+    orderId: order.orderId,
+    providerOrderId: linked.payment.providerOrderId,
+    providerChargeId: linked.payment.providerChargeId,
+    providerStatus: linked.payment.providerStatus,
+    actor: admin.email || admin.uid
+  });
+  return adminPaymentReconciliationView(linked.payment);
 }
 
 async function cancelOwnedOrder(env, accountId, orderId, actor) {
@@ -2929,7 +3293,7 @@ async function createRenewalOrder(env, account, licenseId, rawBody) {
     const order = {
       orderId, accountId: account.id, firebaseUid: account.firebaseUid, status: "pending_payment", currency: "BRL",
       subtotalCents: unitPriceCents, totalCents: unitPriceCents, items: [item], provider: "pagbank", providerOrderId: "",
-      paymentStatus: "pending", processingStatus: "pending", fulfillmentStatus: "pending", idempotencyKey: body.idempotencyKey,
+      activePaymentId: "", paymentStatus: "pending", processingStatus: "pending", fulfillmentStatus: "pending", idempotencyKey: body.idempotencyKey,
       resultingLicenses: [], createdAt: now, updatedAt: now, paidAt: null, cancelledAt: null
     };
     tx.create(`orders/${orderId}`, order);
@@ -3012,12 +3376,34 @@ export async function finalizePaidOrder(env, orderId, paymentContext) {
     }
     const payment = existingPayment || {
       paymentId, orderId, accountId: order.accountId, provider: String(paymentContext.provider || "pagbank"),
-      providerPaymentId: String(paymentContext.providerPaymentId || ""), status: "paid", amountCents: order.totalCents,
+      providerEnvironment: String(paymentContext.providerEnvironment || ""),
+      providerOrderId: String(paymentContext.providerOrderId || ""),
+      providerChargeId: String(paymentContext.providerChargeId || ""),
+      // Legado/depreciado: não representa o PagBank Order ID.
+      providerPaymentId: String(paymentContext.providerPaymentId || paymentContext.providerChargeId || ""),
+      status: "paid", amountCents: order.totalCents,
       currency: "BRL", method: String(paymentContext.method || "unknown"), createdAt: now, updatedAt: now,
-      paidAt: String(paymentContext.paidAt || now), failedAt: null, cancelledAt: null
+      providerPaidAt: paymentContext.providerPaidAt || paymentContext.paidAt || null,
+      paidAt: paymentContext.paidAt ? String(paymentContext.paidAt) : null,
+      failedAt: null, cancelledAt: null
     };
     existingPayment ? tx.set(`payments/${paymentId}`, { ...payment, updatedAt: now }) : tx.create(`payments/${paymentId}`, payment);
-    const fulfilled = { ...order, status: "fulfilled", paymentStatus: "paid", processingStatus: "completed", fulfillmentStatus: "fulfilled", paymentId, provider: payment.provider, providerOrderId: payment.providerPaymentId, paidAt: payment.paidAt, fulfilledAt: now, updatedAt: now, resultingLicenses: results };
+    const fulfilled = {
+      ...order,
+      status: "fulfilled",
+      paymentStatus: "paid",
+      processingStatus: "completed",
+      fulfillmentStatus: "fulfilled",
+      activePaymentId: "",
+      paymentId,
+      provider: payment.provider,
+      providerOrderId: payment.providerOrderId || order.providerOrderId || "",
+      providerChargeId: payment.providerChargeId || order.providerChargeId || "",
+      paidAt: payment.paidAt || null,
+      fulfilledAt: now,
+      updatedAt: now,
+      resultingLicenses: results
+    };
     tx.set(`orders/${orderId}`, fulfilled);
     queuePlatformLogInTransaction(tx, "order.fulfillment_started", { orderId, paymentId }, "payment.fulfillment", now);
     queuePlatformLogInTransaction(tx, "order.fulfilled", { orderId, paymentId, resultCount: results.length }, "payment.fulfillment", now);
@@ -3039,6 +3425,9 @@ async function handleCustomer(request, env, origin, url, user) {
   if (parts[0] === "orders" && parts[1]) {
     if (parts.length === 2 && request.method === "GET") return json({ ok: true, order: await getOwnedOrder(env, account.id, parts[1]) }, 200, origin);
     if (parts.length === 3 && parts[2] === "cancel" && request.method === "POST") return json({ ok: true, order: await cancelOwnedOrder(env, account.id, parts[1], account.email) }, 200, origin);
+    if (parts.length === 3 && parts[2] === "payment" && request.method === "POST") {
+      return json({ ok: true, payment: await startSandboxPixPayment(env, account, parts[1], await readJson(request)) }, 201, origin);
+    }
   }
   if (parts.length === 1 && parts[0] === "licenses" && request.method === "GET") {
     return json({ ok: true, licenses: await listOwnedLicenses(env, account.id) }, 200, origin);
@@ -3249,6 +3638,14 @@ async function handleAdmin(request, env, origin, url, admin) {
 
   if (parts[0] === "payments") {
     requirePermission(admin, "viewPayments", "Você não possui permissão para visualizar pagamentos.");
+    if (parts.length === 3 && parts[2] === "reconcile" && request.method === "POST") {
+      requirePermission(admin, "manageOrders", "Você não possui permissão para reconciliar pagamentos.");
+      assertRecentAuthentication(admin);
+      return json({
+        ok: true,
+        payment: await reconcileSandboxPaymentAsAdmin(env, admin, parts[1], await readJson(request))
+      }, 200, origin);
+    }
     if (request.method !== "GET") return errorResponse(origin, 405, "method_not_allowed", "Pagamentos são somente leitura no painel.", { expectedMethods: ["GET"] });
     if (parts.length === 1) {
       const visiblePayments = [];
@@ -3798,6 +4195,14 @@ async function handlePagBankWebhook(request, env, environment) {
   }
 
   for (const normalized of events) {
+    if (!normalized.status) {
+      structuredLog(env, "warn", "pagbank.webhook_unknown_status", {
+        providerOrderId: normalized.providerOrderId,
+        providerChargeId: normalized.providerChargeId,
+        providerStatus: normalized.providerStatus
+      });
+      continue;
+    }
     let paymentId;
     try {
       paymentId = assertCommerceId("payments", normalized.paymentId);
@@ -3885,8 +4290,10 @@ async function handlePagBankWebhook(request, env, environment) {
         provider: "pagbank",
         providerPaymentId: normalized.providerChargeId,
         providerOrderId: normalized.providerOrderId,
+        providerChargeId: normalized.providerChargeId,
         method: normalized.method,
-        paidAt: normalized.occurredAt || recorded.payment.paidAt
+        providerPaidAt: normalized.providerPaidAt || recorded.payment.providerPaidAt,
+        paidAt: normalized.providerPaidAt || recorded.payment.paidAt
       });
     }
   }

@@ -15,6 +15,7 @@ Planos novos ou alterados recebem `priceCents`. No primeiro pedido, planos legad
 - `GET /api/v1/customer/me`
 - `GET|POST /api/v1/customer/orders`
 - `GET /api/v1/customer/orders/{orderId}`
+- `POST /api/v1/customer/orders/{orderId}/payment` (somente PIX Sandbox)
 - `POST /api/v1/customer/orders/{orderId}/cancel`
 - `GET /api/v1/customer/licenses`
 - `POST /api/v1/customer/licenses/{licenseId}/renewal-order`
@@ -28,3 +29,11 @@ Criacao consulta projeto/plano publicados, cria snapshots e soma `unitPriceCents
 Renovacao valida ownership e cria item `renewal`, sem alterar a licenca. Apos confirmacao interna, `finalizePaidOrder()` chama `transitionLicense("renew")`, preservando a mesma key e as regras existentes.
 
 Hashes de idempotency keys ficam em subcolecoes da conta. Tentativas, eventos e fulfillment tambem sao transacionais e idempotentes.
+
+## Pagamento PIX Sandbox
+
+O início do pagamento valida autenticação, ownership e estado do pedido. A rota fica fechada por padrão e exige simultaneamente `PAGBANK_SANDBOX_CHECKOUT_ENABLED=true` e o Firebase UID em `PAGBANK_SANDBOX_TESTER_UIDS` (lista separada por vírgulas). Uma tentativa `payments/{paymentId}` com `provider=pagbank`, `providerEnvironment=sandbox` e IDs externos inicialmente vazios é criada antes do acesso ao PagBank. O backend usa os snapshots do pedido e o cadastro persistido da conta para construir a cobrança; preço, descrição, produto e comprador enviados pelo navegador não são aceitos.
+
+Depois do `POST /orders`, uma transação confere novamente pedido, conta, ambiente, valor, moeda e IDs antes de vincular a resposta normalizada ao payment e os vínculos mínimos ao order. O order não é marcado como pago e nenhum fulfillment ocorre nessa etapa.
+
+Replays com a mesma chave não criam outro payment, e `order.activePaymentId` reserva atomicamente uma única tentativa ativa mesmo quando chaves diferentes chegam em concorrência. Cobranças já vinculadas são consultadas por `providerOrderId`; envios com resultado incerto ficam bloqueados para novo POST, pois a API Order não possui idempotência remota documentada no contrato consultado. Um administrador com `viewPayments` e `manageOrders`, autenticação recente e escopo no pedido pode reconciliar Sandbox em `POST /api/v1/admin/payments/{paymentId}/reconcile`, informando somente um `providerOrderId` (`ORDE_...`) confirmado operacionalmente. Produção permanece fail-closed enquanto `POST /orders` depender da whitelist. O evento `ORDER.CHARGE` segue pendente no protocolo PagBank `1457285324`, sem alteração nos endpoints ou na validação de assinatura dos webhooks.

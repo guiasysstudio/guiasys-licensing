@@ -77,20 +77,58 @@ function publicKeyFromBase64(value) {
 }
 
 function parseProviderBody(text) {
-  if (!text) return {};
+  if (!text) return { data: {}, parsed: true };
   try {
-    return JSON.parse(text);
+    return { data: JSON.parse(text), parsed: true };
   } catch {
-    return {};
+    return { data: {}, parsed: false };
   }
 }
 
 function statusFromCharge(charge) {
-  const providerStatus = String(charge?.status || "").toUpperCase();
+  const providerStatus = String(charge?.status || "").toUpperCase().slice(0, 64);
   return {
     providerStatus,
-    status: PAGBANK_STATUS_MAP[providerStatus] || "processing"
+    status: PAGBANK_STATUS_MAP[providerStatus] || null
   };
+}
+
+function sanitizedProviderCode(data) {
+  const first = Array.isArray(data?.error_messages) ? data.error_messages[0] : null;
+  const candidates = [first?.code, first?.error, data?.error_code, data?.code, data?.error];
+  const code = candidates.find(value => typeof value === "string" || typeof value === "number");
+  return String(code || "").trim().slice(0, 80);
+}
+
+function deterministicHttpRejection(status, parsed, providerCode) {
+  return parsed && Boolean(providerCode) && [400, 401, 403, 404, 405, 415, 422].includes(status);
+}
+
+function providerTimestamp(value) {
+  const source = String(value || "").trim();
+  if (!source || !Number.isFinite(Date.parse(source))) return null;
+  return source;
+}
+
+function providerIdentifier(value, pattern, message, reason) {
+  const id = String(value || "").trim();
+  if (!pattern.test(id)) {
+    throw providerError(message, reason);
+  }
+  return id;
+}
+
+function safeQrCodeUrl(value, environment) {
+  if (!value) return "";
+  try {
+    const url = new URL(String(value));
+    const base = new URL(PAGBANK_BASE_URLS[environment]);
+    return url.protocol === "https:" && url.origin === base.origin && !url.username && !url.password
+      ? url.href
+      : "";
+  } catch {
+    return "";
+  }
 }
 
 export class PaymentProvider {
@@ -161,17 +199,29 @@ export class PagBankProvider extends PaymentProvider {
     );
 
     const text = await response.text();
-    const data = parseProviderBody(text);
+    const { data, parsed } = parseProviderBody(text);
 
     if (!response.ok) {
-      const first = Array.isArray(data?.error_messages) ? data.error_messages[0] : null;
+      const providerCode = sanitizedProviderCode(data);
+      const definitive = deterministicHttpRejection(response.status, parsed, providerCode);
       throw providerError(
-        "PagBank recusou a operação.",
-        "pagbank_request_failed",
+        definitive
+          ? "PagBank rejeitou a operação."
+          : "Não foi possível confirmar o resultado da operação PagBank.",
+        definitive ? "pagbank_request_rejected" : "pagbank_request_uncertain",
         {
           providerStatus: response.status,
-          providerCode: String(first?.code || first?.error || "")
+          providerCode,
+          category: definitive ? "definitive" : "uncertain"
         }
+      );
+    }
+
+    if (!parsed) {
+      throw providerError(
+        "PagBank retornou uma resposta inesperada.",
+        "pagbank_request_uncertain",
+        { providerStatus: response.status, providerCode: "", category: "uncertain" }
       );
     }
 
@@ -194,6 +244,62 @@ export class PagBankProvider extends PaymentProvider {
       });
     }
     return await this.#request(`/orders/${encodeURIComponent(id)}`);
+  }
+
+  normalizePayment(payload, { orderId, paymentId } = {}) {
+    const providerOrderId = providerIdentifier(
+      payload?.id,
+      /^ORDE_[A-Za-z0-9-]+$/,
+      "Resposta PagBank sem pedido válido.",
+      "invalid_pagbank_response"
+    );
+    if (String(payload?.reference_id || "") !== String(orderId || "")) {
+      throw providerError("Referência do pedido PagBank divergente.", "payment_provider_order_mismatch");
+    }
+
+    const charges = Array.isArray(payload?.charges) ? payload.charges : [];
+    const charge = charges.find(item => String(item?.reference_id || "") === String(paymentId || ""));
+    if (!charge) {
+      throw providerError("Resposta PagBank sem a cobrança esperada.", "payment_provider_charge_mismatch");
+    }
+    const providerChargeId = providerIdentifier(
+      charge.id,
+      /^CHAR_[A-Za-z0-9-]+$/,
+      "Resposta PagBank sem cobrança válida.",
+      "invalid_pagbank_response"
+    );
+    const method = String(charge?.payment_method?.type || "").toUpperCase();
+    if (method !== "PIX") {
+      throw providerError("Resposta PagBank não corresponde a PIX.", "payment_method_mismatch");
+    }
+    const amountCents = Number(charge?.amount?.value);
+    const currency = String(charge?.amount?.currency || "").toUpperCase();
+    if (!Number.isSafeInteger(amountCents) || amountCents < 0 || currency !== "BRL") {
+      throw providerError("Resposta PagBank contém valor inválido.", "payment_amount_mismatch");
+    }
+    const { providerStatus, status } = statusFromCharge(charge);
+    const pngLink = (Array.isArray(charge?.links) ? charge.links : []).find(link => (
+      String(link?.rel || "").toUpperCase() === "QRCODE.PNG" &&
+      String(link?.type || "GET").toUpperCase() === "GET"
+    ));
+
+    return {
+      orderId: String(orderId || ""),
+      paymentId: String(paymentId || ""),
+      providerOrderId,
+      providerChargeId,
+      providerPaymentId: providerChargeId,
+      providerStatus,
+      status,
+      method: "pix",
+      amountCents,
+      currency,
+      pixCode: String(charge?.qr_code?.text || ""),
+      pixQrCodeId: String(charge?.qr_code?.id || ""),
+      pixExpiration: String(charge?.payment_method?.pix?.expiration_date || "") || null,
+      pixQrCodeUrl: safeQrCodeUrl(pngLink?.href, this.#environment),
+      providerPaidAt: providerTimestamp(charge?.paid_at)
+    };
   }
 
   async cancelPayment({ chargeId, amountCents = null } = {}) {
@@ -302,6 +408,7 @@ export class PagBankProvider extends PaymentProvider {
         providerStatus,
         eventType: `charge.${providerStatus.toLowerCase() || "unknown"}`,
         occurredAt: occurredAt || null,
+        providerPaidAt: providerTimestamp(charge?.paid_at),
         amountCents,
         currency,
         method

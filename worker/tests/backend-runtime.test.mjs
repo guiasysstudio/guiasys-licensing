@@ -35,9 +35,13 @@ test("entrypoint usa onRequest v2, região brasileira e Secret Manager", () => {
   assert.match(entry, /defineSecret\("ADMIN_FIREBASE_UID"\)/);
   assert.match(entry, /defineSecret\("PAGBANK_TOKEN"\)/);
   assert.match(entry, /defineSecret\("PAGBANK_SANDBOX_TOKEN"\)/);
+  assert.match(entry, /defineString\("PAGBANK_SANDBOX_CHECKOUT_ENABLED",\s*\{\s*default:\s*"false"/s);
+  assert.match(entry, /defineString\("PAGBANK_SANDBOX_TESTER_UIDS",\s*\{\s*default:\s*""/s);
   assert.match(entry, /region:\s*"southamerica-east1"/);
   assert.match(entry, /maxInstances:\s*20/);
   assert.match(entry, /secrets:\s*\[ADMIN_FIREBASE_UID, PAGBANK_TOKEN, PAGBANK_SANDBOX_TOKEN\]/);
+  assert.match(entry, /PAGBANK_SANDBOX_CHECKOUT_ENABLED:\s*PAGBANK_SANDBOX_CHECKOUT_ENABLED\.value\(\)/);
+  assert.match(entry, /PAGBANK_SANDBOX_TESTER_UIDS:\s*PAGBANK_SANDBOX_TESTER_UIDS\.value\(\)/);
   assert.match(entry, /invoker:\s*"public"/);
 });
 

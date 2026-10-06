@@ -43,6 +43,62 @@ test("PagBank mantém URLs de sandbox e produção explicitamente separadas", as
   assert.equal(calls[1].init.headers.Authorization, "Bearer production-token");
 });
 
+test("PagBank distingue rejeição definitiva de resultado HTTP incerto sem expor corpo", async t => {
+  for (const scenario of [
+    { status: 400, reason: "pagbank_request_rejected", category: "definitive" },
+    { status: 429, reason: "pagbank_request_uncertain", category: "uncertain" },
+    { status: 500, reason: "pagbank_request_uncertain", category: "uncertain" },
+    { status: 502, reason: "pagbank_request_uncertain", category: "uncertain" }
+  ]) {
+    await t.test(String(scenario.status), async () => {
+      const provider = new PagBankProvider({
+        environment: "sandbox",
+        token: "sandbox-token",
+        fetchImpl: async () => jsonResponse({
+          error_messages: [{ code: "provider-code", description: "sensitive-description" }],
+          raw_sensitive_field: "must-not-leak"
+        }, scenario.status)
+      });
+      await assert.rejects(
+        () => provider.createPayment({ reference_id: "test" }),
+        error => {
+          assert.equal(error.reason, scenario.reason);
+          assert.equal(error.details.providerStatus, scenario.status);
+          assert.equal(error.details.providerCode, "provider-code");
+          assert.equal(error.details.category, scenario.category);
+          assert.equal(JSON.stringify(error).includes("must-not-leak"), false);
+          assert.equal(JSON.stringify(error).includes("sensitive-description"), false);
+          return true;
+        }
+      );
+    });
+  }
+});
+
+test("resposta 2xx sem JSON é tratada como resultado incerto", async () => {
+  const provider = new PagBankProvider({
+    environment: "sandbox",
+    token: "sandbox-token",
+    fetchImpl: async () => new Response("not-json", { status: 201 })
+  });
+  await assert.rejects(
+    () => provider.createPayment({ reference_id: "test" }),
+    error => error.reason === "pagbank_request_uncertain" && error.details.category === "uncertain"
+  );
+});
+
+test("HTTP 400 sem código de rejeição permanece incerto", async () => {
+  const provider = new PagBankProvider({
+    environment: "sandbox",
+    token: "sandbox-token",
+    fetchImpl: async () => jsonResponse({}, 400)
+  });
+  await assert.rejects(
+    () => provider.createPayment({ reference_id: "test" }),
+    error => error.reason === "pagbank_request_uncertain" && error.details.category === "uncertain"
+  );
+});
+
 test("webhook PagBank valida ECDSA SHA-256 sobre o corpo bruto", async () => {
   const { publicKey, privateKey } = generateKeyPairSync("ec", {
     namedCurve: "prime256v1"
@@ -133,6 +189,7 @@ test("normalização PagBank usa somente metadados financeiros necessários", ()
   assert.equal(event.amountCents, 2990);
   assert.equal(event.currency, "BRL");
   assert.equal(event.method, "pix");
+  assert.equal(event.providerPaidAt, "2026-10-05T22:31:00-03:00");
   assert.equal(event.providerChargeId, "CHAR_12345678-1234-1234-1234-123456789012");
   assert.equal(JSON.stringify(event).includes("holder"), false);
   assert.equal(JSON.stringify(event).includes("notification_id"), false);
