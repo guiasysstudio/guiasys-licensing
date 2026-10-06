@@ -149,6 +149,8 @@ function environment(api, suffix, {
   return {
     FIREBASE_PROJECT_ID: "guiasys-licensing",
     ADMIN_FIREBASE_UID: adminUid,
+    PAYMENT_PROVIDER: "pagbank",
+    PAGBANK_ENABLED: "true",
     PAGBANK_TOKEN: `production-secret-${suffix}`,
     PAGBANK_SANDBOX_TOKEN: `sandbox-secret-${suffix}`,
     PAGBANK_SANDBOX_CHECKOUT_ENABLED: checkoutEnabled,

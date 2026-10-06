@@ -33,13 +33,17 @@ test("firebase.json registra codebase Functions v2 no diretório do backend", ()
 test("entrypoint usa onRequest v2, região brasileira e Secret Manager", () => {
   assert.match(entry, /firebase-functions\/v2\/https/);
   assert.match(entry, /defineSecret\("ADMIN_FIREBASE_UID"\)/);
-  assert.match(entry, /defineSecret\("PAGBANK_TOKEN"\)/);
-  assert.match(entry, /defineSecret\("PAGBANK_SANDBOX_TOKEN"\)/);
+  assert.equal(entry.includes('defineSecret("PAGBANK_TOKEN")'), false);
+  assert.equal(entry.includes('defineSecret("PAGBANK_SANDBOX_TOKEN")'), false);
+  assert.match(entry, /defineString\("PAYMENT_PROVIDER",\s*\{\s*default:\s*"manual_pix"/s);
+  assert.match(entry, /defineString\("PAGBANK_ENABLED",\s*\{\s*default:\s*"false"/s);
   assert.match(entry, /defineString\("PAGBANK_SANDBOX_CHECKOUT_ENABLED",\s*\{\s*default:\s*"false"/s);
   assert.match(entry, /defineString\("PAGBANK_SANDBOX_TESTER_UIDS",\s*\{\s*default:\s*""/s);
   assert.match(entry, /region:\s*"southamerica-east1"/);
   assert.match(entry, /maxInstances:\s*20/);
-  assert.match(entry, /secrets:\s*\[ADMIN_FIREBASE_UID, PAGBANK_TOKEN, PAGBANK_SANDBOX_TOKEN\]/);
+  assert.match(entry, /secrets:\s*\[ADMIN_FIREBASE_UID\]/);
+  assert.match(entry, /PAYMENT_PROVIDER:\s*PAYMENT_PROVIDER\.value\(\)/);
+  assert.match(entry, /PAGBANK_ENABLED:\s*PAGBANK_ENABLED\.value\(\)/);
   assert.match(entry, /PAGBANK_SANDBOX_CHECKOUT_ENABLED:\s*PAGBANK_SANDBOX_CHECKOUT_ENABLED\.value\(\)/);
   assert.match(entry, /PAGBANK_SANDBOX_TESTER_UIDS:\s*PAGBANK_SANDBOX_TESTER_UIDS\.value\(\)/);
   assert.match(entry, /invoker:\s*"public"/);

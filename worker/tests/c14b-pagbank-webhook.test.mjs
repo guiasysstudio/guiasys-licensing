@@ -47,6 +47,8 @@ function sandboxEnv(logs) {
   return {
     FIREBASE_PROJECT_ID: "guiasys-licensing",
     ADMIN_FIREBASE_UID: "master",
+    PAYMENT_PROVIDER: "pagbank",
+    PAGBANK_ENABLED: "true",
     PAGBANK_TOKEN: "production-token",
     PAGBANK_SANDBOX_TOKEN: "sandbox-token",
     __services: {

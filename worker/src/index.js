@@ -7,10 +7,19 @@ import {
   assertSafePathSegment,
   decodeAdminPathSegments
 } from "./security.js";
-import { assertCents, moneyToCents, transitionOrderStatus } from "./commerce-policy.js";
+import { assertCents, moneyToCents, transitionOrderStatus, transitionPaymentStatus } from "./commerce-policy.js";
 import { issueLicenseInTransaction } from "./license-service.js";
 import { fetchWithTimeout } from "./network.js";
 import { PagBankProvider } from "./payments/payment-provider.js";
+import {
+  DEFAULT_PAYMENT_SETTINGS,
+  MANUAL_PIX_PROVIDER,
+  buildManualPixPresentation,
+  manualPixWhatsappUrl,
+  pixTxidForOrder,
+  publicPaymentSettings,
+  validatePaymentSettings
+} from "./payments/manual-pix.js";
 import {
   claimPaymentSubmission,
   createPaymentAttempt,
@@ -1107,6 +1116,16 @@ async function attachSignedEntitlement(env, project, view, deviceHash) {
 async function writeLog(env, projectId, action, details = {}, actor = "admin") {
   const id = randomId("log");
   await setDoc(env, `projects/${projectId}/logs/${id}`, {
+    action,
+    actor,
+    details,
+    createdAt: nowIso()
+  });
+}
+
+async function writePlatformLog(env, action, details = {}, actor = "admin") {
+  const id = randomId("plog");
+  await setDoc(env, `platformLogs/${id}`, {
     action,
     actor,
     details,
@@ -2654,6 +2673,79 @@ async function publicCatalog(env) {
   return { protocolVersion: PROTOCOL_VERSION, projects: items, serverTime: nowIso() };
 }
 
+const PAYMENT_SETTINGS_PATH = "platformSettings/payments";
+
+function runtimePaymentProvider(env) {
+  return String(env.PAYMENT_PROVIDER || MANUAL_PIX_PROVIDER).trim().toLowerCase();
+}
+
+function pagBankEnabled(env) {
+  return runtimePaymentProvider(env) === "pagbank" &&
+    String(env.PAGBANK_ENABLED || "false").trim().toLowerCase() === "true";
+}
+
+function paymentSettingsInput(value = {}) {
+  return Object.fromEntries(
+    Object.keys(DEFAULT_PAYMENT_SETTINGS).map(key => [
+      key,
+      value[key] === undefined ? DEFAULT_PAYMENT_SETTINGS[key] : value[key]
+    ])
+  );
+}
+
+async function getPaymentSettings(env) {
+  const stored = await getDoc(env, PAYMENT_SETTINGS_PATH);
+  return validatePaymentSettings(paymentSettingsInput(stored || {}));
+}
+
+async function updatePaymentSettings(env, rawBody, admin) {
+  const settings = validatePaymentSettings(rawBody);
+  const timestamp = nowIso();
+  const current = await getDoc(env, PAYMENT_SETTINGS_PATH);
+  const record = {
+    ...settings,
+    createdAt: current?.createdAt || timestamp,
+    updatedAt: timestamp,
+    updatedByAdminUid: admin.uid
+  };
+  await setDoc(env, PAYMENT_SETTINGS_PATH, record);
+  await writePlatformLog(env, "payment_settings_updated", {
+    paymentProvider: settings.paymentProvider,
+    pixEnabled: settings.pixEnabled,
+    pixKeyType: settings.pixKeyType,
+    manualConfirmationEnabled: settings.manualConfirmationEnabled
+  }, admin.uid);
+  return settings;
+}
+
+function assertManualPixOperational(env, settings) {
+  if (runtimePaymentProvider(env) !== MANUAL_PIX_PROVIDER || pagBankEnabled(env)) {
+    throw Object.assign(new Error("PIX manual não é o provider ativo."), {
+      status: 503,
+      reason: "manual_pix_not_active"
+    });
+  }
+  if (settings.paymentProvider !== MANUAL_PIX_PROVIDER || !settings.pixEnabled) {
+    throw Object.assign(new Error("Pagamento PIX está temporariamente indisponível."), {
+      status: 503,
+      reason: "manual_pix_disabled"
+    });
+  }
+}
+
+async function nextOrderNumberInTransaction(tx) {
+  const path = "counters/orders";
+  const counter = await tx.get(path);
+  const current = Number(counter?.value || 0);
+  if (!Number.isSafeInteger(current) || current < 0 || current >= 999_999_999) {
+    throw Object.assign(new Error("Contador de pedidos inválido."), { status: 500, reason: "order_counter_invalid" });
+  }
+  const value = current + 1;
+  const record = { value, updatedAt: nowIso() };
+  counter ? tx.set(path, record) : tx.create(path, record);
+  return `GS-${String(value).padStart(6, "0")}`;
+}
+
 function customerAccountView(account) {
   return {
     accountId: account.id || account.accountId,
@@ -2817,19 +2909,36 @@ async function createCustomerOrder(env, account, rawBody) {
     const subtotalCents = items.reduce((sum, item) => sum + item.lineTotalCents, 0);
     assertCents(subtotalCents, "subtotalCents");
     const orderId = randomId("ord");
+    const orderNumber = await nextOrderNumberInTransaction(tx);
     const now = nowIso();
+    const firstItem = items[0];
     const order = {
       orderId,
+      orderNumber,
       accountId: account.id,
       firebaseUid: account.firebaseUid,
+      customerUid: account.firebaseUid,
+      customerName: account.displayName || account.email,
+      customerEmail: account.email,
+      customerWhatsapp: account.phone || "",
       status: "pending_payment",
       currency: "BRL",
       subtotalCents,
       totalCents: subtotalCents,
+      subtotal: subtotalCents / 100,
+      total: subtotalCents / 100,
       items,
-      provider: "pagbank",
+      productId: items.length === 1 ? firstItem.projectId : "multiple",
+      productName: items.length === 1 ? firstItem.projectNameSnapshot : `${items.length} produtos`,
+      planId: items.length === 1 ? firstItem.planId : "multiple",
+      planName: items.length === 1 ? firstItem.planNameSnapshot : `${items.length} planos`,
+      licenseDuration: items.length === 1 ? (firstItem.lifetimeSnapshot ? "lifetime" : firstItem.durationDaysSnapshot) : null,
+      provider: pagBankEnabled(env) ? "pagbank" : MANUAL_PIX_PROVIDER,
+      paymentProvider: pagBankEnabled(env) ? "pagbank" : MANUAL_PIX_PROVIDER,
+      paymentMethod: "pix",
       providerOrderId: "",
       activePaymentId: "",
+      pixTxid: pixTxidForOrder(orderId),
       paymentStatus: "pending",
       processingStatus: "pending",
       fulfillmentStatus: "pending",
@@ -2843,7 +2952,7 @@ async function createCustomerOrder(env, account, rawBody) {
     tx.create(`orders/${orderId}`, order);
     tx.create(`customerAccounts/${account.id}/orders/${orderId}`, { orderId, createdAt: now });
     tx.create(requestPath, { orderId, requestHash, createdAt: now });
-    queuePlatformLogInTransaction(tx, "order.created", { orderId, accountId: account.id, totalCents: subtotalCents, itemCount: items.length }, account.email, now);
+    queuePlatformLogInTransaction(tx, "order_created", { orderId, orderNumber, accountId: account.id, totalCents: subtotalCents, itemCount: items.length, actorUid: account.firebaseUid }, account.firebaseUid, now);
     return { ...customerOrderView(order), idempotentReplay: false };
   });
 }
@@ -3140,6 +3249,232 @@ async function startSandboxPixPayment(env, account, orderId, rawBody) {
   }
 }
 
+function manualPaymentView(payment, order, idempotentReplay = false) {
+  return {
+    paymentId: payment.paymentId,
+    orderId: payment.orderId,
+    orderNumber: order.orderNumber,
+    status: payment.status,
+    paymentProvider: MANUAL_PIX_PROVIDER,
+    paymentMethod: "pix",
+    amountCents: payment.amountCents,
+    currency: payment.currency,
+    pixTxid: payment.pixTxid,
+    pixCode: payment.pixCode,
+    pixQrCodeDataUrl: payment.pixQrCodeDataUrl,
+    pixKey: payment.pixKey,
+    pixKeyType: payment.pixKeyType,
+    pixDisplayName: payment.pixDisplayName,
+    pixMerchantName: payment.pixMerchantName,
+    pixMerchantCity: payment.pixMerchantCity,
+    pixWhatsapp: payment.pixWhatsapp,
+    whatsappUrl: manualPixWhatsappUrl({
+      whatsapp: payment.pixWhatsapp,
+      orderNumber: order.orderNumber,
+      customerName: order.customerName || order.customerEmail,
+      productName: order.productName || order.items?.[0]?.projectNameSnapshot || "Produto GuiaSys",
+      planName: order.planName || order.items?.[0]?.planNameSnapshot || "Plano",
+      totalFormatted: new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(order.totalCents / 100)
+    }),
+    manualConfirmationEnabled: Boolean(payment.manualConfirmationEnabled),
+    idempotentReplay: Boolean(idempotentReplay)
+  };
+}
+
+async function startManualPixPayment(env, account, orderId, rawBody) {
+  orderId = assertCommerceId("orders", orderId);
+  const body = validatePaymentCreatePayload(rawBody);
+  const settings = await getPaymentSettings(env);
+  assertManualPixOperational(env, settings);
+  const ownedOrder = await getOwnedOrder(env, account.id, orderId);
+  const presentation = await buildManualPixPresentation({ settings, order: ownedOrder });
+  const requestHash = await sha256Hex(`${account.id}|${body.idempotencyKey}`);
+
+  const result = await atomicClient(env).runTransaction(async tx => {
+    const requestPath = `paymentRequests/${requestHash}`;
+    const replay = await tx.get(requestPath);
+    if (replay) {
+      if (replay.orderId !== orderId || replay.accountId !== account.id) {
+        throw Object.assign(new Error("Chave de idempotência usada por outro pagamento."), { status: 409, reason: "idempotency_conflict" });
+      }
+      const payment = await tx.get(`payments/${replay.paymentId}`);
+      const order = await tx.get(`orders/${orderId}`);
+      if (!payment || !order || payment.provider !== MANUAL_PIX_PROVIDER) {
+        throw Object.assign(new Error("Registro idempotente de pagamento inconsistente."), { status: 409, reason: "idempotency_orphan" });
+      }
+      return { payment, order, idempotentReplay: true };
+    }
+
+    const order = await tx.get(`orders/${orderId}`);
+    const reference = await tx.get(`customerAccounts/${account.id}/orders/${orderId}`);
+    if (!order || !reference || order.accountId !== account.id) {
+      throw Object.assign(new Error("Pedido não encontrado."), { status: 404, reason: "order_not_found" });
+    }
+    if (order.paymentId) {
+      const existing = await tx.get(`payments/${order.paymentId}`);
+      if (existing?.provider === MANUAL_PIX_PROVIDER && existing.orderId === orderId) {
+        return { payment: existing, order, idempotentReplay: true };
+      }
+      throw Object.assign(new Error("Pedido já possui outro pagamento."), { status: 409, reason: "payment_conflict" });
+    }
+    if (order.status !== "pending_payment") {
+      throw Object.assign(new Error("Pedido não aceita geração de PIX."), { status: 409, reason: "payment_not_allowed" });
+    }
+    if (order.totalCents !== ownedOrder.totalCents || order.currency !== "BRL") {
+      throw Object.assign(new Error("Valor ou moeda do pedido mudou."), { status: 409, reason: "payment_amount_mismatch" });
+    }
+
+    const paymentId = randomId("pay");
+    const timestamp = nowIso();
+    const payment = {
+      paymentId,
+      orderId,
+      accountId: account.id,
+      provider: MANUAL_PIX_PROVIDER,
+      providerEnvironment: "local",
+      providerOrderId: "",
+      providerChargeId: "",
+      providerPaymentId: "",
+      providerStatus: "MANUAL_PENDING",
+      submissionState: "linked",
+      status: "pending",
+      method: "pix",
+      amountCents: order.totalCents,
+      currency: "BRL",
+      pixTxid: presentation.txid,
+      pixCode: presentation.pixCode,
+      pixQrCodeDataUrl: presentation.pixQrCodeDataUrl,
+      pixKey: presentation.pixKey,
+      pixKeyType: presentation.pixKeyType,
+      pixDisplayName: presentation.pixDisplayName,
+      pixMerchantName: presentation.pixMerchantName,
+      pixMerchantCity: presentation.pixMerchantCity,
+      pixWhatsapp: presentation.pixWhatsapp,
+      manualConfirmationEnabled: presentation.manualConfirmationEnabled,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      paidAt: null,
+      failedAt: null,
+      cancelledAt: null
+    };
+    const nextOrder = {
+      ...order,
+      provider: MANUAL_PIX_PROVIDER,
+      paymentProvider: MANUAL_PIX_PROVIDER,
+      paymentMethod: "pix",
+      paymentId,
+      activePaymentId: paymentId,
+      pixTxid: presentation.txid,
+      paymentStatus: "pending",
+      updatedAt: timestamp
+    };
+    tx.create(`payments/${paymentId}`, payment);
+    tx.create(requestPath, { paymentId, orderId, accountId: account.id, createdAt: timestamp });
+    tx.set(`orders/${orderId}`, nextOrder);
+    return { payment, order: nextOrder, idempotentReplay: false };
+  });
+
+  return manualPaymentView(result.payment, result.order, result.idempotentReplay);
+}
+
+async function reportManualPixPayment(env, account, orderId) {
+  orderId = assertCommerceId("orders", orderId);
+  const settings = await getPaymentSettings(env);
+  assertManualPixOperational(env, settings);
+  return await atomicClient(env).runTransaction(async tx => {
+    const order = await tx.get(`orders/${orderId}`);
+    const reference = await tx.get(`customerAccounts/${account.id}/orders/${orderId}`);
+    if (!order || !reference || order.accountId !== account.id) {
+      throw Object.assign(new Error("Pedido não encontrado."), { status: 404, reason: "order_not_found" });
+    }
+    if (["paid", "fulfilled"].includes(order.status) || order.fulfillmentStatus === "fulfilled") {
+      return { ...customerOrderView(order), idempotentReplay: true };
+    }
+    if (order.status === "cancelled") {
+      throw Object.assign(new Error("Pedido cancelado não aceita informação de pagamento."), { status: 409, reason: "order_cancelled" });
+    }
+    if (!order.paymentId || order.paymentProvider !== MANUAL_PIX_PROVIDER) {
+      throw Object.assign(new Error("Gere o PIX manual antes de informar o pagamento."), { status: 409, reason: "manual_payment_missing" });
+    }
+    const payment = await tx.get(`payments/${order.paymentId}`);
+    if (!payment || payment.orderId !== orderId || payment.accountId !== account.id || payment.provider !== MANUAL_PIX_PROVIDER) {
+      throw Object.assign(new Error("Pagamento manual inconsistente."), { status: 409, reason: "payment_conflict" });
+    }
+    if (order.status === "payment_reported") {
+      return { ...customerOrderView(order), idempotentReplay: true };
+    }
+    transitionOrderStatus(order.status, "payment_reported");
+    const timestamp = nowIso();
+    const nextOrder = {
+      ...order,
+      status: "payment_reported",
+      paymentStatus: "reported",
+      paymentReportedAt: order.paymentReportedAt || timestamp,
+      updatedAt: timestamp
+    };
+    tx.set(`orders/${orderId}`, nextOrder);
+    tx.set(`payments/${payment.paymentId}`, {
+      ...payment,
+      status: "reported",
+      providerStatus: "MANUAL_REPORTED",
+      paymentReportedAt: payment.paymentReportedAt || timestamp,
+      updatedAt: timestamp
+    });
+    queuePlatformLogInTransaction(tx, "payment_reported", {
+      orderId,
+      paymentId: payment.paymentId,
+      actorUid: account.firebaseUid
+    }, account.firebaseUid, timestamp);
+    return { ...customerOrderView(nextOrder), idempotentReplay: false };
+  });
+}
+
+async function confirmManualPixOrder(env, admin, orderId) {
+  orderId = assertCommerceId("orders", orderId);
+  const settings = await getPaymentSettings(env);
+  assertManualPixOperational(env, settings);
+  if (!settings.manualConfirmationEnabled) {
+    throw Object.assign(new Error("Confirmação manual está desabilitada."), { status: 409, reason: "manual_confirmation_disabled" });
+  }
+  const order = await getDoc(env, `orders/${orderId}`);
+  if (!order || !adminCanViewCommerceOrder(admin, order)) {
+    throw Object.assign(new Error("Pedido não encontrado."), { status: 404, reason: "order_not_found" });
+  }
+  if (order.fulfillmentStatus === "fulfilled") {
+    return { order: customerOrderView(order), idempotentReplay: true };
+  }
+  if (order.status !== "payment_reported") {
+    throw Object.assign(new Error("Somente pedidos com pagamento informado podem ser confirmados."), {
+      status: 409,
+      reason: "payment_not_reported"
+    });
+  }
+  const payment = order.paymentId ? await getDoc(env, `payments/${assertCommerceId("payments", order.paymentId)}`) : null;
+  if (
+    !payment ||
+    payment.orderId !== orderId ||
+    payment.accountId !== order.accountId ||
+    payment.provider !== MANUAL_PIX_PROVIDER ||
+    payment.amountCents !== order.totalCents ||
+    payment.currency !== "BRL"
+  ) {
+    throw Object.assign(new Error("Pagamento manual inconsistente."), { status: 409, reason: "payment_conflict" });
+  }
+  return await finalizePaidOrder(env, orderId, {
+    paymentId: payment.paymentId,
+    orderId,
+    accountId: order.accountId,
+    status: "paid",
+    amountCents: order.totalCents,
+    currency: "BRL",
+    provider: MANUAL_PIX_PROVIDER,
+    providerEnvironment: "local",
+    method: "pix",
+    manualConfirmed: true,
+    paidByAdminUid: admin.uid
+  });
+}
+
 function adminPaymentReconciliationView(payment) {
   return {
     ...customerPaymentView(payment, true),
@@ -3153,6 +3488,9 @@ function adminPaymentReconciliationView(payment) {
 }
 
 async function reconcileSandboxPaymentAsAdmin(env, admin, paymentId, rawBody) {
+  if (!pagBankEnabled(env)) {
+    throw Object.assign(new Error("PagBank está congelado nesta versão."), { status: 409, reason: "pagbank_disabled" });
+  }
   paymentId = assertCommerceId("payments", paymentId);
   const body = validatePaymentReconcilePayload(rawBody);
   const payment = await getDoc(env, `payments/${paymentId}`);
@@ -3236,6 +3574,19 @@ async function cancelOwnedOrder(env, accountId, orderId, actor) {
     transitionOrderStatus(order.status, "cancelled");
     const now = nowIso();
     const next = { ...order, status: "cancelled", paymentStatus: "cancelled", processingStatus: "cancelled", cancelledAt: now, updatedAt: now };
+    if (order.paymentId) {
+      const payment = await tx.get(`payments/${assertCommerceId("payments", order.paymentId)}`);
+      if (payment && payment.orderId === orderId && payment.accountId === accountId && payment.status === "pending") {
+        transitionPaymentStatus(payment.status, "cancelled");
+        tx.set(`payments/${payment.paymentId}`, {
+          ...payment,
+          status: "cancelled",
+          providerStatus: payment.provider === MANUAL_PIX_PROVIDER ? "MANUAL_CANCELLED" : payment.providerStatus,
+          cancelledAt: now,
+          updatedAt: now
+        });
+      }
+    }
     tx.set(`orders/${orderId}`, next);
     queuePlatformLogInTransaction(tx, "order.cancelled", { orderId, accountId }, actor, now);
     return customerOrderView(next);
@@ -3289,17 +3640,26 @@ async function createRenewalOrder(env, account, licenseId, rawBody) {
       startModeSnapshot: plan.startMode === "immediate" ? "immediate" : "first_activation", lineTotalCents: unitPriceCents
     };
     const orderId = randomId("ord");
+    const orderNumber = await nextOrderNumberInTransaction(tx);
     const now = nowIso();
     const order = {
-      orderId, accountId: account.id, firebaseUid: account.firebaseUid, status: "pending_payment", currency: "BRL",
-      subtotalCents: unitPriceCents, totalCents: unitPriceCents, items: [item], provider: "pagbank", providerOrderId: "",
+      orderId, orderNumber, accountId: account.id, firebaseUid: account.firebaseUid, customerUid: account.firebaseUid,
+      customerName: account.displayName || account.email, customerEmail: account.email, customerWhatsapp: account.phone || "",
+      status: "pending_payment", currency: "BRL", subtotalCents: unitPriceCents, totalCents: unitPriceCents,
+      subtotal: unitPriceCents / 100, total: unitPriceCents / 100, items: [item],
+      productId: projectId, productName: item.projectNameSnapshot, planId: body.planId, planName: item.planNameSnapshot,
+      licenseDuration: item.lifetimeSnapshot ? "lifetime" : item.durationDaysSnapshot,
+      provider: pagBankEnabled(env) ? "pagbank" : MANUAL_PIX_PROVIDER,
+      paymentProvider: pagBankEnabled(env) ? "pagbank" : MANUAL_PIX_PROVIDER,
+      paymentMethod: "pix", providerOrderId: "",
+      pixTxid: pixTxidForOrder(orderId),
       activePaymentId: "", paymentStatus: "pending", processingStatus: "pending", fulfillmentStatus: "pending", idempotencyKey: body.idempotencyKey,
       resultingLicenses: [], createdAt: now, updatedAt: now, paidAt: null, cancelledAt: null
     };
     tx.create(`orders/${orderId}`, order);
     tx.create(`customerAccounts/${account.id}/orders/${orderId}`, { orderId, createdAt: now });
     tx.create(requestPath, { orderId, requestHash, createdAt: now });
-    queuePlatformLogInTransaction(tx, "order.created", { orderId, accountId: account.id, type: "renewal", licenseId, totalCents: unitPriceCents }, account.email, now);
+    queuePlatformLogInTransaction(tx, "order_created", { orderId, orderNumber, accountId: account.id, type: "renewal", licenseId, totalCents: unitPriceCents, actorUid: account.firebaseUid }, account.firebaseUid, now);
     return { ...customerOrderView(order), idempotentReplay: false };
   });
 }
@@ -3329,10 +3689,21 @@ export async function finalizePaidOrder(env, orderId, paymentContext) {
     let fulfillmentTransition = order.status;
     if (["pending_payment", "payment_failed"].includes(fulfillmentTransition)) fulfillmentTransition = transitionOrderStatus(fulfillmentTransition, "payment_processing");
     if (fulfillmentTransition === "payment_processing") fulfillmentTransition = transitionOrderStatus(fulfillmentTransition, "paid");
+    if (fulfillmentTransition === "payment_reported") fulfillmentTransition = transitionOrderStatus(fulfillmentTransition, "paid");
     if (fulfillmentTransition === "paid") fulfillmentTransition = transitionOrderStatus(fulfillmentTransition, "fulfilling");
     transitionOrderStatus(fulfillmentTransition, "fulfilled");
     const existingPayment = await tx.get(`payments/${paymentId}`);
-    if (existingPayment && (existingPayment.orderId !== orderId || existingPayment.status !== "paid")) {
+    const manualConfirmation = Boolean(
+      paymentContext.manualConfirmed === true &&
+      paymentContext.provider === MANUAL_PIX_PROVIDER &&
+      existingPayment?.provider === MANUAL_PIX_PROVIDER &&
+      order.status === "payment_reported" &&
+      ["pending", "reported"].includes(existingPayment.status)
+    );
+    if (existingPayment && (
+      existingPayment.orderId !== orderId ||
+      (existingPayment.status !== "paid" && !manualConfirmation)
+    )) {
       throw Object.assign(new Error("Pagamento inconsistente."), { status: 409, reason: "payment_conflict" });
     }
     const accountRecord = await tx.get(`customerAccounts/${order.accountId}`);
@@ -3374,7 +3745,16 @@ export async function finalizePaidOrder(env, orderId, paymentContext) {
         results.push({ type: "renewal", projectId: item.projectId, licenseId: item.licenseId, key: next.key });
       }
     }
-    const payment = existingPayment || {
+    const payment = existingPayment ? {
+      ...existingPayment,
+      ...(manualConfirmation ? {
+        status: "paid",
+        providerStatus: "MANUAL_CONFIRMED",
+        paidAt: now,
+        paidByAdminUid: String(paymentContext.paidByAdminUid || "")
+      } : {}),
+      updatedAt: now
+    } : {
       paymentId, orderId, accountId: order.accountId, provider: String(paymentContext.provider || "pagbank"),
       providerEnvironment: String(paymentContext.providerEnvironment || ""),
       providerOrderId: String(paymentContext.providerOrderId || ""),
@@ -3387,7 +3767,7 @@ export async function finalizePaidOrder(env, orderId, paymentContext) {
       paidAt: paymentContext.paidAt ? String(paymentContext.paidAt) : null,
       failedAt: null, cancelledAt: null
     };
-    existingPayment ? tx.set(`payments/${paymentId}`, { ...payment, updatedAt: now }) : tx.create(`payments/${paymentId}`, payment);
+    existingPayment ? tx.set(`payments/${paymentId}`, payment) : tx.create(`payments/${paymentId}`, payment);
     const fulfilled = {
       ...order,
       status: "fulfilled",
@@ -3400,13 +3780,31 @@ export async function finalizePaidOrder(env, orderId, paymentContext) {
       providerOrderId: payment.providerOrderId || order.providerOrderId || "",
       providerChargeId: payment.providerChargeId || order.providerChargeId || "",
       paidAt: payment.paidAt || null,
+      paidByAdminUid: String(paymentContext.paidByAdminUid || order.paidByAdminUid || ""),
       fulfilledAt: now,
       updatedAt: now,
-      resultingLicenses: results
+      resultingLicenses: results,
+      licenseId: results[0]?.licenseId || order.licenseId || null
     };
     tx.set(`orders/${orderId}`, fulfilled);
     queuePlatformLogInTransaction(tx, "order.fulfillment_started", { orderId, paymentId }, "payment.fulfillment", now);
     queuePlatformLogInTransaction(tx, "order.fulfilled", { orderId, paymentId, resultCount: results.length }, "payment.fulfillment", now);
+    if (manualConfirmation) {
+      queuePlatformLogInTransaction(tx, "payment_confirmed", {
+        orderId,
+        paymentId,
+        actorUid: String(paymentContext.paidByAdminUid || ""),
+        licenseId: results[0]?.licenseId || null
+      }, String(paymentContext.paidByAdminUid || "admin"), now);
+      for (const result of results) {
+        queuePlatformLogInTransaction(tx, result.type === "renewal" ? "license_renewed" : "license_issued", {
+          orderId,
+          paymentId,
+          licenseId: result.licenseId,
+          actorUid: String(paymentContext.paidByAdminUid || "")
+        }, String(paymentContext.paidByAdminUid || "admin"), now);
+      }
+    }
     return { order: customerOrderView(fulfilled), idempotentReplay: false };
   });
 }
@@ -3426,7 +3824,21 @@ async function handleCustomer(request, env, origin, url, user) {
     if (parts.length === 2 && request.method === "GET") return json({ ok: true, order: await getOwnedOrder(env, account.id, parts[1]) }, 200, origin);
     if (parts.length === 3 && parts[2] === "cancel" && request.method === "POST") return json({ ok: true, order: await cancelOwnedOrder(env, account.id, parts[1], account.email) }, 200, origin);
     if (parts.length === 3 && parts[2] === "payment" && request.method === "POST") {
-      return json({ ok: true, payment: await startSandboxPixPayment(env, account, parts[1], await readJson(request)) }, 201, origin);
+      const body = await readJson(request);
+      const payment = pagBankEnabled(env)
+        ? await startSandboxPixPayment(env, account, parts[1], body)
+        : await startManualPixPayment(env, account, parts[1], body);
+      return json({ ok: true, payment }, 201, origin);
+    }
+    if (parts.length === 3 && parts[2] === "payment-reported" && request.method === "POST") {
+      const body = await readJson(request);
+      if (Object.keys(body).length) {
+        throw Object.assign(new Error("Esta operação não aceita campos enviados pelo cliente."), {
+          status: 400,
+          reason: "invalid_payload"
+        });
+      }
+      return json({ ok: true, order: await reportManualPixPayment(env, account, parts[1]) }, 200, origin);
     }
   }
   if (parts.length === 1 && parts[0] === "licenses" && request.method === "GET") {
@@ -3621,6 +4033,19 @@ async function handleAdmin(request, env, origin, url, admin) {
 
   if (parts[0] === "orders") {
     requirePermission(admin, "viewOrders", "Você não possui permissão para visualizar pedidos.");
+    if (parts.length === 3 && parts[2] === "confirm-payment" && request.method === "POST") {
+      requirePermission(admin, "manageOrders", "Você não possui permissão para confirmar pagamentos.");
+      assertRecentAuthentication(admin);
+      const body = await readJson(request);
+      if (Object.keys(body).length) {
+        throw Object.assign(new Error("A confirmação não aceita dados financeiros enviados pelo painel."), {
+          status: 400,
+          reason: "invalid_payload"
+        });
+      }
+      const result = await confirmManualPixOrder(env, admin, parts[1]);
+      return json({ ok: true, ...result }, 200, origin);
+    }
     if (request.method !== "GET") return errorResponse(origin, 405, "method_not_allowed", "Pedidos são somente leitura no painel.", { expectedMethods: ["GET"] });
     if (parts.length === 1) {
       let orders = await listCollection(env, "orders");
@@ -3633,7 +4058,11 @@ async function handleAdmin(request, env, origin, url, admin) {
     if (!order || !adminCanViewCommerceOrder(admin, order)) {
       return errorResponse(origin, 404, "order_not_found", "Pedido não encontrado.");
     }
-    return json({ ok: true, order: customerOrderView(order) }, 200, origin);
+    const audit = (await listCollection(env, "platformLogs"))
+      .filter(log => log?.details?.orderId === order.orderId)
+      .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+      .slice(0, 50);
+    return json({ ok: true, order: customerOrderView(order), audit }, 200, origin);
   }
 
   if (parts[0] === "payments") {
@@ -3725,6 +4154,25 @@ async function handleAdmin(request, env, origin, url, admin) {
     const logs = await listCollection(env, "platformLogs");
     logs.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
     return json({ ok: true, logs: logs.slice(0, 100) }, 200, origin);
+  }
+
+  if (parts.length === 1 && parts[0] === "payment-settings") {
+    requirePermission(admin, "managePlatformSettings", "Você não possui permissão para configurar pagamentos.");
+    if (method === "GET") {
+      return json({
+        ok: true,
+        settings: await getPaymentSettings(env),
+        runtime: {
+          paymentProvider: runtimePaymentProvider(env),
+          pagbankEnabled: pagBankEnabled(env)
+        }
+      }, 200, origin);
+    }
+    if (method === "PATCH") {
+      assertRecentAuthentication(admin);
+      return json({ ok: true, settings: await updatePaymentSettings(env, await readJson(request), admin) }, 200, origin);
+    }
+    return errorResponse(origin, 405, "method_not_allowed", "Use GET ou PATCH para configurações de pagamento.", { expectedMethods: ["GET", "PATCH"] });
   }
 
   if (parts.length === 1 && parts[0] === "dashboard") {
@@ -4147,6 +4595,9 @@ function webhookNoContent() {
 }
 
 async function handlePagBankWebhook(request, env, environment) {
+  if (!pagBankEnabled(env)) {
+    throw Object.assign(new Error("PagBank está congelado nesta versão."), { status: 404, reason: "pagbank_disabled" });
+  }
   const provider = pagBankProvider(env, environment);
   const rawBody = new Uint8Array(await request.arrayBuffer());
   const signatureHeader = request.headers.get("x-payload-signature");
@@ -4305,6 +4756,7 @@ const ROUTE_METHODS = Object.freeze({
   "/": "GET",
   "/health": "GET",
   "/api/v1/catalog": "GET",
+  "/api/v1/payment-config": "GET",
   "/api/v1/project/config": "POST",
   "/api/v1/trial/start": "POST",
   "/api/v1/trial/validate": "POST",
@@ -4318,6 +4770,7 @@ const ROUTE_METHODS = Object.freeze({
 function isPublicApiPath(pathname) {
   return [
     "/api/v1/catalog",
+    "/api/v1/payment-config",
     "/api/v1/project/config",
     "/api/v1/trial/start",
     "/api/v1/trial/validate",
@@ -4376,6 +4829,13 @@ async function routeRequest(request, env) {
       if (request.method === "GET" && url.pathname === "/api/v1/catalog") {
         await enforceRateLimit(env, request, "catalog", 120, 60);
         return json({ ok: true, catalog: await publicCatalog(env) }, 200, origin, true);
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/v1/payment-config") {
+        await enforceRateLimit(env, request, "payment-config", 120, 60);
+        const settings = await getPaymentSettings(env);
+        assertManualPixOperational(env, settings);
+        return json({ ok: true, payment: publicPaymentSettings(settings) }, 200, origin, true);
       }
 
       if (request.method === "POST" && url.pathname === "/api/v1/project/config") {

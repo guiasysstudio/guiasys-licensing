@@ -1,5 +1,6 @@
 const ORDER_TRANSITIONS = Object.freeze({
-  pending_payment: new Set(["payment_processing", "cancelled", "payment_failed"]),
+  pending_payment: new Set(["payment_reported", "payment_processing", "cancelled", "payment_failed"]),
+  payment_reported: new Set(["paid", "cancelled"]),
   payment_processing: new Set(["paid", "payment_failed", "cancelled", "refunded"]),
   payment_failed: new Set(["payment_processing", "cancelled"]),
   paid: new Set(["fulfilling", "refunded"]),
@@ -10,7 +11,8 @@ const ORDER_TRANSITIONS = Object.freeze({
 });
 
 const PAYMENT_TRANSITIONS = Object.freeze({
-  pending: new Set(["processing", "cancelled", "failed"]),
+  pending: new Set(["reported", "processing", "cancelled", "failed"]),
+  reported: new Set(["paid", "cancelled"]),
   processing: new Set(["paid", "failed", "cancelled"]),
   paid: new Set(["refunded"]),
   failed: new Set(["processing", "cancelled"]),

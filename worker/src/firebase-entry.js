@@ -6,13 +6,17 @@ import { handleRequest } from "./index.js";
 import { createFirebaseRuntime } from "./firebase-runtime.js";
 
 const ADMIN_FIREBASE_UID = defineSecret("ADMIN_FIREBASE_UID");
-const PAGBANK_TOKEN = defineSecret("PAGBANK_TOKEN");
-const PAGBANK_SANDBOX_TOKEN = defineSecret("PAGBANK_SANDBOX_TOKEN");
 const PAGBANK_SANDBOX_CHECKOUT_ENABLED = defineString("PAGBANK_SANDBOX_CHECKOUT_ENABLED", {
   default: "false"
 });
 const PAGBANK_SANDBOX_TESTER_UIDS = defineString("PAGBANK_SANDBOX_TESTER_UIDS", {
   default: ""
+});
+const PAYMENT_PROVIDER = defineString("PAYMENT_PROVIDER", {
+  default: "manual_pix"
+});
+const PAGBANK_ENABLED = defineString("PAGBANK_ENABLED", {
+  default: "false"
 });
 
 let cachedRuntime = null;
@@ -87,7 +91,9 @@ export const licensingApi = onRequest(
     timeoutSeconds: 60,
     memory: "512MiB",
     invoker: "public",
-    secrets: [ADMIN_FIREBASE_UID, PAGBANK_TOKEN, PAGBANK_SANDBOX_TOKEN]
+    // PagBank permanece congelado. Para reativá-lo no futuro, os dois secrets
+    // devem voltar a esta lista após revisão específica do fluxo produtivo.
+    secrets: [ADMIN_FIREBASE_UID]
   },
   async (req, res) => {
     const requestId = adapterRequestId(req);
@@ -98,8 +104,8 @@ export const licensingApi = onRequest(
       const response = await handleRequest(expressToWebRequest(req), {
         FIREBASE_PROJECT_ID: services.projectId,
         ADMIN_FIREBASE_UID: ADMIN_FIREBASE_UID.value(),
-        PAGBANK_TOKEN: PAGBANK_TOKEN.value(),
-        PAGBANK_SANDBOX_TOKEN: PAGBANK_SANDBOX_TOKEN.value(),
+        PAYMENT_PROVIDER: PAYMENT_PROVIDER.value(),
+        PAGBANK_ENABLED: PAGBANK_ENABLED.value(),
         PAGBANK_SANDBOX_CHECKOUT_ENABLED: PAGBANK_SANDBOX_CHECKOUT_ENABLED.value(),
         PAGBANK_SANDBOX_TESTER_UIDS: PAGBANK_SANDBOX_TESTER_UIDS.value(),
         __services: services
