@@ -44,15 +44,34 @@ export async function recordPaymentEvent({ atomicClient, normalizedEvent, hash, 
     if (!payment || payment.orderId !== normalizedEvent.orderId) conflict("Pagamento do evento não encontrado.", "payment_not_found");
     transitionPaymentStatus(payment.status, normalizedEvent.status);
     const timestamp = now();
-    const nextPayment = { ...payment, status: normalizedEvent.status, updatedAt: timestamp };
+    const nextPayment = {
+      ...payment,
+      status: normalizedEvent.status,
+      updatedAt: timestamp,
+      providerEnvironment: String(normalizedEvent.environment || payment.providerEnvironment || ""),
+      providerOrderId: String(normalizedEvent.providerOrderId || payment.providerOrderId || ""),
+      providerChargeId: String(normalizedEvent.providerChargeId || payment.providerChargeId || ""),
+      providerPaymentId: String(normalizedEvent.providerChargeId || payment.providerPaymentId || ""),
+      method: String(normalizedEvent.method || payment.method || "unknown")
+    };
     if (normalizedEvent.status === "paid") nextPayment.paidAt = normalizedEvent.occurredAt || timestamp;
     if (normalizedEvent.status === "failed") nextPayment.failedAt = normalizedEvent.occurredAt || timestamp;
     if (normalizedEvent.status === "cancelled") nextPayment.cancelledAt = normalizedEvent.occurredAt || timestamp;
     tx.set(`payments/${payment.paymentId || normalizedEvent.paymentId}`, nextPayment);
     const event = {
-      eventId, provider, providerEventId, orderId: normalizedEvent.orderId,
-      paymentId: normalizedEvent.paymentId, eventType: String(normalizedEvent.eventType || normalizedEvent.status),
-      receivedAt: timestamp, processedAt: timestamp, processingStatus: "processed"
+      eventId,
+      provider,
+      providerEventId,
+      orderId: normalizedEvent.orderId,
+      paymentId: normalizedEvent.paymentId,
+      providerEnvironment: String(normalizedEvent.environment || ""),
+      providerOrderId: String(normalizedEvent.providerOrderId || ""),
+      providerChargeId: String(normalizedEvent.providerChargeId || ""),
+      providerStatus: String(normalizedEvent.providerStatus || ""),
+      eventType: String(normalizedEvent.eventType || normalizedEvent.status),
+      receivedAt: timestamp,
+      processedAt: timestamp,
+      processingStatus: "processed"
     };
     tx.create(`paymentEvents/${eventId}`, event);
     return { event, payment: nextPayment, idempotentReplay: false };
