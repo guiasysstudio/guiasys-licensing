@@ -41,7 +41,7 @@ function selectOffer(project, plan) {
   $("#checkout-unit-price").textContent = money.format(unitCents(plan) / 100);
   $("#checkout-duration").textContent = durationLabel(plan); $("#checkout-devices").textContent = deviceLabel(plan);
   quantityInput.value = "1"; updateVisualTotal(); checkout.hidden = false;
-  selectionStatus.textContent = `Oferta selecionada: ${project.name} â€” ${plan.name}.`; selectionStatus.hidden = false;
+  selectionStatus.textContent = `Oferta selecionada: ${project.name} — ${plan.name}.`; selectionStatus.hidden = false;
   checkout.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -112,7 +112,7 @@ async function loadAccount() {
 async function createOrder() {
   if (!selection) return; if (!currentUser) { authDialog.showModal(); return; }
   if (!currentUser.emailVerified) { checkoutMessage.textContent = "Confirme o e-mail enviado pelo Firebase antes de comprar."; return; }
-  const quantity = Math.min(50, Math.max(1, Number(quantityInput.value || 1))); checkoutMessage.textContent = "Criando pedidoâ€¦";
+  const quantity = Math.min(50, Math.max(1, Number(quantityInput.value || 1))); checkoutMessage.textContent = "Criando pedido…";
   try { const payload = await api("/api/v1/customer/orders", { method: "POST", body: JSON.stringify({ idempotencyKey: crypto.randomUUID(), items: [{ projectId: selection.project.projectId, planId: selection.plan.id, quantity }] }) });
     checkoutMessage.textContent = `Pedido ${payload.order.orderId} criado. Total validado: ${money.format(payload.order.totalCents / 100)}. Aguardando integração de pagamento.`; await loadAccount();
   } catch (error) { checkoutMessage.textContent = error.message; }
