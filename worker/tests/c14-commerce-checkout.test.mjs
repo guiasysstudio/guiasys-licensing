@@ -320,10 +320,15 @@ test("RBAC comercial respeita o escopo de projetos em pedidos e pagamentos", asy
   assert.equal(hiddenPaymentResponse.status, 404);
 });
 
-test("adapter PagBank permanece inerte e explicitamente não configurado", async () => {
-  const provider = new PagBankProvider();
-  await assert.rejects(() => provider.createPayment({}), error => error.reason === "payment_provider_not_configured");
-  await assert.rejects(() => provider.verifyWebhook({}), error => error.reason === "payment_provider_not_configured");
+test("adapter PagBank exige ambiente e token explícitos", () => {
+  assert.throws(
+    () => new PagBankProvider(),
+    error => error.reason === "invalid_payment_environment"
+  );
+  assert.throws(
+    () => new PagBankProvider({ environment: "production" }),
+    error => error.reason === "payment_provider_not_configured"
+  );
 });
 
 test("RBAC comercial separa pedidos e pagamentos sem permitir mutação", async () => {
