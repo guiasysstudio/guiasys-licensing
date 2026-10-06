@@ -10,6 +10,8 @@ import {
 import { assertCents, moneyToCents, transitionOrderStatus } from "./commerce-policy.js";
 import { issueLicenseInTransaction } from "./license-service.js";
 import { fetchWithTimeout } from "./network.js";
+import { PagBankProvider } from "./payments/payment-provider.js";
+import { recordPaymentEvent } from "./payments/payment-service.js";
 import { createFirestoreAtomicClient } from "./firestore-atomic.js";
 import {
   assertLicenseCanActivate,
@@ -44,7 +46,7 @@ import {
 
 // GuiaSys Licensing API — runtime principal em Firebase Functions v2; Worker legado somente para rollback
 const PROTOCOL_VERSION = "GSL-v1";
-const API_VERSION = "2.1.0";
+const API_VERSION = "2.2.0";
 const ALLOWED_ORIGINS = [
   "http://127.0.0.1:5500",
   "http://127.0.0.1:5501",
@@ -136,6 +138,7 @@ function permissionForEntity(entity) {
 
 const googleTokenCache = new Map();
 const firebaseAccountCache = new Map();
+const pagBankProviderCache = new Map();
 let firebaseKeyCache = { keys: null, expiresAt: 0 };
 
 function corsHeaders(origin, publicCors = false) {
@@ -3700,6 +3703,197 @@ async function handleAdmin(request, env, origin, url, admin) {
   return errorResponse(origin, 404, "not_found", "Rota administrativa não encontrada.");
 }
 
+
+function pagBankToken(env, environment) {
+  const token = environment === "production"
+    ? env.PAGBANK_TOKEN
+    : env.PAGBANK_SANDBOX_TOKEN;
+
+  if (!String(token || "").trim()) {
+    throw Object.assign(new Error("PagBank não está configurado para este ambiente."), {
+      status: 503,
+      reason: "payment_provider_not_configured"
+    });
+  }
+
+  return String(token).trim();
+}
+
+function pagBankProvider(env, environment) {
+  const token = pagBankToken(env, environment);
+  const cached = pagBankProviderCache.get(environment);
+  if (cached?.token === token) return cached.provider;
+
+  const provider = new PagBankProvider({ environment, token });
+  pagBankProviderCache.set(environment, { token, provider });
+  return provider;
+}
+
+function parsePagBankWebhookBody(rawBody) {
+  try {
+    return JSON.parse(new TextDecoder().decode(rawBody));
+  } catch {
+    throw Object.assign(new Error("Payload PagBank inválido."), {
+      status: 400,
+      reason: "invalid_pagbank_webhook"
+    });
+  }
+}
+
+function webhookNoContent() {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Cache-Control": "no-store"
+    }
+  });
+}
+
+async function handlePagBankWebhook(request, env, environment) {
+  const provider = pagBankProvider(env, environment);
+  const rawBody = new Uint8Array(await request.arrayBuffer());
+  const signatureHeader = request.headers.get("x-payload-signature");
+
+  const authentic = await provider.verifyWebhook({
+    rawBody,
+    signatureHeader
+  });
+
+  if (!authentic) {
+    throw Object.assign(new Error("Assinatura do webhook PagBank inválida."), {
+      status: 401,
+      reason: "invalid_webhook_signature"
+    });
+  }
+
+  const payload = parsePagBankWebhookBody(rawBody);
+  const productOrigin = String(request.headers.get("x-product-origin") || "").toUpperCase();
+  const productId = String(request.headers.get("x-product-id") || "").trim();
+
+  if (productOrigin && productOrigin !== "ORDER") {
+    throw Object.assign(new Error("Origem do webhook PagBank incompatível."), {
+      status: 400,
+      reason: "invalid_pagbank_webhook"
+    });
+  }
+
+  if (productId && productId !== String(payload?.id || "")) {
+    throw Object.assign(new Error("Identificador do webhook PagBank não confere."), {
+      status: 400,
+      reason: "invalid_pagbank_webhook"
+    });
+  }
+
+  const events = provider.normalizeEvents(payload);
+
+  // O endpoint Sandbox existe somente para homologação. Mesmo um webhook
+  // autenticamente assinado nunca pode alterar payments/orders/licenças reais.
+  if (environment === "sandbox") {
+    structuredLog(env, "info", "pagbank.sandbox_webhook_verified", {
+      providerOrderId: String(payload?.id || ""),
+      eventCount: events.length,
+      statuses: events.map(event => event.providerStatus).slice(0, 10)
+    });
+    return webhookNoContent();
+  }
+
+  for (const normalized of events) {
+    let paymentId;
+    try {
+      paymentId = assertCommerceId("payments", normalized.paymentId);
+    } catch {
+      structuredLog(env, "warn", "pagbank.webhook_unknown_reference", {
+        providerOrderId: normalized.providerOrderId,
+        providerChargeId: normalized.providerChargeId
+      });
+      continue;
+    }
+
+    const payment = await getDoc(env, `payments/${paymentId}`);
+    if (!payment) {
+      structuredLog(env, "warn", "pagbank.webhook_payment_not_found", {
+        paymentId,
+        providerOrderId: normalized.providerOrderId,
+        providerChargeId: normalized.providerChargeId
+      });
+      continue;
+    }
+
+    if (
+      payment.provider !== "pagbank" ||
+      payment.providerEnvironment !== "production"
+    ) {
+      throw Object.assign(new Error("Pagamento local não pertence ao ambiente de produção PagBank."), {
+        status: 409,
+        reason: "payment_environment_mismatch"
+      });
+    }
+
+    if (
+      payment.providerOrderId &&
+      payment.providerOrderId !== normalized.providerOrderId
+    ) {
+      throw Object.assign(new Error("Pedido PagBank não corresponde ao pagamento local."), {
+        status: 409,
+        reason: "payment_provider_order_mismatch"
+      });
+    }
+
+    if (
+      payment.providerChargeId &&
+      payment.providerChargeId !== normalized.providerChargeId
+    ) {
+      throw Object.assign(new Error("Cobrança PagBank não corresponde ao pagamento local."), {
+        status: 409,
+        reason: "payment_provider_charge_mismatch"
+      });
+    }
+
+    if (
+      !Number.isSafeInteger(normalized.amountCents) ||
+      normalized.amountCents !== payment.amountCents ||
+      normalized.currency !== payment.currency
+    ) {
+      throw Object.assign(new Error("Valor da notificação PagBank diverge do pagamento local."), {
+        status: 409,
+        reason: "payment_amount_mismatch"
+      });
+    }
+
+    const event = {
+      ...normalized,
+      paymentId,
+      orderId: payment.orderId
+    };
+
+    const recorded = await recordPaymentEvent({
+      atomicClient: atomicClient(env),
+      normalizedEvent: event,
+      hash: sha256Hex,
+      now: nowIso
+    });
+
+    if (recorded.payment?.status === "paid") {
+      await finalizePaidOrder(env, payment.orderId, {
+        ...recorded.payment,
+        paymentId,
+        orderId: payment.orderId,
+        accountId: payment.accountId,
+        status: "paid",
+        amountCents: payment.amountCents,
+        currency: payment.currency,
+        provider: "pagbank",
+        providerPaymentId: normalized.providerChargeId,
+        providerOrderId: normalized.providerOrderId,
+        method: normalized.method,
+        paidAt: normalized.occurredAt || recorded.payment.paidAt
+      });
+    }
+  }
+
+  return webhookNoContent();
+}
+
 const ROUTE_METHODS = Object.freeze({
   "/": "GET",
   "/health": "GET",
@@ -3709,7 +3903,9 @@ const ROUTE_METHODS = Object.freeze({
   "/api/v1/trial/validate": "POST",
   "/api/v1/license/activate": "POST",
   "/api/v1/license/validate": "POST",
-  "/api/v1/license/deactivate": "POST"
+  "/api/v1/license/deactivate": "POST",
+  "/api/v1/webhooks/pagbank": "POST",
+  "/api/v1/webhooks/pagbank/sandbox": "POST"
 });
 
 function isPublicApiPath(pathname) {
@@ -3792,6 +3988,14 @@ async function routeRequest(request, env) {
         await enforceRateLimit(env, request, "trial-validate", 120, 300);
         const body = await readJson(request);
         return json({ ok: true, trial: await publicTrialValidate(env, body, origin) }, 200, origin, true);
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/v1/webhooks/pagbank") {
+        return await handlePagBankWebhook(request, env, "production");
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/v1/webhooks/pagbank/sandbox") {
+        return await handlePagBankWebhook(request, env, "sandbox");
       }
 
       if (url.pathname.startsWith("/api/v1/admin/")) {
