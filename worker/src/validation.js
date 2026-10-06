@@ -13,9 +13,14 @@ const ADMIN_PERMISSION_KEYS = new Set([
   "manageDevices",
   "viewActivations",
   "viewLogs",
+  "viewOrders",
+  "manageOrders",
+  "viewPayments",
   "manageProjectSettings",
   "managePlatformSettings"
 ]);
+
+export const COMMERCE_LIMITS = Object.freeze({ maxLines: 10, maxQuantityPerLine: 50, maxUnits: 50 });
 
 function fail(message, status = 400, reason = "invalid_request", details = null) {
   throw Object.assign(new Error(message), {
@@ -442,4 +447,48 @@ export function validatePublicTrialPayload(body) {
     pattern: /^[A-Za-z0-9._:-]+$/
   }));
   return result;
+}
+
+export function validateOrderCreatePayload(body) {
+  allowFields(body, new Set(["items", "idempotencyKey"]));
+  const idempotencyKey = readString(body, "idempotencyKey", {
+    required: true,
+    min: 8,
+    max: 160,
+    pattern: /^[A-Za-z0-9._:-]+$/
+  });
+  if (!Array.isArray(body.items) || body.items.length < 1 || body.items.length > COMMERCE_LIMITS.maxLines) {
+    fail(`items deve conter entre 1 e ${COMMERCE_LIMITS.maxLines} linhas.`);
+  }
+
+  let units = 0;
+  const items = body.items.map((item, index) => {
+    plainObject(item, `items[${index}]`);
+    allowFields(item, new Set(["projectId", "planId", "quantity"]));
+    const projectId = assertProjectId(readString(item, "projectId", { required: true, max: 128 }));
+    const planId = assertEntityId("plans", readString(item, "planId", { required: true, max: 128 }));
+    const quantity = readNumber(item, "quantity", {
+      integer: true,
+      min: 1,
+      max: COMMERCE_LIMITS.maxQuantityPerLine
+    });
+    if (quantity === undefined) fail(`O campo items[${index}].quantity é obrigatório.`);
+    units += quantity;
+    return { type: "new_license", projectId, planId, quantity };
+  });
+  if (units > COMMERCE_LIMITS.maxUnits) fail(`O pedido aceita no máximo ${COMMERCE_LIMITS.maxUnits} licenças.`);
+  return { items, idempotencyKey };
+}
+
+export function validateRenewalOrderPayload(body) {
+  allowFields(body, new Set(["planId", "idempotencyKey"]));
+  return {
+    planId: assertEntityId("plans", readString(body, "planId", { required: true, max: 128 })),
+    idempotencyKey: readString(body, "idempotencyKey", {
+      required: true,
+      min: 8,
+      max: 160,
+      pattern: /^[A-Za-z0-9._:-]+$/
+    })
+  };
 }

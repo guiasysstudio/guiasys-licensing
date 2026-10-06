@@ -107,4 +107,10 @@ Domínios de produção:
 - portal público reservado: `https://licencas.guiasys.online`
 - painel administrativo: `https://painel.licencas.guiasys.online`
 
+## Fundacao comercial C14-A
+
+`customerAccounts`, `orders`, `payments`, `paymentEvents` e subcolecoes auxiliares sao acessadas somente pela Function. Firestore e Storage continuam deny-by-default. O desenho usa referencias por conta e leituras por ID, sem novo indice composto.
+
+O cliente usa o mesmo Firebase Auth com Google e e-mail/senha, mas inicializa a app nomeada `customer-storefront` no dominio publico. O backend verifica ID token, estado real da conta e e-mail confirmado antes de derivar `accountId` do UID.
+
 Nunca versione Service Account JSON, tokens, UID master ou outros segredos.

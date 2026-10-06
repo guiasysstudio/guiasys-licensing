@@ -202,4 +202,10 @@ firebase deploy --only hosting:admin --project guiasys-licensing
 firebase deploy --only hosting:public --project guiasys-licensing
 ```
 
+## Dominio comercial C14-A
+
+`projects` continua sendo Produto/Programa e `projects/{projectId}/plans` continua sendo a fonte de Ofertas; nao ha colecao duplicada de produtos. `customerAccounts` representa a identidade global derivada do UID imutavel. Subcolecoes de referencia listam pedidos/licencas e mantem um customer estavel por projeto.
+
+Pedidos, pagamentos e fulfillment separam estado comercial, financeiro e de processamento. `finalizePaidOrder()` e servico interno sem rota HTTP. Emissao administrativa e automatica compartilham `issueLicenseInTransaction`; renovacoes administrativas e comerciais compartilham `transitionLicense`. Veja [COMMERCE.md](COMMERCE.md) e [PAYMENTS.md](PAYMENTS.md).
+
 Workload Identity Federation (WIF) não faz parte da arquitetura de implantação deste projeto.

@@ -187,7 +187,7 @@
             },
             {
               "key": "Cross-Origin-Opener-Policy",
-              "value": "same-origin"
+              "value": "same-origin-allow-popups"
             },
             {
               "key": "Strict-Transport-Security",
@@ -195,7 +195,7 @@
             },
             {
               "key": "Content-Security-Policy",
-              "value": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'"
+              "value": "default-src 'self'; script-src 'self' https://www.gstatic.com https://apis.google.com; style-src 'self'; img-src 'self' data: https:; connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com; frame-src https://guiasys-licensing.firebaseapp.com https://accounts.google.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'"
             }
           ]
         }
