@@ -6,6 +6,8 @@ import { handleRequest } from "./index.js";
 import { createFirebaseRuntime } from "./firebase-runtime.js";
 
 const ADMIN_FIREBASE_UID = defineSecret("ADMIN_FIREBASE_UID");
+const PAGBANK_TOKEN = defineSecret("PAGBANK_TOKEN");
+const PAGBANK_SANDBOX_TOKEN = defineSecret("PAGBANK_SANDBOX_TOKEN");
 
 let cachedRuntime = null;
 
@@ -79,7 +81,7 @@ export const licensingApi = onRequest(
     timeoutSeconds: 60,
     memory: "512MiB",
     invoker: "public",
-    secrets: [ADMIN_FIREBASE_UID]
+    secrets: [ADMIN_FIREBASE_UID, PAGBANK_TOKEN, PAGBANK_SANDBOX_TOKEN]
   },
   async (req, res) => {
     const requestId = adapterRequestId(req);
@@ -90,6 +92,8 @@ export const licensingApi = onRequest(
       const response = await handleRequest(expressToWebRequest(req), {
         FIREBASE_PROJECT_ID: services.projectId,
         ADMIN_FIREBASE_UID: ADMIN_FIREBASE_UID.value(),
+        PAGBANK_TOKEN: PAGBANK_TOKEN.value(),
+        PAGBANK_SANDBOX_TOKEN: PAGBANK_SANDBOX_TOKEN.value(),
         __services: services
       });
       await sendWebResponse(res, response);
