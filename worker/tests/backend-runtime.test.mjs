@@ -33,9 +33,11 @@ test("firebase.json registra codebase Functions v2 no diretório do backend", ()
 test("entrypoint usa onRequest v2, região brasileira e Secret Manager", () => {
   assert.match(entry, /firebase-functions\/v2\/https/);
   assert.match(entry, /defineSecret\("ADMIN_FIREBASE_UID"\)/);
+  assert.match(entry, /defineSecret\("PAGBANK_TOKEN"\)/);
+  assert.match(entry, /defineSecret\("PAGBANK_SANDBOX_TOKEN"\)/);
   assert.match(entry, /region:\s*"southamerica-east1"/);
   assert.match(entry, /maxInstances:\s*20/);
-  assert.match(entry, /secrets:\s*\[ADMIN_FIREBASE_UID\]/);
+  assert.match(entry, /secrets:\s*\[ADMIN_FIREBASE_UID, PAGBANK_TOKEN, PAGBANK_SANDBOX_TOKEN\]/);
   assert.match(entry, /invoker:\s*"public"/);
 });
 
