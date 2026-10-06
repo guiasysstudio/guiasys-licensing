@@ -10,6 +10,7 @@ import { validateOrderCreatePayload } from "../src/validation.js";
 
 const PROJECT = "prj_aaaaaaaaaaaaaaaaaaaa";
 const PLAN = "plan_aaaaaaaaaaaaaaaaaaaa";
+const OTHER_PROJECT = "prj_bbbbbbbbbbbbbbbbbbbb";
 const sha = value => createHash("sha256").update(String(value)).digest("hex");
 const clone = value => value == null ? value : structuredClone(value);
 const docId = path => String(path).split("/").pop();
@@ -137,6 +138,58 @@ test("fulfillment pago gera exatamente cinco keys e replay não duplica", async 
   assert.equal([...api.store.keys()].filter(path => new RegExp(`^projects/${PROJECT}/licenses/`).test(path)).length, 5);
 });
 
+test("fulfillment com múltiplas linhas do mesmo projeto cria um único vínculo de customer", async () => {
+  const api = services(baseData());
+  const created = await handleRequest(request("/api/v1/customer/orders", "POST", {
+    idempotencyKey: "multi-line-same-project",
+    items: [
+      { projectId: PROJECT, planId: PLAN, quantity: 1 },
+      { projectId: PROJECT, planId: PLAN, quantity: 1 }
+    ]
+  }), env(api));
+  assert.equal(created.status, 201);
+  const order = (await created.json()).order;
+  const context = {
+    paymentId: "pay_dddddddddddddddddddd",
+    orderId: order.orderId,
+    accountId: order.accountId,
+    status: "paid",
+    amountCents: 5980,
+    currency: "BRL",
+    provider: "pagbank",
+    providerPaymentId: "future-multi-line",
+    method: "pix"
+  };
+  const fulfilled = await finalizePaidOrder(env(api), order.orderId, context);
+  assert.equal(fulfilled.order.resultingLicenses.length, 2);
+  assert.equal([...api.store.keys()].filter(path => new RegExp(`^projects/${PROJECT}/customers/`).test(path)).length, 1);
+  assert.equal([...api.store.keys()].filter(path => new RegExp(`^customerAccounts/${order.accountId}/projectCustomers/`).test(path)).length, 1);
+});
+
+test("replay de fulfillment rejeita pagamento conflitante depois de concluído", async () => {
+  const api = services(baseData());
+  const created = await handleRequest(request("/api/v1/customer/orders", "POST", {
+    idempotencyKey: "fulfilled-payment-conflict",
+    items: [{ projectId: PROJECT, planId: PLAN, quantity: 1 }]
+  }), env(api));
+  const order = (await created.json()).order;
+  const context = {
+    paymentId: "pay_eeeeeeeeeeeeeeeeeeee",
+    orderId: order.orderId,
+    accountId: order.accountId,
+    status: "paid",
+    amountCents: 2990,
+    currency: "BRL",
+    provider: "pagbank",
+    method: "pix"
+  };
+  await finalizePaidOrder(env(api), order.orderId, context);
+  await assert.rejects(
+    () => finalizePaidOrder(env(api), order.orderId, { ...context, paymentId: "pay_ffffffffffffffffffff" }),
+    error => error.reason === "payment_conflict"
+  );
+});
+
 test("fulfillment rejeita pagamento ausente ou com valor divergente", async () => {
   const api = services(baseData());
   const created = await handleRequest(request("/api/v1/customer/orders", "POST", { idempotencyKey: "bad-payment-request", items: [{ projectId: PROJECT, planId: PLAN, quantity: 1 }] }), env(api));
@@ -194,6 +247,77 @@ test("tentativa e evento de pagamento são idempotentes e sem payload bruto", as
   const event = await recordPaymentEvent(eventArgs); const eventReplay = await recordPaymentEvent(eventArgs);
   assert.equal(event.payment.status, "paid"); assert.equal(eventReplay.idempotentReplay, true);
   assert.equal(JSON.stringify(event.event).includes("payload"), false);
+});
+
+test("RBAC comercial respeita o escopo de projetos em pedidos e pagamentos", async () => {
+  const uid = "scoped-commerce-admin";
+  const email = "scoped-admin@example.com";
+  const adminId = sha(email);
+  const allowedOrder = "ord_aaaaaaaaaaaaaaaaaaaa";
+  const hiddenOrder = "ord_bbbbbbbbbbbbbbbbbbbb";
+  const allowedPayment = "pay_aaaaaaaaaaaaaaaaaaaa";
+  const hiddenPayment = "pay_bbbbbbbbbbbbbbbbbbbb";
+  const api = services({
+    [`adminUids/${sha(uid)}`]: { adminId },
+    [`admins/${adminId}`]: {
+      firebaseUid: uid,
+      email,
+      status: "active",
+      allProjects: false,
+      projectIds: [PROJECT],
+      permissions: { viewOrders: true, viewPayments: true }
+    },
+    [`orders/${allowedOrder}`]: {
+      orderId: allowedOrder,
+      accountId: "acct_aaaaaaaaaaaaaaaaaaaa",
+      totalCents: 2990,
+      items: [{ projectId: PROJECT, planId: PLAN, quantity: 1 }],
+      status: "pending_payment",
+      createdAt: "2026-10-05T12:00:00.000Z"
+    },
+    [`orders/${hiddenOrder}`]: {
+      orderId: hiddenOrder,
+      accountId: "acct_bbbbbbbbbbbbbbbbbbbb",
+      totalCents: 2990,
+      items: [{ projectId: OTHER_PROJECT, planId: PLAN, quantity: 1 }],
+      status: "pending_payment",
+      createdAt: "2026-10-05T12:01:00.000Z"
+    },
+    [`payments/${allowedPayment}`]: {
+      paymentId: allowedPayment,
+      orderId: allowedOrder,
+      accountId: "acct_aaaaaaaaaaaaaaaaaaaa",
+      status: "pending",
+      amountCents: 2990,
+      currency: "BRL",
+      createdAt: "2026-10-05T12:00:00.000Z"
+    },
+    [`payments/${hiddenPayment}`]: {
+      paymentId: hiddenPayment,
+      orderId: hiddenOrder,
+      accountId: "acct_bbbbbbbbbbbbbbbbbbbb",
+      status: "pending",
+      amountCents: 2990,
+      currency: "BRL",
+      createdAt: "2026-10-05T12:01:00.000Z"
+    }
+  });
+  api.setIdentity(uid, email);
+  const adminEnv = env(api);
+
+  const ordersResponse = await handleRequest(request("/api/v1/admin/orders"), adminEnv);
+  assert.equal(ordersResponse.status, 200);
+  assert.deepEqual((await ordersResponse.json()).orders.map(item => item.orderId), [allowedOrder]);
+
+  const hiddenOrderResponse = await handleRequest(request(`/api/v1/admin/orders/${hiddenOrder}`), adminEnv);
+  assert.equal(hiddenOrderResponse.status, 404);
+
+  const paymentsResponse = await handleRequest(request("/api/v1/admin/payments"), adminEnv);
+  assert.equal(paymentsResponse.status, 200);
+  assert.deepEqual((await paymentsResponse.json()).payments.map(item => item.paymentId), [allowedPayment]);
+
+  const hiddenPaymentResponse = await handleRequest(request(`/api/v1/admin/payments/${hiddenPayment}`), adminEnv);
+  assert.equal(hiddenPaymentResponse.status, 404);
 });
 
 test("adapter PagBank permanece inerte e explicitamente não configurado", async () => {
