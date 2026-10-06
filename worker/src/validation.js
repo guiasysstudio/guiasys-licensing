@@ -492,3 +492,28 @@ export function validateRenewalOrderPayload(body) {
     })
   };
 }
+
+export function validatePaymentCreatePayload(body) {
+  allowFields(body, new Set(["method", "idempotencyKey"]));
+  const method = readEnum(body, "method", ["pix"]);
+  if (!method) fail("O campo method é obrigatório.");
+  return {
+    method,
+    idempotencyKey: readString(body, "idempotencyKey", {
+      required: true,
+      min: 8,
+      max: 160,
+      pattern: /^[A-Za-z0-9._:-]+$/
+    })
+  };
+}
+
+export function validatePaymentReconcilePayload(body) {
+  allowFields(body, new Set(["providerOrderId"]));
+  return {
+    providerOrderId: readString(body, "providerOrderId", {
+      max: 80,
+      pattern: /^ORDE_[A-Za-z0-9-]+$/
+    })
+  };
+}

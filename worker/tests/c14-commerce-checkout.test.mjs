@@ -128,9 +128,27 @@ test("fulfillment pago gera exatamente cinco keys e replay não duplica", async 
   const api = services(baseData());
   const created = await handleRequest(request("/api/v1/customer/orders", "POST", { idempotencyKey: "fulfillment-request", items: [{ projectId: PROJECT, planId: PLAN, quantity: 5 }] }), env(api));
   const order = (await created.json()).order;
-  const context = { paymentId: "pay_aaaaaaaaaaaaaaaaaaaa", orderId: order.orderId, accountId: order.accountId, status: "paid", amountCents: 14950, currency: "BRL", provider: "pagbank", providerPaymentId: "future-reference", method: "pix" };
+  const context = {
+    paymentId: "pay_aaaaaaaaaaaaaaaaaaaa",
+    orderId: order.orderId,
+    accountId: order.accountId,
+    status: "paid",
+    amountCents: 14950,
+    currency: "BRL",
+    provider: "pagbank",
+    providerEnvironment: "sandbox",
+    providerOrderId: "ORDE_fulfillment-test",
+    providerChargeId: "CHAR_fulfillment-test",
+    providerPaymentId: "CHAR_fulfillment-test",
+    providerPaidAt: "2026-10-06T14:22:31-03:00",
+    paidAt: "2026-10-06T14:22:31-03:00",
+    method: "pix"
+  };
   const first = await finalizePaidOrder(env(api), order.orderId, context);
   assert.equal(first.order.resultingLicenses.length, 5);
+  assert.equal(api.store.get(`orders/${order.orderId}`).providerOrderId, "ORDE_fulfillment-test");
+  assert.equal(api.store.get(`orders/${order.orderId}`).providerChargeId, "CHAR_fulfillment-test");
+  assert.equal(api.store.get(`orders/${order.orderId}`).paidAt, "2026-10-06T14:22:31-03:00");
   const licensePaths = [...api.store.keys()].filter(path => new RegExp(`^projects/${PROJECT}/licenses/`).test(path));
   assert.equal(licensePaths.length, 5);
   const replay = await finalizePaidOrder(env(api), order.orderId, context);
@@ -249,6 +267,58 @@ test("tentativa e evento de pagamento são idempotentes e sem payload bruto", as
   assert.equal(JSON.stringify(event.event).includes("payload"), false);
 });
 
+test("evento financeiro terminal sincroniza payment e order", async t => {
+  for (const scenario of [
+    { remote: "failed", payment: "processing", order: "payment_processing", expected: "payment_failed" },
+    { remote: "cancelled", payment: "processing", order: "payment_processing", expected: "cancelled" },
+    { remote: "refunded", payment: "paid", order: "fulfilled", expected: "refunded" }
+  ]) {
+    await t.test(scenario.remote, async () => {
+      const paymentId = `pay_${sha(scenario.remote).slice(0, 20)}`;
+      const orderId = `ord_${sha(`order-${scenario.remote}`).slice(0, 20)}`;
+      const accountId = "acct_aaaaaaaaaaaaaaaaaaaa";
+      const api = services({
+        [`orders/${orderId}`]: {
+          orderId,
+          accountId,
+          paymentId,
+          activePaymentId: paymentId,
+          status: scenario.order,
+          paymentStatus: scenario.payment,
+          processingStatus: "processing"
+        },
+        [`payments/${paymentId}`]: {
+          paymentId,
+          orderId,
+          accountId,
+          provider: "pagbank",
+          providerEnvironment: "production",
+          status: scenario.payment,
+          amountCents: 2990,
+          currency: "BRL"
+        }
+      });
+      const recorded = await recordPaymentEvent({
+        atomicClient: api.atomicClient(),
+        normalizedEvent: {
+          provider: "pagbank",
+          providerEventId: `event-${scenario.remote}`,
+          paymentId,
+          orderId,
+          status: scenario.remote,
+          providerStatus: scenario.remote.toUpperCase(),
+          occurredAt: "2026-10-06T19:00:00.000Z"
+        },
+        hash: async value => sha(value),
+        now: () => "2026-10-06T19:01:00.000Z"
+      });
+      assert.equal(recorded.payment.status, scenario.remote);
+      assert.equal(recorded.order.status, scenario.expected);
+      assert.equal(recorded.order.activePaymentId, "");
+    });
+  }
+});
+
 test("RBAC comercial respeita o escopo de projetos em pedidos e pagamentos", async () => {
   const uid = "scoped-commerce-admin";
   const email = "scoped-admin@example.com";
@@ -320,10 +390,15 @@ test("RBAC comercial respeita o escopo de projetos em pedidos e pagamentos", asy
   assert.equal(hiddenPaymentResponse.status, 404);
 });
 
-test("adapter PagBank permanece inerte e explicitamente não configurado", async () => {
-  const provider = new PagBankProvider();
-  await assert.rejects(() => provider.createPayment({}), error => error.reason === "payment_provider_not_configured");
-  await assert.rejects(() => provider.verifyWebhook({}), error => error.reason === "payment_provider_not_configured");
+test("adapter PagBank exige ambiente e token explícitos", () => {
+  assert.throws(
+    () => new PagBankProvider(),
+    error => error.reason === "invalid_payment_environment"
+  );
+  assert.throws(
+    () => new PagBankProvider({ environment: "production" }),
+    error => error.reason === "payment_provider_not_configured"
+  );
 });
 
 test("RBAC comercial separa pedidos e pagamentos sem permitir mutação", async () => {
