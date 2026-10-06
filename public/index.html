@@ -79,12 +79,44 @@
         <div class="checkout-total"><span>Total visual</span><strong id="checkout-total"></strong></div>
         <button id="create-order-button" class="offer-button" type="button">Criar pedido</button>
         <p id="checkout-message" role="status" aria-live="polite"></p>
-        <p class="security-note">Nenhum dado de cartão ou PIX é coletado nesta etapa. O pagamento PagBank será conectado posteriormente.</p>
+        <p class="security-note">O valor e os dados do pedido são recalculados no servidor. O pagamento ativo é exclusivamente PIX manual.</p>
       </div>
     </section>
 
+    <section id="pix-payment" class="commerce-section pix-payment-section" aria-labelledby="pix-title" hidden>
+      <div class="section-heading">
+        <div><p class="eyebrow">PAGAMENTO VIA PIX</p><h2 id="pix-title">Conclua seu pagamento</h2></div>
+        <p>QR Code e Copia e Cola gerados diretamente pela GuiaSys.</p>
+      </div>
+      <article class="pix-card">
+        <div class="pix-brand"><span class="brand-mark" aria-hidden="true">G</span><div><strong>GuiaSys</strong><small>Licensing</small></div></div>
+        <dl class="pix-order-summary">
+          <div><dt>Pedido</dt><dd id="pix-order-number"></dd></div>
+          <div><dt>Produto</dt><dd id="pix-product"></dd></div>
+          <div><dt>Plano</dt><dd id="pix-plan"></dd></div>
+          <div><dt>Valor</dt><dd id="pix-total"></dd></div>
+          <div><dt>Recebedor visual</dt><dd id="pix-display-name">GuiaSys</dd></div>
+        </dl>
+        <p class="pix-holder-note">Ao pagar, seu banco mostrará os dados cadastrais do titular real da chave PIX.</p>
+        <div class="pix-content">
+          <div class="pix-qr-wrap"><img id="pix-qr-code" alt="QR Code do pagamento PIX"></div>
+          <div class="pix-copy-area">
+            <label for="pix-code">PIX Copia e Cola</label>
+            <textarea id="pix-code" rows="5" readonly></textarea>
+            <button id="copy-pix-code" class="offer-button" type="button">COPIAR CÓDIGO PIX</button>
+            <label for="pix-key">Chave Pix</label>
+            <input id="pix-key" readonly>
+            <button id="copy-pix-key" class="secondary-button" type="button">COPIAR CHAVE</button>
+          </div>
+        </div>
+        <p class="manual-payment-note">O pagamento via PIX é confirmado manualmente pela GuiaSys. Após efetuar o pagamento, clique em “Já efetuei o pagamento” e envie o comprovante pelo WhatsApp. Após a confirmação, sua licença será liberada em Minhas Compras.</p>
+        <button id="report-payment-button" class="pix-primary-button" type="button">JÁ EFETUEI O PAGAMENTO</button>
+        <p id="pix-message" role="status" aria-live="polite"></p>
+      </article>
+    </section>
+
     <section id="customer-area" class="commerce-section" aria-labelledby="customer-title" hidden>
-      <div class="section-heading"><div><p class="eyebrow">MINHA CONTA</p><h2 id="customer-title">Compras e licenças</h2></div><p id="customer-email"></p></div>
+      <div class="section-heading"><div><p class="eyebrow">MINHA CONTA</p><h2 id="customer-title">Minhas Compras</h2></div><p id="customer-email"></p></div>
       <div class="account-grid">
         <article class="state-card"><h3>Meus pedidos</h3><div id="orders-list"></div></article>
         <article class="state-card"><h3>Minhas licenças</h3><div id="licenses-list"></div></article>

@@ -26,7 +26,7 @@ const firebaseConfig = {
 
 const API_BASE = window.location.origin;
 const PUBLIC_API_BASE = "https://licencas.guiasys.online";
-const PANEL_VERSION = "0.17.0";
+const PANEL_VERSION = "0.18.0";
 const PROTOCOL_VERSION = "GSL-v1";
 
 const firebaseApp = initializeApp(firebaseConfig);
@@ -124,7 +124,7 @@ const ADMIN_PERMISSION_LABELS = {
   manageOrders: "Gerenciar pedidos (reservado para fluxos seguros)",
   viewPayments: "Visualizar pagamentos",
   manageProjectSettings: "Alterar configurações dos projetos",
-  managePlatformSettings: "Visualizar configurações da plataforma"
+  managePlatformSettings: "Alterar configurações da plataforma"
 };
 
 const statusMap = {
@@ -136,6 +136,13 @@ const statusMap = {
   suspended: ["Suspensa", "warning"],
   revoked: ["Revogada", "danger"],
   converted: ["Convertido em licença", "success"],
+  pending_payment: ["Aguardando PIX", "warning"],
+  payment_reported: ["Pagamento informado", "warning"],
+  paid: ["Pagamento confirmado", "success"],
+  fulfilling: ["Liberando licença", "warning"],
+  fulfilled: ["Pagamento confirmado", "success"],
+  cancelled: ["Cancelado", "danger"],
+  payment_failed: ["Falha no pagamento", "danger"],
   none: ["Sem licença", "muted"]
 };
 
@@ -3308,9 +3315,10 @@ async function administratorsView() {
   });
 }
 
-function platformSettingsView() {
+async function platformSettingsView() {
+  const { settings, runtime } = await api("/api/v1/admin/payment-settings");
   el.content.innerHTML = `
-    ${pageHeader("Configurações da plataforma", "Informações gerais da central de licenciamento.")}
+    ${pageHeader("Configurações da plataforma", "Infraestrutura e provider financeiro operacional.")}
     <section class="grid grid-2">
       <article class="card card-section">
         <span class="badge">Administrador</span>
@@ -3333,7 +3341,50 @@ function platformSettingsView() {
         </div>
       </article>
     </section>
+    <article class="card card-section" style="margin-top:18px">
+      <div class="section-heading">
+        <div><span class="eyebrow">PAGAMENTOS</span><h3>PIX manual</h3><p>Dados exibidos ao cliente e usados para gerar o BR Code.</p></div>
+        <div>${runtime.paymentProvider === "manual_pix" && !runtime.pagbankEnabled ? '<span class="badge badge-success">OPERACIONAL</span>' : '<span class="badge badge-danger">CONFIGURAÇÃO BLOQUEADA</span>'}</div>
+      </div>
+      <form id="payment-settings-form" class="form-grid form-grid-2">
+        <label class="field">${fieldTitle("Provider", "PagBank permanece congelado nesta versão.")}<select name="paymentProvider"><option value="manual_pix" selected>manual_pix</option></select></label>
+        <label class="field">${fieldTitle("Tipo da chave", "Esta versão aceita chave aleatória EVP.")}<select name="pixKeyType"><option value="EVP" selected>EVP — chave aleatória</option></select></label>
+        <label class="field field-full">${fieldTitle("Chave PIX", "Chave pública apresentada ao pagador.")}<input name="pixKey" required maxlength="77" value="${e(settings.pixKey)}"></label>
+        <label class="field">${fieldTitle("Marca exibida", "Identidade visual usada no checkout.")}<input name="pixDisplayName" required maxlength="80" value="${e(settings.pixDisplayName)}"></label>
+        <label class="field">${fieldTitle("Titular / merchant name", "Use os dados reais; o banco exibirá o titular cadastrado no DICT.")}<input name="pixMerchantName" required maxlength="25" value="${e(settings.pixMerchantName)}"></label>
+        <label class="field">${fieldTitle("Cidade do merchant", "Formato BR Code, sem acentos.")}<input name="pixMerchantCity" required maxlength="15" value="${e(settings.pixMerchantCity)}"></label>
+        <label class="field">${fieldTitle("WhatsApp", "Formato internacional, somente números.")}<input name="pixWhatsapp" required inputmode="numeric" maxlength="13" value="${e(settings.pixWhatsapp)}"></label>
+        <label class="field check-field"><input name="pixEnabled" type="checkbox" ${settings.pixEnabled ? "checked" : ""}>${fieldTitle("PIX habilitado", "Desmarcar interrompe a criação e a confirmação de pagamentos.")}</label>
+        <label class="field check-field"><input name="manualConfirmationEnabled" type="checkbox" ${settings.manualConfirmationEnabled ? "checked" : ""}>${fieldTitle("Confirmação manual habilitada", "Permite que administradores confirmem pagamentos informados.")}</label>
+        <div class="notice field-full">PAYMENT_PROVIDER=${e(runtime.paymentProvider)} · PAGBANK_ENABLED=${e(String(runtime.pagbankEnabled))}. Alterar estes campos de runtime exige uma revisão específica e novo deploy.</div>
+        <div class="form-page-footer field-full"><button class="btn btn-primary" type="submit">Salvar pagamentos</button></div>
+      </form>
+    </article>
   `;
+
+  document.querySelector("#payment-settings-form").addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector('button[type="submit"]');
+    await runButtonAction(button, async () => {
+      const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+      await api("/api/v1/admin/payment-settings", {
+        method: "PATCH",
+        body: JSON.stringify({
+          paymentProvider: "manual_pix",
+          pixEnabled: event.currentTarget.elements.pixEnabled.checked,
+          pixKeyType: "EVP",
+          pixKey: values.pixKey,
+          pixDisplayName: values.pixDisplayName,
+          pixMerchantName: values.pixMerchantName,
+          pixMerchantCity: values.pixMerchantCity,
+          pixWhatsapp: values.pixWhatsapp,
+          manualConfirmationEnabled: event.currentTarget.elements.manualConfirmationEnabled.checked
+        })
+      });
+      toast("Configurações de pagamento atualizadas.");
+      await renderContent();
+    });
+  });
 }
 
 function commerceTable(rows, columns, emptyMessage) {
@@ -3341,23 +3392,130 @@ function commerceTable(rows, columns, emptyMessage) {
   return `<article class="card table-card"><div class="table-scroll"><table><thead><tr>${columns.map(column => `<th>${e(column.label)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${columns.map(column => `<td>${column.render ? column.render(row) : e(row[column.key] ?? "—")}</td>`).join("")}</tr>`).join("")}</tbody></table></div></article>`;
 }
 
+function customerNotification(order) {
+  return [
+    `Olá, ${order.customerName || "cliente"}!`,
+    "",
+    `Confirmamos o pagamento do pedido ${order.orderNumber || order.orderId}.`,
+    "",
+    `Sua licença do ${order.productName || order.items?.[0]?.projectNameSnapshot || "produto GuiaSys"} já está disponível.`,
+    "",
+    'Acesse sua conta no GuiaSys Licensing e entre em "Minhas Compras" para visualizar sua licença.',
+    "",
+    "Obrigado,",
+    "GuiaSys"
+  ].join("\n");
+}
+
+function normalizedWhatsapp(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (/^55\d{10,11}$/.test(digits)) return digits;
+  if (/^\d{10,11}$/.test(digits)) return `55${digits}`;
+  return "";
+}
+
+async function openOrderDetails(orderId) {
+  const { order, audit = [] } = await api(`/api/v1/admin/orders/${encodeURIComponent(orderId)}`);
+  const item = order.items?.[0] || {};
+  const canConfirm = order.status === "payment_reported" && hasPermission("manageOrders");
+  const fulfilled = ["paid", "fulfilled"].includes(order.status) && order.fulfillmentStatus === "fulfilled";
+  const notification = customerNotification(order);
+  openModal({
+    title: `Pedido ${order.orderNumber || order.orderId}`,
+    subtitle: `${order.productName || item.projectNameSnapshot || "Produto"} · ${order.planName || item.planNameSnapshot || "Plano"}`,
+    wide: true,
+    submitLabel: canConfirm ? "CONFIRMAR PAGAMENTO E LIBERAR LICENÇA" : "Fechar",
+    body: `
+      <div class="mini-info vertical">
+        <div><span>Número</span><strong>${e(order.orderNumber || order.orderId)}</strong></div>
+        <div><span>Cliente</span><strong>${e(order.customerName || "—")}</strong></div>
+        <div><span>UID</span><code>${e(order.customerUid || "—")}</code></div>
+        <div><span>E-mail</span><strong>${e(order.customerEmail || "—")}</strong></div>
+        <div><span>WhatsApp</span><strong>${e(order.customerWhatsapp || "—")}</strong></div>
+        <div><span>Produto</span><strong>${e(order.productName || item.projectNameSnapshot || "—")}</strong></div>
+        <div><span>Plano</span><strong>${e(order.planName || item.planNameSnapshot || "—")}</strong></div>
+        <div><span>Duração</span><strong>${e(order.licenseDuration === "lifetime" ? "Vitalícia" : order.licenseDuration ? `${order.licenseDuration} dias` : "—")}</strong></div>
+        <div><span>Valor</span><strong>${e(formatMoney(Number(order.totalCents || 0) / 100))}</strong></div>
+        <div><span>Forma de pagamento</span><strong>PIX manual</strong></div>
+        <div><span>TXID</span><code>${e(order.pixTxid || "—")}</code></div>
+        <div><span>Criado em</span><strong>${e(formatDate(order.createdAt, true))}</strong></div>
+        <div><span>Pagamento informado</span><strong>${e(formatDate(order.paymentReportedAt, true))}</strong></div>
+        <div><span>Status</span>${badge(order.status)}</div>
+        <div><span>Licença relacionada</span><code>${e(order.licenseId || order.resultingLicenses?.map(result => result.licenseId).join(", ") || "—")}</code></div>
+      </div>
+      ${fulfilled ? '<button class="btn btn-primary" id="notify-order-customer" type="button">AVISAR CLIENTE PELO WHATSAPP</button>' : ""}
+      <div class="table-toolbar" style="margin-top:22px"><h3>Auditoria</h3><span class="badge">${audit.length} evento(s)</span></div>
+      ${audit.length ? `<div class="table-scroll"><table><thead><tr><th>Evento</th><th>Ator</th><th>Data</th></tr></thead><tbody>${audit.map(log => `<tr><td><code>${e(log.action)}</code></td><td>${e(log.actor || log.details?.actorUid || "—")}</td><td>${e(formatDate(log.createdAt, true))}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted-box">Nenhum evento de auditoria encontrado.</p>'}
+    `,
+    onOpen: backdrop => {
+      const notify = backdrop.querySelector("#notify-order-customer");
+      if (!notify) return;
+      notify.addEventListener("click", async () => {
+        const number = normalizedWhatsapp(order.customerWhatsapp);
+        if (number) {
+          window.open(`https://wa.me/${number}?text=${encodeURIComponent(notification)}`, "_blank", "noopener,noreferrer");
+          return;
+        }
+        await navigator.clipboard.writeText(notification);
+        toast("Cliente sem WhatsApp cadastrado; mensagem copiada.", "warning");
+      });
+    },
+    onSubmit: async () => {
+      if (!canConfirm) return;
+      await api(`/api/v1/admin/orders/${encodeURIComponent(order.orderId)}/confirm-payment`, { method: "POST", body: JSON.stringify({}) });
+      toast("Pagamento confirmado e licença liberada.");
+      await renderContent();
+    }
+  });
+}
+
 async function ordersView() {
   const { orders } = await api("/api/v1/admin/orders");
-  el.content.innerHTML = `${pageHeader("Pedidos", "Pedidos comerciais em centavos, com financeiro e fulfillment separados.")}${commerceTable(orders, [
-    { label: "Pedido", render: row => `<code>${e(row.orderId)}</code>` },
-    { label: "Cliente", render: row => `<code>${e(row.accountId)}</code>` },
-    { label: "Itens", render: row => e(String((row.items || []).reduce((sum, item) => sum + Number(item.quantity || 0), 0))) },
-    { label: "Valor", render: row => e(formatMoney(Number(row.totalCents || 0) / 100)) },
-    { label: "Status", render: row => `<span class="badge">${e(row.status)}</span>` },
-    { label: "Pagamento", render: row => e(row.paymentStatus || "pending") },
-    { label: "Fulfillment", render: row => e(row.fulfillmentStatus || "pending") },
-    { label: "Data", render: row => e(formatDate(row.createdAt, true)) }
-  ], "Nenhum pedido registrado.")}`;
+  const groups = {
+    all: orders.length,
+    pending: orders.filter(order => order.status === "pending_payment").length,
+    reported: orders.filter(order => order.status === "payment_reported").length,
+    paid: orders.filter(order => ["paid", "fulfilling", "fulfilled"].includes(order.status)).length,
+    cancelled: orders.filter(order => order.status === "cancelled").length
+  };
+  const rows = orders.map(order => `
+    <tr data-order-status="${e(order.status)}">
+      <td><strong>${e(order.orderNumber || order.orderId)}</strong><small><code>${e(order.orderId)}</code></small></td>
+      <td><strong>${e(order.customerName || "—")}</strong><small>${e(order.customerEmail || "—")}</small></td>
+      <td>${e(order.productName || order.items?.[0]?.projectNameSnapshot || "—")}</td>
+      <td>${e(order.planName || order.items?.[0]?.planNameSnapshot || "—")}</td>
+      <td>${e(formatMoney(Number(order.totalCents || 0) / 100))}</td>
+      <td>${e(formatDate(order.createdAt, true))}</td>
+      <td>${badge(order.status)}</td>
+      <td><code>${e(order.pixTxid || "—")}</code></td>
+      <td><button class="btn btn-ghost btn-sm order-details" data-id="${e(order.orderId)}" type="button">Abrir</button></td>
+    </tr>
+  `);
+  el.content.innerHTML = `
+    ${pageHeader("Vendas / Pedidos", "Confirmação manual de PIX e liberação idempotente de licenças.")}
+    <div class="toolbar-actions" id="order-filters">
+      <button class="btn btn-primary btn-sm" data-filter="all" type="button">Todos <span class="badge">${groups.all}</span></button>
+      <button class="btn btn-ghost btn-sm" data-filter="pending" type="button">Aguardando PIX <span class="badge">${groups.pending}</span></button>
+      <button class="btn btn-ghost btn-sm" data-filter="reported" type="button">Pagamento informado <span class="badge">${groups.reported}</span></button>
+      <button class="btn btn-ghost btn-sm" data-filter="paid" type="button">Pagos <span class="badge">${groups.paid}</span></button>
+      <button class="btn btn-ghost btn-sm" data-filter="cancelled" type="button">Cancelados <span class="badge">${groups.cancelled}</span></button>
+    </div>
+    <article class="card table-card" style="margin-top:18px"><div class="table-scroll"><table><thead><tr><th>Pedido</th><th>Cliente</th><th>Produto</th><th>Plano</th><th>Valor</th><th>Data</th><th>Status</th><th>TXID</th><th></th></tr></thead><tbody>${rows.join("") || '<tr><td colspan="9">Nenhum pedido registrado.</td></tr>'}</tbody></table></div></article>
+  `;
+  document.querySelectorAll(".order-details").forEach(button => button.addEventListener("click", () => runButtonAction(button, () => openOrderDetails(button.dataset.id))));
+  document.querySelectorAll("#order-filters [data-filter]").forEach(button => button.addEventListener("click", () => {
+    const filter = button.dataset.filter;
+    document.querySelectorAll("#order-filters button").forEach(item => { item.classList.toggle("btn-primary", item === button); item.classList.toggle("btn-ghost", item !== button); });
+    document.querySelectorAll("[data-order-status]").forEach(row => {
+      const status = row.dataset.orderStatus;
+      row.hidden = !(filter === "all" || (filter === "pending" && status === "pending_payment") || (filter === "reported" && status === "payment_reported") || (filter === "paid" && ["paid", "fulfilling", "fulfilled"].includes(status)) || (filter === "cancelled" && status === "cancelled"));
+    });
+  }));
 }
 
 async function paymentsView() {
   const { payments } = await api("/api/v1/admin/payments");
-  el.content.innerHTML = `${pageHeader("Pagamentos", "Visão financeira somente leitura; aprovações só podem vir do adapter interno.")}${commerceTable(payments, [
+  el.content.innerHTML = `${pageHeader("Pagamentos", "Visão financeira; a confirmação do PIX manual ocorre em Vendas / Pedidos.")}${commerceTable(payments, [
     { label: "Pagamento", render: row => `<code>${e(row.paymentId || row.id)}</code>` },
     { label: "Pedido", render: row => `<code>${e(row.orderId)}</code>` },
     { label: "Provedor", key: "provider" },

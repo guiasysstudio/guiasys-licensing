@@ -173,6 +173,30 @@ h1 { max-width: 750px; margin-bottom: 24px; font-size: clamp(2.8rem, 7vw, 6.3rem
 .quantity-field input { width: 110px; }
 .checkout-total { display: flex; justify-content: space-between; margin: 22px 0; padding-top: 18px; border-top: 1px solid var(--line); font-size: 1.2rem; }
 .security-note { font-size: .82rem; }
+.pix-payment-section[hidden] { display: none; }
+.pix-card { max-width: 920px; padding: 30px; border: 1px solid rgba(102, 242, 175, .35); border-radius: var(--radius); background: var(--surface); box-shadow: 0 24px 70px rgba(0,0,0,.25); }
+.pix-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+.pix-brand strong, .pix-brand small { display: block; line-height: 1.15; }
+.pix-brand small { color: var(--muted); font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; }
+.pix-order-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin: 0 0 18px; }
+.pix-order-summary div { min-width: 0; padding: 13px; border-radius: 12px; background: rgba(255,255,255,.04); }
+.pix-order-summary dt { color: var(--muted); font-size: .78rem; }
+.pix-order-summary dd { margin: 5px 0 0; overflow-wrap: anywhere; font-weight: 800; }
+.pix-holder-note, .manual-payment-note { padding: 14px 16px; border-radius: 12px; background: rgba(102,242,175,.07); color: #d8f7e9; }
+.pix-content { display: grid; grid-template-columns: minmax(220px, 320px) minmax(0, 1fr); gap: 26px; align-items: center; margin: 24px 0; }
+.pix-qr-wrap { overflow: hidden; padding: 12px; border-radius: 18px; background: #fff; }
+.pix-qr-wrap img { display: block; width: 100%; height: auto; }
+.pix-copy-area { display: grid; gap: 10px; }
+.pix-copy-area label { color: var(--muted); font-size: .86rem; font-weight: 700; }
+.pix-copy-area textarea, .pix-copy-area input { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #07110f; color: var(--text); font: inherit; overflow-wrap: anywhere; }
+.pix-copy-area textarea { resize: vertical; word-break: break-all; }
+.pix-copy-area .secondary-button { width: 100%; background: rgba(102,242,175,.12); color: var(--accent); }
+.pix-primary-button { width: 100%; min-height: 54px; border: 0; border-radius: 13px; background: var(--accent); color: #04130d; font: inherit; font-weight: 900; cursor: pointer; }
+.pix-primary-button:disabled, .offer-button:disabled, .secondary-button:disabled { opacity: .55; cursor: wait; }
+.account-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.account-actions button { width: auto; min-height: 38px; padding: 0 13px; }
+.status-pill { width: fit-content; padding: 4px 9px; border-radius: 999px; background: rgba(102,242,175,.1); color: var(--accent) !important; font-size: .78rem; font-weight: 800; }
+.license-key { color: var(--text) !important; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 .account-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 .account-grid .state-card { display: block; min-height: 240px; padding: 24px; text-align: left; }
 .account-record { display: grid; gap: 5px; padding: 14px 0; border-bottom: 1px solid var(--line); }
@@ -196,6 +220,10 @@ h1 { max-width: 750px; margin-bottom: 24px; font-size: clamp(2.8rem, 7vw, 6.3rem
   .product-logo, .product-monogram { width: 62px; height: 62px; border-radius: 15px; }
   .product-body { padding: 22px; }
   .checkout-details, .account-grid { grid-template-columns: 1fr; }
+  .pix-order-summary { grid-template-columns: 1fr 1fr; }
+  .pix-content { grid-template-columns: 1fr; }
+  .pix-qr-wrap { width: min(100%, 320px); margin-inline: auto; }
+  .pix-card { padding: 20px; }
   .header-actions .header-link { display: none; }
 }
 

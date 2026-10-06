@@ -21,7 +21,19 @@ const authDialog = $("#auth-dialog");
 let currentUser = null;
 let catalog = [];
 let selection = null;
+let activePixPayment = null;
+let activePixOrder = null;
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+
+const orderStatusLabel = {
+  pending_payment: "Aguardando pagamento",
+  payment_reported: "Pagamento informado",
+  paid: "Pagamento confirmado",
+  fulfilling: "Pagamento confirmado",
+  fulfilled: "Pagamento confirmado",
+  cancelled: "Cancelado",
+  payment_failed: "Falha no pagamento"
+};
 
 function element(tag, className, text) { const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = String(text); return node; }
 function safeHttpsUrl(value) { try { const url = new URL(String(value || "")); return url.protocol === "https:" && !url.username && !url.password ? url.href : ""; } catch { return ""; } }
@@ -69,6 +81,49 @@ async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers: { Accept: "application/json", ...(options.body ? { "Content-Type": "application/json" } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
   const payload = await response.json().catch(() => ({})); if (!response.ok) throw new Error(payload.message || `Erro HTTP ${response.status}`); return payload;
 }
+
+async function copyText(value, button, successLabel) {
+  const original = button.textContent;
+  try {
+    await navigator.clipboard.writeText(String(value || ""));
+  } catch {
+    const field = document.createElement("textarea");
+    field.value = String(value || ""); field.style.position = "fixed"; field.style.opacity = "0";
+    document.body.append(field); field.select(); document.execCommand("copy"); field.remove();
+  }
+  button.textContent = successLabel;
+  setTimeout(() => { if (button.isConnected) button.textContent = original; }, 1800);
+}
+
+function orderProduct(order) { return order.productName || order.items?.[0]?.projectNameSnapshot || "Produto GuiaSys"; }
+function orderPlan(order) { return order.planName || order.items?.[0]?.planNameSnapshot || "Plano"; }
+
+function showPixPayment(order, payment) {
+  activePixOrder = order;
+  activePixPayment = payment;
+  $("#pix-order-number").textContent = payment.orderNumber || order.orderNumber || order.orderId;
+  $("#pix-product").textContent = orderProduct(order);
+  $("#pix-plan").textContent = orderPlan(order);
+  $("#pix-total").textContent = money.format(Number(payment.amountCents || order.totalCents || 0) / 100);
+  $("#pix-display-name").textContent = payment.pixDisplayName || "GuiaSys";
+  $("#pix-qr-code").src = payment.pixQrCodeDataUrl;
+  $("#pix-code").value = payment.pixCode;
+  $("#pix-key").value = payment.pixKey;
+  $("#pix-message").textContent = order.status === "payment_reported" ? "Pagamento informado. Aguarde a confirmação manual da GuiaSys." : "";
+  $("#report-payment-button").disabled = false;
+  $("#report-payment-button").textContent = order.status === "payment_reported" ? "ABRIR WHATSAPP NOVAMENTE" : "JÁ EFETUEI O PAGAMENTO";
+  $("#pix-payment").hidden = false;
+  $("#pix-payment").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function startPixForOrder(order) {
+  const payload = await api(`/api/v1/customer/orders/${encodeURIComponent(order.orderId)}/payment`, {
+    method: "POST",
+    body: JSON.stringify({ method: "pix", idempotencyKey: `pix-${order.orderId}` })
+  });
+  showPixPayment(order, payload.payment);
+  return payload.payment;
+}
 async function loadCatalog() {
   showState("loading"); catalogGrid.replaceChildren();
   try { const response = await fetch("/api/v1/catalog", { headers: { Accept: "application/json" } }); if (!response.ok) throw new Error(`Erro HTTP ${response.status}`); const payload = await response.json(); catalog = payload?.catalog?.projects || []; if (!catalog.length) return showState("empty");
@@ -77,12 +132,41 @@ async function loadCatalog() {
     if (query.get("view") === "checkout" && project && plan) selectOffer(project, plan);
   } catch (error) { console.error("Falha ao carregar catálogo.", error); showState("error"); }
 }
-function renderRecords(container, records, kind) {
-  container.replaceChildren(); if (!records.length) return container.append(element("p", "no-plans", kind === "order" ? "Nenhum pedido ainda." : "Nenhuma licença disponível."));
-  for (const record of records) { const card = element("div", "account-record");
-    if (kind === "order") card.append(element("strong", "", `Pedido ${record.orderId}`), element("span", "", `${record.status} · ${money.format(record.totalCents / 100)} · ${record.items.length} item(ns)`), element("small", "", new Date(record.createdAt).toLocaleString("pt-BR")));
-    else {
-      card.append(element("strong", "", record.planName || record.id), element("span", "", `${record.key} · ${record.status}`), element("small", "", record.expiresAt ? `Válida até ${new Date(record.expiresAt).toLocaleDateString("pt-BR")}` : "Sem vencimento definido"));
+function renderRecords(container, records, kind, licenses = []) {
+  container.replaceChildren();
+  if (!records.length) return container.append(element("p", "no-plans", kind === "order" ? "Nenhum pedido ainda." : "Nenhuma licença disponível."));
+  for (const record of records) {
+    const card = element("div", "account-record");
+    if (kind === "order") {
+      card.append(
+        element("strong", "", `Pedido ${record.orderNumber || record.orderId}`),
+        element("span", "status-pill", orderStatusLabel[record.status] || record.status),
+        element("span", "", `${orderProduct(record)} · ${orderPlan(record)} · ${money.format(Number(record.totalCents || 0) / 100)}`),
+        element("small", "", new Date(record.createdAt).toLocaleString("pt-BR"))
+      );
+      if (record.status === "payment_reported") card.append(element("small", "", "Aguardando confirmação manual da GuiaSys."));
+      const related = licenses.filter(license => license.orderId === record.orderId || record.resultingLicenses?.some(result => result.licenseId === license.id));
+      if (["paid", "fulfilling", "fulfilled"].includes(record.status)) {
+        for (const license of related) {
+          card.append(element("span", "license-key", license.key));
+          const actions = element("div", "account-actions");
+          const copy = element("button", "secondary-button", "COPIAR LICENÇA"); copy.type = "button";
+          copy.addEventListener("click", () => copyText(license.key, copy, "LICENÇA COPIADA")); actions.append(copy); card.append(actions);
+        }
+      } else if (record.status === "pending_payment") {
+        const actions = element("div", "account-actions");
+        const resume = element("button", "secondary-button", "Continuar pagamento"); resume.type = "button";
+        resume.addEventListener("click", async () => {
+          resume.disabled = true; resume.textContent = "Gerando PIX…";
+          try { await startPixForOrder(record); } catch (error) { resume.textContent = error.message; resume.disabled = false; }
+        });
+        actions.append(resume); card.append(actions);
+      }
+    } else {
+      card.append(element("strong", "", record.planName || record.id), element("span", "license-key", record.key), element("span", "status-pill", record.status), element("small", "", record.expiresAt ? `Válida até ${new Date(record.expiresAt).toLocaleDateString("pt-BR")}` : "Sem vencimento definido"));
+      const copyActions = element("div", "account-actions");
+      const copy = element("button", "secondary-button", "COPIAR LICENÇA"); copy.type = "button";
+      copy.addEventListener("click", () => copyText(record.key, copy, "LICENÇA COPIADA")); copyActions.append(copy); card.append(copyActions);
       const project = catalog.find(item => item.projectId === record.projectId);
       if (!record.lifetime && project?.plans?.length) {
         const controls = element("div", "auth-buttons");
@@ -94,8 +178,10 @@ function renderRecords(container, records, kind) {
         const renew = element("button", "secondary-button", "Renovar"); renew.type = "button";
         renew.addEventListener("click", async () => {
           renew.disabled = true; renew.textContent = "Criando pedido…";
-          try { const payload = await api(`/api/v1/customer/licenses/${record.id}/renewal-order`, { method: "POST", body: JSON.stringify({ planId: select.value, idempotencyKey: crypto.randomUUID() }) }); renew.textContent = `Pedido ${payload.order.orderId}`; await loadAccount(); }
-          catch (error) { renew.disabled = false; renew.textContent = error.message; }
+          try {
+            const payload = await api(`/api/v1/customer/licenses/${record.id}/renewal-order`, { method: "POST", body: JSON.stringify({ planId: select.value, idempotencyKey: crypto.randomUUID() }) });
+            await startPixForOrder(payload.order); renew.textContent = `Pedido ${payload.order.orderNumber || payload.order.orderId}`; await loadAccount();
+          } catch (error) { renew.disabled = false; renew.textContent = error.message; }
         });
         controls.append(select, renew); card.append(controls);
       }
@@ -106,7 +192,7 @@ function renderRecords(container, records, kind) {
 async function loadAccount() {
   if (!currentUser || !currentUser.emailVerified) return;
   try { const [me, orders, licenses] = await Promise.all([api("/api/v1/customer/me"), api("/api/v1/customer/orders"), api("/api/v1/customer/licenses")]);
-    $("#customer-email").textContent = me.account.email; renderRecords($("#orders-list"), orders.orders, "order"); renderRecords($("#licenses-list"), licenses.licenses, "license"); $("#customer-area").hidden = false;
+    $("#customer-email").textContent = me.account.email; renderRecords($("#orders-list"), orders.orders, "order", licenses.licenses); renderRecords($("#licenses-list"), licenses.licenses, "license"); $("#customer-area").hidden = false;
   } catch (error) { console.error("Falha ao carregar conta.", error); }
 }
 async function createOrder() {
@@ -114,8 +200,24 @@ async function createOrder() {
   if (!currentUser.emailVerified) { checkoutMessage.textContent = "Confirme o e-mail enviado pelo Firebase antes de comprar."; return; }
   const quantity = Math.min(50, Math.max(1, Number(quantityInput.value || 1))); checkoutMessage.textContent = "Criando pedido…";
   try { const payload = await api("/api/v1/customer/orders", { method: "POST", body: JSON.stringify({ idempotencyKey: crypto.randomUUID(), items: [{ projectId: selection.project.projectId, planId: selection.plan.id, quantity }] }) });
-    checkoutMessage.textContent = `Pedido ${payload.order.orderId} criado. Total validado: ${money.format(payload.order.totalCents / 100)}. Aguardando integração de pagamento.`; await loadAccount();
+    checkoutMessage.textContent = `Pedido ${payload.order.orderNumber || payload.order.orderId} criado. Total validado no servidor: ${money.format(payload.order.totalCents / 100)}.`;
+    await startPixForOrder(payload.order); await loadAccount();
   } catch (error) { checkoutMessage.textContent = error.message; }
+}
+
+async function reportPayment() {
+  if (!activePixOrder || !activePixPayment) return;
+  const button = $("#report-payment-button"); button.disabled = true; button.textContent = "INFORMANDO PAGAMENTO…";
+  try {
+    const payload = await api(`/api/v1/customer/orders/${encodeURIComponent(activePixOrder.orderId)}/payment-reported`, { method: "POST", body: JSON.stringify({}) });
+    activePixOrder = payload.order;
+    $("#pix-message").textContent = "Pagamento informado. Envie o comprovante no WhatsApp e aguarde a confirmação manual.";
+    button.disabled = false; button.textContent = "ABRIR WHATSAPP NOVAMENTE";
+    await loadAccount();
+    window.open(activePixPayment.whatsappUrl, "_blank", "noopener,noreferrer");
+  } catch (error) {
+    button.disabled = false; button.textContent = "JÁ EFETUEI O PAGAMENTO"; $("#pix-message").textContent = error.message;
+  }
 }
 async function emailAction(create) {
   const email = $("#auth-email").value; const password = $("#auth-password").value;
@@ -127,6 +229,9 @@ async function emailAction(create) {
 onAuthStateChanged(auth, async user => { currentUser = user; $("#account-button").textContent = user ? (user.displayName || user.email || "Minha conta") : "Entrar"; $("#logout-button").hidden = !user; if (user) await loadAccount(); else $("#customer-area").hidden = true; });
 $("#current-year").textContent = String(new Date().getFullYear()); $("#catalog-retry").addEventListener("click", loadCatalog); quantityInput.addEventListener("input", updateVisualTotal);
 $("#create-order-button").addEventListener("click", createOrder); $("#account-button").addEventListener("click", () => currentUser ? $("#customer-area").scrollIntoView({ behavior: "smooth" }) : authDialog.showModal());
+$("#copy-pix-code").addEventListener("click", event => copyText(activePixPayment?.pixCode, event.currentTarget, "CÓDIGO COPIADO"));
+$("#copy-pix-key").addEventListener("click", event => copyText(activePixPayment?.pixKey, event.currentTarget, "CHAVE COPIADA"));
+$("#report-payment-button").addEventListener("click", reportPayment);
 $("#logout-button").addEventListener("click", () => signOut(auth)); $("#auth-close").addEventListener("click", () => authDialog.close());
 $("#google-login").addEventListener("click", async () => { try { await signInWithPopup(auth, googleProvider); authDialog.close(); } catch (error) { $("#auth-message").textContent = "Login Google cancelado ou indisponível."; console.error(error); } });
 $("#email-login").addEventListener("click", () => emailAction(false)); $("#email-signup").addEventListener("click", () => emailAction(true)); loadCatalog();
