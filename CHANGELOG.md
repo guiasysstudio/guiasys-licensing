@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.17.0 â€” 2026-10-05
+## 0.17.0 — 2026-10-05
 
 ### C14-A — fundação comercial e checkout
 
