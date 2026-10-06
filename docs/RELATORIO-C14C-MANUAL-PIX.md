@@ -121,7 +121,7 @@ Trial, configuração de projeto, ativação, validação, desativação, licen�
 - PIX: `worker/src/payments/manual-pix.js`, `worker/package.json`.
 - Cliente: `public/index.html`, `public/assets/catalog.js`, `public/assets/catalog.css`.
 - Admin: `assets/js/app.js`.
-- Testes: `worker/tests/c14c-manual-pix.test.mjs`, `backend-runtime.test.mjs` e testes históricos C14-B.
+- Testes: `worker/tests/c14c-manual-pix.test.mjs`, `backend-runtime.test.mjs`, testes históricos C14-B e `scripts/test-c14c-emulator.mjs`.
 - Documentação: `README.md`, `CHANGELOG.md`, `docs/COMMERCE.md`, `docs/PAYMENTS.md`, este relatório e a mensagem do verificador Firebase.
 
 ## Validações e resultados
@@ -136,12 +136,23 @@ Trial, configuração de projeto, ativação, validação, desativação, licen�
 - preparação e verificação dos dois artefatos Firebase Hosting: aprovadas.
 - `git diff --check`: aprovado.
 
-O emulador Firebase não pôde iniciar nesta estação porque Java não está instalado/no PATH (`spawn java ENOENT`). A suíte de transações com mocks e o adapter Firestore passaram, mas `emulators:exec` deve ser repetido em CI ou máquina com Java antes do deploy. A tentativa de inspeção visual automatizada no navegador local também ficou indisponível por incompatibilidade do runtime da ferramenta de browser; sintaxe, testes estáticos, CSP e builds do Hosting passaram.
+### Validação final com Firebase Emulator (2026-10-06)
+
+- Estado de entrada confirmado: branch `feat/c14c-manual-pix-checkout`, HEAD `949fc62e766484f4ce573650e0894d943dd17dd0` e working tree limpa.
+- O Java do Android Studio foi localizado em `C:\Program Files\Android\Android Studio\jbr\bin\java.exe` e adicionado somente ao `PATH` dos comandos de validação. `java -version` confirmou OpenJDK 25.0.2. O Java continua não configurado no `PATH` global da estação.
+- Gate Firestore + Storage com a configuração principal: aprovado; ambos os emuladores iniciaram e `scripts/verify-firebase-config.mjs` passou.
+- Gate transacional com `firebase.transaction-test.json`: aprovado; leitura/escrita atômica, retry e multi-write passaram.
+- Regras Firestore e Storage: 6/6 tentativas diretas indevidas foram bloqueadas (leitura e escrita anônimas; leitura e escrita autenticadas no Firestore; leitura e escrita autenticadas no Storage).
+- Ensaio integrado `scripts/test-c14c-emulator.mjs` sobre Firestore Emulator: aprovado. Foram validados pedidos concorrentes com preço server-side e numeração única, isolamento entre contas, bloqueio de `paid`, `totalCents` e `customerUid`, RBAC administrativo, confirmação e fulfillment idempotentes, geração única de licença, leitura apenas das próprias compras/licenças e os fluxos `pending_payment -> payment_reported -> paid -> fulfilled`.
+- PagBank no ensaio emulado: zero chamadas de rede e execução aprovada sem `PAGBANK_TOKEN`.
+- Bateria final repetida após os emuladores: 187/187 testes aprovados; checks sintáticos do backend e dos frontends aprovados; configuração Firebase e os dois builds/verificadores de Hosting aprovados; `git diff --check` aprovado.
+- Não há scripts separados de lint ou typecheck configurados no projeto; o check disponível (`npm run check`) foi executado.
+
+A tentativa anterior de inspeção visual automatizada no navegador local ficou indisponível por incompatibilidade do runtime da ferramenta de browser; sintaxe, testes estáticos, CSP e builds do Hosting passaram. Essa limitação não afeta os gates de Emulator, que foram concluídos nesta validação final.
 
 ## Pendências operacionais
 
 - Revisão humana da branch e do conteúdo/identidade visual em navegador real.
-- Repetir os dois gates de emulator com Java disponível.
 - Após aprovação, executar deploy em uma etapa separada e autorizada; nenhum deploy foi feito nesta tarefa.
 - Validar a chave/conta PIX com uma transação real de baixo valor antes do lançamento.
 
