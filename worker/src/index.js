@@ -2678,13 +2678,25 @@ async function ensureCustomerAccount(env, user) {
     if (current?.status === "blocked") {
       throw Object.assign(new Error("Esta conta está bloqueada para compras."), { status: 403, reason: "account_blocked" });
     }
+    const normalizedEmail = String(user.email).toLowerCase();
+    const displayName = user.name || current?.displayName || "";
+    if (
+      current &&
+      current.firebaseUid === user.uid &&
+      current.email === normalizedEmail &&
+      current.emailVerified === true &&
+      current.displayName === displayName
+    ) {
+      return { id: accountId, ...current };
+    }
+
     const now = nowIso();
     const account = {
       accountId,
       firebaseUid: user.uid,
-      email: String(user.email).toLowerCase(),
+      email: normalizedEmail,
       emailVerified: true,
-      displayName: user.name || current?.displayName || "",
+      displayName,
       phone: current?.phone || "",
       status: current?.status || "active",
       createdAt: current?.createdAt || now,
@@ -2934,19 +2946,24 @@ export async function finalizePaidOrder(env, orderId, paymentContext) {
   return await atomicClient(env).runTransaction(async tx => {
     const order = await tx.get(`orders/${orderId}`);
     if (!order) throw Object.assign(new Error("Pedido não encontrado."), { status: 404, reason: "order_not_found" });
-    if (order.fulfillmentStatus === "fulfilled") return { order: customerOrderView(order), idempotentReplay: true };
-    if (["cancelled", "refunded"].includes(order.status)) throw Object.assign(new Error("Pedido não pode ser processado."), { status: 409, reason: "order_not_fulfillable" });
-    let fulfillmentTransition = order.status;
-    if (["pending_payment", "payment_failed"].includes(fulfillmentTransition)) fulfillmentTransition = transitionOrderStatus(fulfillmentTransition, "payment_processing");
-    if (fulfillmentTransition === "payment_processing") fulfillmentTransition = transitionOrderStatus(fulfillmentTransition, "paid");
-    if (fulfillmentTransition === "paid") fulfillmentTransition = transitionOrderStatus(fulfillmentTransition, "fulfilling");
-    transitionOrderStatus(fulfillmentTransition, "fulfilled");
     if (paymentContext.orderId && paymentContext.orderId !== orderId) throw Object.assign(new Error("Pagamento pertence a outro pedido."), { status: 409, reason: "payment_order_mismatch" });
     if (paymentContext.accountId && paymentContext.accountId !== order.accountId) throw Object.assign(new Error("Pagamento pertence a outra conta."), { status: 409, reason: "payment_account_mismatch" });
     assertCents(paymentContext.amountCents, "amountCents");
     if (paymentContext.amountCents !== order.totalCents || paymentContext.currency !== "BRL") {
       throw Object.assign(new Error("Valor ou moeda do pagamento não confere com o pedido."), { status: 409, reason: "payment_amount_mismatch" });
     }
+    if (order.fulfillmentStatus === "fulfilled") {
+      if (order.paymentId && order.paymentId !== paymentId) {
+        throw Object.assign(new Error("Pedido já foi processado por outro pagamento."), { status: 409, reason: "payment_conflict" });
+      }
+      return { order: customerOrderView(order), idempotentReplay: true };
+    }
+    if (["cancelled", "refunded"].includes(order.status)) throw Object.assign(new Error("Pedido não pode ser processado."), { status: 409, reason: "order_not_fulfillable" });
+    let fulfillmentTransition = order.status;
+    if (["pending_payment", "payment_failed"].includes(fulfillmentTransition)) fulfillmentTransition = transitionOrderStatus(fulfillmentTransition, "payment_processing");
+    if (fulfillmentTransition === "payment_processing") fulfillmentTransition = transitionOrderStatus(fulfillmentTransition, "paid");
+    if (fulfillmentTransition === "paid") fulfillmentTransition = transitionOrderStatus(fulfillmentTransition, "fulfilling");
+    transitionOrderStatus(fulfillmentTransition, "fulfilled");
     const existingPayment = await tx.get(`payments/${paymentId}`);
     if (existingPayment && (existingPayment.orderId !== orderId || existingPayment.status !== "paid")) {
       throw Object.assign(new Error("Pagamento inconsistente."), { status: 409, reason: "payment_conflict" });
@@ -2956,11 +2973,16 @@ export async function finalizePaidOrder(env, orderId, paymentContext) {
     const account = { id: order.accountId, ...accountRecord };
     const now = nowIso();
     const results = [];
+    const projectCustomers = new Map();
     for (const item of order.items) {
       const project = await tx.get(`projects/${item.projectId}`);
       if (!project) throw Object.assign(new Error("Produto do pedido não encontrado."), { status: 409, reason: "order_snapshot_orphan" });
       if (item.type === "new_license") {
-        const customer = await ensureProjectCustomerInTransaction(tx, account, item.projectId, now);
+        let customer = projectCustomers.get(item.projectId);
+        if (!customer) {
+          customer = await ensureProjectCustomerInTransaction(tx, account, item.projectId, now);
+          projectCustomers.set(item.projectId, customer);
+        }
         for (let index = 0; index < item.quantity; index++) {
           const id = randomId("lic");
           const license = await issueLicenseInTransaction({
@@ -3186,6 +3208,13 @@ async function deleteAdminRecord(env, adminId, actor) {
   });
 }
 
+function adminCanViewCommerceOrder(admin, order) {
+  if (admin?.master || admin?.allProjects) return true;
+  const allowed = new Set(Array.isArray(admin?.projectIds) ? admin.projectIds : []);
+  const items = Array.isArray(order?.items) ? order.items : [];
+  return items.length > 0 && items.every(item => allowed.has(item.projectId));
+}
+
 async function handleAdmin(request, env, origin, url, admin) {
   const method = request.method;
   const path = url.pathname.replace(/^\/api\/v1\/admin\/?/, "");
@@ -3202,12 +3231,16 @@ async function handleAdmin(request, env, origin, url, admin) {
     requirePermission(admin, "viewOrders", "Você não possui permissão para visualizar pedidos.");
     if (request.method !== "GET") return errorResponse(origin, 405, "method_not_allowed", "Pedidos são somente leitura no painel.", { expectedMethods: ["GET"] });
     if (parts.length === 1) {
-      const orders = (await listCollection(env, "orders")).map(customerOrderView)
+      let orders = await listCollection(env, "orders");
+      orders = orders.filter(order => adminCanViewCommerceOrder(admin, order));
+      orders = orders.map(customerOrderView)
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
       return json({ ok: true, orders: orders.slice(0, 200) }, 200, origin);
     }
     const order = await getDoc(env, `orders/${assertCommerceId("orders", parts[1])}`);
-    if (!order) return errorResponse(origin, 404, "order_not_found", "Pedido não encontrado.");
+    if (!order || !adminCanViewCommerceOrder(admin, order)) {
+      return errorResponse(origin, 404, "order_not_found", "Pedido não encontrado.");
+    }
     return json({ ok: true, order: customerOrderView(order) }, 200, origin);
   }
 
@@ -3215,12 +3248,22 @@ async function handleAdmin(request, env, origin, url, admin) {
     requirePermission(admin, "viewPayments", "Você não possui permissão para visualizar pagamentos.");
     if (request.method !== "GET") return errorResponse(origin, 405, "method_not_allowed", "Pagamentos são somente leitura no painel.", { expectedMethods: ["GET"] });
     if (parts.length === 1) {
-      const payments = (await listCollection(env, "payments"))
-        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
-      return json({ ok: true, payments: payments.slice(0, 200) }, 200, origin);
+      const visiblePayments = [];
+      for (const payment of await listCollection(env, "payments")) {
+        const orderId = payment.orderId ? assertCommerceId("orders", payment.orderId) : "";
+        const order = orderId ? await getDoc(env, `orders/${orderId}`) : null;
+        if (order && adminCanViewCommerceOrder(admin, order)) visiblePayments.push(payment);
+      }
+      visiblePayments.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      return json({ ok: true, payments: visiblePayments.slice(0, 200) }, 200, origin);
     }
     const payment = await getDoc(env, `payments/${assertCommerceId("payments", parts[1])}`);
-    if (!payment) return errorResponse(origin, 404, "payment_not_found", "Pagamento não encontrado.");
+    const paymentOrder = payment?.orderId
+      ? await getDoc(env, `orders/${assertCommerceId("orders", payment.orderId)}`)
+      : null;
+    if (!payment || !paymentOrder || !adminCanViewCommerceOrder(admin, paymentOrder)) {
+      return errorResponse(origin, 404, "payment_not_found", "Pagamento não encontrado.");
+    }
     return json({ ok: true, payment }, 200, origin);
   }
 
