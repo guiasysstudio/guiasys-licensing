@@ -3338,7 +3338,7 @@ function platformSettingsView() {
 
 function commerceTable(rows, columns, emptyMessage) {
   if (!rows.length) return `<article class="card card-section"><p>${e(emptyMessage)}</p></article>`;
-  return `<article class="card table-card"><div class="table-scroll"><table><thead><tr>${columns.map(column => `<th>${e(column.label)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${columns.map(column => `<td>${column.render ? column.render(row) : e(row[column.key] ?? "â€”")}</td>`).join("")}</tr>`).join("")}</tbody></table></div></article>`;
+  return `<article class="card table-card"><div class="table-scroll"><table><thead><tr>${columns.map(column => `<th>${e(column.label)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${columns.map(column => `<td>${column.render ? column.render(row) : e(row[column.key] ?? "—")}</td>`).join("")}</tr>`).join("")}</tbody></table></div></article>`;
 }
 
 async function ordersView() {
