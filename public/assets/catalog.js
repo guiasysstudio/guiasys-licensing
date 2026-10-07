@@ -720,7 +720,10 @@ async function renderProfile() {
     }
     cepLookupBusy = true; message.className = "form-message full"; message.textContent = "Buscando endereço pelo CEP…";
     try {
-      const address = (await api(`/api/v1/customer/address/cep/${cep}`)).address || {};
+      const address = (await api("/api/v1/customer/address/cep", {
+        method: "POST",
+        body: JSON.stringify({ postalCode: cep })
+      })).address || {};
       if (address.street) form.elements.street.value = address.street;
       if (address.neighborhood) form.elements.neighborhood.value = address.neighborhood;
       if (address.city) form.elements.city.value = address.city;
