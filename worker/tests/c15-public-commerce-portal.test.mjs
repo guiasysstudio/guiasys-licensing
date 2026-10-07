@@ -271,14 +271,17 @@ test("admin autorizado envia mídia comercial e slug duplicado é recusado", asy
   assert.equal((await duplicate.json()).error, "project_slug_exists");
 });
 
-test("portal SPA contém rotas, carrinho sem navegação automática, PIX manual e fallback oficial", async () => {
-  const [html, js, css, firebase, firestoreRules, storageRules] = await Promise.all([
+test("portal SPA contém rotas, carrinho sem navegação automática, PIX manual e assets oficiais", async () => {
+  const [html, js, css, firebase, firestoreRules, storageRules, symbol, lockup, wordmark] = await Promise.all([
     readFile(new URL("../../public/index.html", import.meta.url), "utf8"),
     readFile(new URL("../../public/assets/catalog.js", import.meta.url), "utf8"),
     readFile(new URL("../../public/assets/catalog.css", import.meta.url), "utf8"),
     readFile(new URL("../../firebase.json", import.meta.url), "utf8"),
     readFile(new URL("../../firestore.rules", import.meta.url), "utf8"),
-    readFile(new URL("../../storage.rules", import.meta.url), "utf8")
+    readFile(new URL("../../storage.rules", import.meta.url), "utf8"),
+    readFile(new URL("../../public/assets/brand/guiasys-licensing-symbol.svg", import.meta.url), "utf8"),
+    readFile(new URL("../../public/assets/brand/guiasys-licensing-lockup.svg", import.meta.url), "utf8"),
+    readFile(new URL("../../public/assets/brand/guiasys-licensing-wordmark.svg", import.meta.url), "utf8")
   ]);
   for (const route of ["/programas", "/carrinho", "/entrar", "/cadastro", "/recuperar-senha", "/conta/perfil", "/conta/favoritos", "/conta/compras"]) {
     assert.match(html + js, new RegExp(route.replaceAll("/", "\\/")));
@@ -296,13 +299,23 @@ test("portal SPA contém rotas, carrinho sem navegação automática, PIX manual
   assert.match(js, /featuredItems\.slice\(0, 6\)/);
   assert.match(js, /PAYMENT_PROVIDER|Pagamento via PIX|payment-reported/);
   assert.match(html, /guiasys-licensing-lockup\.svg/);
-  assert.match(js, /guiasys-licensing-symbol\.svg/);
-  assert.match(html + js, /identidade oficial pendente|SVG aguardando fornecimento/);
+  assert.match(html, /guiasys-licensing-symbol\.svg/);
+  assert.match(js, /guiasys-licensing-lockup\.svg/);
+  assert.match(html, /class="footer-brand"/);
+  assert.match(js, /"auth-lockup"/);
+  assert.doesNotMatch(html + js, /identidade oficial pendente|SVG aguardando fornecimento/);
+  for (const svg of [symbol, lockup, wordmark]) {
+    assert.match(svg, /<svg\b/);
+    assert.match(svg, /viewBox="[^"]+"/);
+  }
   assert.equal(/#[0-9a-f]{0,2}(?:00ff00|008000|00aa00)/i.test(css), false);
   for (const color of ["#0c171f", "#13212b", "#f2a900", "#b97d00", "#ffb800", "#fff2cc", "#fffaef", "#101820", "#6d747e", "#e4d3a6", "#ffffff"]) {
     assert.match(css.toLowerCase(), new RegExp(color));
   }
   assert.match(css, /:focus-visible/);
+  assert.match(css, /\[hidden\]\{display:none!important\}/);
+  assert.match(css, /\.toast\{[^}]*pointer-events:none/);
+  assert.match(css, /\.license-row\{[^}]*flex-wrap:wrap/);
   assert.match(firebase, /"source": "\*\*"\s*,\s*"destination": "\/index\.html"/);
   assert.match(firestoreRules, /allow read, write: if false/);
   assert.match(storageRules, /allow read, write: if false/);

@@ -40,17 +40,29 @@ test("paleta principal mantém contraste mínimo WCAG para texto normal", () => 
   const background = cssHexVariable("bg");
   const primary = cssHexVariable("primary");
   const primary2 = cssHexVariable("primary-2");
+  const ink = cssHexVariable("ink");
   const muted2 = cssHexVariable("muted-2");
 
-  assert.ok(contrast("#ffffff", primary) >= 4.5);
-  assert.ok(contrast("#ffffff", primary2) >= 4.5);
+  assert.ok(contrast(ink, primary) >= 4.5);
+  assert.ok(contrast(ink, primary2) >= 4.5);
   assert.ok(contrast(muted2, background) >= 4.5);
+});
+
+test("painel aplica a identidade dourada oficial sem substituir cores semânticas", () => {
+  assert.equal(cssHexVariable("bg").toLowerCase(), "#0c171f");
+  assert.equal(cssHexVariable("panel-strong").toLowerCase(), "#13212b");
+  assert.equal(cssHexVariable("primary").toLowerCase(), "#f2a900");
+  assert.equal(cssHexVariable("primary-2").toLowerCase(), "#b97d00");
+  assert.equal(cssHexVariable("ink").toLowerCase(), "#101820");
+  assert.equal(cssHexVariable("success").toLowerCase(), "#22c55e");
+  assert.equal(cssHexVariable("danger").toLowerCase(), "#ef4444");
 });
 
 test("sidebar e viewport móvel permanecem acessíveis em telas curtas e estreitas", () => {
   assert.match(css, /\.sidebar\s*\{[\s\S]*?overflow-y:\s*auto/);
   assert.match(css, /overscroll-behavior:\s*contain/);
   assert.match(css, /body\.sidebar-open\s*\{\s*overflow:\s*hidden/);
+  assert.match(css, /overflow-x:\s*clip/);
   assert.match(css, /body\.sidebar-open \.sidebar-backdrop\s*\{\s*display:\s*block/);
   assert.match(css, /@media \(max-width:\s*420px\)/);
   assert.ok((css.match(/100dvh/g) || []).length >= 4);
@@ -87,6 +99,9 @@ test("CSS legado não utilizado foi removido", () => {
 
 test("HTML expõe semântica correta para menu móvel e status", () => {
   assert.match(html, /<html lang="pt-BR">/);
+  assert.match(html, /guiasys-licensing-symbol\.svg/);
+  assert.match(html, /guiasys-licensing-lockup\.svg/);
+  assert.doesNotMatch(html, />GS<\/div>/);
   assert.match(html, /id="sidebar"[^>]*aria-label="Menu lateral"/);
   assert.match(html, /id="mobile-menu-button"[^>]*aria-controls="sidebar"[^>]*aria-expanded="false"/);
   assert.match(html, /id="sidebar-backdrop"[^>]*aria-hidden="true"/);
