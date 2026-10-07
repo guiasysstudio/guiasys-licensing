@@ -4097,9 +4097,17 @@ async function handleCustomer(request, env, origin, url, user) {
     const saved = await removeCustomerPhoto(env, account);
     return json({ ok: true, account: customerAccountView(saved) }, 200, origin);
   }
-  if (parts.length === 3 && parts[0] === "address" && parts[1] === "cep" && request.method === "GET") {
+  if (parts.length === 2 && parts[0] === "address" && parts[1] === "cep" && request.method === "POST") {
     await enforceRateLimit(env, request, "cep-lookup", 30, 60);
-    return json({ ok: true, address: await lookupBrazilianPostalCode(parts[2]) }, 200, origin);
+    const body = await readJson(request);
+    const allowed = new Set(["postalCode"]);
+    if (Object.keys(body).some(key => !allowed.has(key))) {
+      throw Object.assign(new Error("A consulta de CEP aceita somente o campo postalCode."), {
+        status: 400,
+        reason: "invalid_payload"
+      });
+    }
+    return json({ ok: true, address: await lookupBrazilianPostalCode(body.postalCode) }, 200, origin);
   }
   if (parts.length === 1 && parts[0] === "cart") {
     if (request.method === "GET") return json({ ok: true, cart: await getCustomerCart(env, account.id) }, 200, origin);
@@ -4330,6 +4338,7 @@ async function uploadProjectMedia(env, projectId, request, admin) {
   const uploaded = await env.__services.uploadStorageObject(path, { bytes, contentType: body.contentType });
   const project = await getDoc(env, projectPath(projectId));
   const field = { logo: "logoUrl", icon: "iconUrl", banner: "bannerUrl" }[body.kind];
+  const previousStoragePath = field ? String(project?.[`${body.kind}StoragePath`] || "") : "";
   const next = { ...project, updatedAt: nowIso() };
   if (field) {
     next[field] = uploaded.url;
@@ -4347,6 +4356,14 @@ async function uploadProjectMedia(env, projectId, request, admin) {
   }
   delete next.id;
   await setDoc(env, projectPath(projectId), next);
+  if (
+    field &&
+    previousStoragePath &&
+    previousStoragePath !== uploaded.path &&
+    typeof env.__services?.deleteStorageObject === "function"
+  ) {
+    await env.__services.deleteStorageObject(previousStoragePath).catch(() => {});
+  }
   return { ...uploaded, kind: body.kind, project: { id: projectId, ...next } };
 }
 
