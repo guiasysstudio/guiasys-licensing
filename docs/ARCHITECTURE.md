@@ -81,13 +81,13 @@ Programa/Projeto
   -> futura Licença
 ```
 
-Programa adiciona `shortDescription`, `imageUrl`, `featured` e `displayOrder`. Plano adiciona somente `displayOrder`. Os demais campos comerciais já existentes são preservados.
+O C15 amplia o projeto com CMS comercial: logo, ícone, banner, descrições, screenshots, recursos, requisitos, SEO, destaque e ordens. O plano preserva os dados técnicos e adiciona os campos comerciais necessários, incluindo `publishedInCatalog`.
 
-O catálogo aplica uma projeção explícita por allowlist. Programa precisa ter `status == "active"` e `publicCatalog == true`; plano precisa ter `active != false` e `publicCatalog == true`. Produtos e ofertas são ordenados por `displayOrder`, nome e ID. A mesma projeção sanitizada alimenta `GET /api/v1/catalog` e a prévia autenticada do ADM.
+O catálogo aplica uma projeção explícita por allowlist. Um programa precisa ter `status == "active"` e só é incluído quando possui ao menos um plano com `active != false` e `publishedInCatalog == true` (com fallback legado para `publicCatalog` apenas quando o novo campo não existe). Assim, não existe uma segunda trava manual de publicação no projeto. Produtos e ofertas são ordenados por suas ordens comerciais, nome e ID.
 
 O `integrationCode` permanece no catálogo por compatibilidade deliberada com o contrato público GSL-v1. Chaves privadas, origens permitidas, permissões, clientes, logs, tokens e configurações internas não são projetados.
 
-O site em `public/` usa DOM seguro (`textContent`/`createElement`), restringe imagens a HTTPS, oferece estados de loading/vazio/erro e registra apenas `projectId`/`planId` no CTA. Não existe pagamento simulado. PagBank, pedido, pagamento e emissão automática começam no C14.
+O portal em `public/` usa DOM seguro (`textContent`/`createElement`), imagens HTTPS, autenticação Firebase, favoritos, carrinho, perfil, pedidos, compras/licenças e checkout PIX manual. Preço, pagamento, fulfillment e emissão permanecem autoritativos no backend.
 
 
 ## Contrato de integração
@@ -126,9 +126,11 @@ A política atual vale para novos trials. Um trial já iniciado preserva duraç�
 
 Atualizar ou reinstalar o aplicativo não reinicia trial nem licença enquanto o Device ID permanecer o mesmo.
 
-## Portal do cliente — fronteira futura
+## Portal do cliente — C15
 
-O catálogo comercial público existe desde o C13, mas conta de cliente, pedidos e pagamentos continuam como módulos futuros. Eles poderão compartilhar Firebase Authentication e Firestore, mantendo Firebase Functions v2 como camada de autorização e regras.
+O portal público usa Firebase Authentication para Google e e-mail/senha. A conta global é derivada do UID, enquanto carrinho, favoritos, perfil, pedidos e referências de licenças permanecem acessíveis somente pela Function. Firestore e Storage continuam deny-all para acesso direto do navegador.
+
+O checkout exige e-mail verificado e perfil completo. O backend recalcula preço, cria snapshot imutável do pedido e gera PIX manual. A confirmação administrativa é a única operação que promove o pagamento a pago e dispara fulfillment.
 
 
 ## Autorização offline assinada
