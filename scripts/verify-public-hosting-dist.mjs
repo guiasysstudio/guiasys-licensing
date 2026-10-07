@@ -29,7 +29,16 @@ async function walk(directory, prefix = "") {
 }
 
 const files = (await walk(dist)).sort();
-const expected = ["404.html", "assets/brand/README.md", "assets/catalog.css", "assets/catalog.js", "index.html"];
+const expected = [
+  "404.html",
+  "assets/brand/README.md",
+  "assets/brand/guiasys-licensing-lockup.svg",
+  "assets/brand/guiasys-licensing-symbol.svg",
+  "assets/brand/guiasys-licensing-wordmark.svg",
+  "assets/catalog.css",
+  "assets/catalog.js",
+  "index.html"
+];
 
 if (JSON.stringify(files) !== JSON.stringify(expected)) {
   fail(`arquivo fora da allowlist: ${files.join(", ") || "(vazia)"}`);

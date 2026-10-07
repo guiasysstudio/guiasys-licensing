@@ -8,7 +8,8 @@ const dist = path.join(root, ".hosting-admin-dist");
 
 const sources = [
   ["index.html", "index.html"],
-  ["assets", "assets"]
+  ["assets", "assets"],
+  ["public/assets/brand", "assets/brand"]
 ];
 
 await rm(dist, { recursive: true, force: true });

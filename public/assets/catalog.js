@@ -134,7 +134,10 @@ function updateHeader() {
   avatar.hidden = !avatarUrl;
   avatar.src = avatarUrl || "";
   avatar.alt = avatarUrl ? "Foto do perfil" : "";
-  $("#account-avatar-fallback").hidden = Boolean(avatarUrl);
+  const avatarFallback = $("#account-avatar-fallback");
+  const avatarName = state.account?.displayName || state.user?.displayName || state.user?.email || "A";
+  avatarFallback.textContent = String(avatarName).trim().charAt(0).toUpperCase() || "A";
+  avatarFallback.hidden = Boolean(avatarUrl);
   $("#account-dropdown").hidden = !state.user || $("#account-menu-button").getAttribute("aria-expanded") !== "true";
   document.querySelectorAll(".site-nav a[data-link]").forEach(node => {
     const current = node.pathname === location.pathname || (node.pathname === "/programas" && location.pathname.startsWith("/programas/"));
@@ -241,19 +244,19 @@ async function renderHome() {
   );
   const visual = el("div", "hero-visual");
   const logo = el("img", "hero-lockup");
-  logo.src = "/assets/brand/guiasys-licensing-symbol.svg";
-  logo.alt = "Símbolo oficial GuiaSys Licensing";
+  logo.src = "/assets/brand/guiasys-licensing-lockup.svg";
+  logo.alt = "GuiaSys Licensing";
   const fallback = el("div", "asset-fallback");
   fallback.hidden = true;
   const fallbackText = el("div");
-  fallbackText.append(el("strong", "", "Identidade visual oficial"), el("p", "", "SVG aguardando fornecimento pela GuiaSys."));
+  fallbackText.append(el("strong", "", "GuiaSys Licensing"), el("p", "", "Não foi possível carregar a identidade visual."));
   fallback.append(fallbackText);
   logo.addEventListener("error", () => { logo.hidden = true; fallback.hidden = false; }, { once: true });
   visual.append(logo, fallback);
   hero.append(copy, visual);
   const featured = el("section", "section");
   const heading = el("div", "section-heading");
-  heading.append(titleBlock("Destaques", "Programas em evidência"), el("p", "", "Ofertas publicadas e mantidas pela equipe GuiaSys."));
+  heading.append(titleBlock("Destaques", "Programas em destaque"), el("p", "", "Programas publicados e mantidos pela equipe GuiaSys."));
   featured.append(heading);
   const featuredItems = state.catalog.filter(item => item.featured).sort((a, b) => a.featuredOrder - b.featuredOrder);
   const grid = el("div", "catalog-grid");
@@ -323,11 +326,6 @@ async function renderProgram(slug) {
       }
       page.append(lists);
     }
-    const offers = el("section");
-    offers.append(titleBlock("Licenciamento", "Escolha seu plano"));
-    const plans = el("div", "plans");
-    for (const plan of project.plans) plans.append(planCard(project, plan));
-    offers.append(plans); page.append(offers);
     if (project.additionalInfo) {
       const additional = el("section", "panel");
       additional.append(el("h2", "", "Informações adicionais"), el("p", "", project.additionalInfo));
@@ -339,6 +337,11 @@ async function renderProgram(slug) {
       project.screenshots.forEach((url, index) => { const shot = image(url, `Tela ${index + 1} de ${project.name}`); if (shot) shots.append(shot); });
       gallery.append(shots); page.append(gallery);
     }
+    const offers = el("section", "product-offers");
+    offers.append(titleBlock("Licenciamento", "Escolha seu plano"));
+    const plans = el("div", "plans");
+    for (const plan of project.plans) plans.append(planCard(project, plan));
+    offers.append(plans); page.append(offers);
     app.append(page);
   } catch (error) {
     setDocument("Programa não encontrado");
@@ -445,7 +448,10 @@ function authPage(mode) {
   app.replaceChildren();
   const page = el("section", "page");
   const panel = el("section", "panel form-card");
-  panel.append(titleBlock("Conta GuiaSys", config[0], config[1]));
+  const authLogo = el("img", "auth-lockup");
+  authLogo.src = "/assets/brand/guiasys-licensing-lockup.svg";
+  authLogo.alt = "GuiaSys Licensing";
+  panel.append(authLogo, titleBlock("Conta GuiaSys", config[0], config[1]));
   const form = el("form", "form-grid");
   form.noValidate = true;
   if (mode === "signup") {
