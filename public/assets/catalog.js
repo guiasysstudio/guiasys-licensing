@@ -16,8 +16,10 @@ const app = $("#app");
 const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const dateTime = new Intl.DateTimeFormat("pt-BR", { dateStyle: "medium", timeStyle: "short" });
 const CART_KEY = "gsl.cart.v1";
+const CHECKOUT_KEY = "gsl.checkout.v1";
 const state = { user: null, account: null, catalog: [], cart: readLocalCart(), favorites: [], syncedUid: "", authReady: false };
 let toastTimer;
+let pixModalCleanup = null;
 
 function el(tag, className = "", text) {
   const node = document.createElement(tag);
@@ -48,6 +50,48 @@ function safeHttpsUrl(value) {
     const url = new URL(String(value || ""));
     return url.protocol === "https:" && !url.username && !url.password ? url.href : "";
   } catch { return ""; }
+}
+function safeNextPath(value, fallback = "/conta/compras") {
+  const raw = String(value || "").trim();
+  if (!raw.startsWith("/") || raw.startsWith("//") || raw.includes("\\") || /[\u0000-\u001f]/.test(raw)) return fallback;
+  try {
+    const url = new URL(raw, location.origin);
+    return url.origin === location.origin ? url.pathname + url.search + url.hash : fallback;
+  } catch { return fallback; }
+}
+function onlyDigits(value, max = 32) { return String(value || "").replace(/\D/g, "").slice(0, max); }
+function formatCpf(value) {
+  const digits = onlyDigits(value, 11);
+  return digits.replace(/^(\d{3})(\d)/, "$1.$2").replace(/^(\d{3})\.(\d{3})(\d)/, "$1.$2.$3").replace(/(\d{3})(\d{1,2})$/, "$1-$2");
+}
+function formatPhone(value) {
+  const digits = onlyDigits(value, 11);
+  if (digits.length <= 10) return digits.replace(/^(\d{2})(\d)/, "($1) $2").replace(/(\d{4})(\d{1,4})$/, "$1-$2");
+  return digits.replace(/^(\d{2})(\d)/, "($1) $2").replace(/(\d{5})(\d{1,4})$/, "$1-$2");
+}
+function formatCep(value) {
+  const digits = onlyDigits(value, 8);
+  return digits.replace(/^(\d{5})(\d)/, "$1-$2");
+}
+function isValidCpfClient(value) {
+  const cpf = onlyDigits(value, 11);
+  if (!/^\d{11}$/.test(cpf) || /^(\d)\1+$/.test(cpf)) return false;
+  const check = length => {
+    let sum = 0;
+    for (let index = 0; index < length; index++) sum += Number(cpf[index]) * (length + 1 - index);
+    const remainder = (sum * 10) % 11;
+    return remainder === 10 ? 0 : remainder;
+  };
+  return check(9) === Number(cpf[9]) && check(10) === Number(cpf[10]);
+}
+function bindMask(input, formatter, maxLength) {
+  input.inputMode = "numeric";
+  input.maxLength = maxLength;
+  input.addEventListener("input", () => {
+    const caretAtEnd = input.selectionStart === input.value.length;
+    input.value = formatter(input.value);
+    if (caretAtEnd) input.setSelectionRange(input.value.length, input.value.length);
+  });
 }
 function image(url, alt, className = "") {
   const source = safeHttpsUrl(url);
@@ -80,6 +124,34 @@ function saveLocalCart() {
   updateHeader();
 }
 function cartKey(item) { return `${item.projectId}|${item.planId}`; }
+function cartFingerprint(items = state.cart) {
+  return JSON.stringify(
+    items.map(item => ({ projectId: item.projectId, planId: item.planId, quantity: Number(item.quantity || 0) }))
+      .sort((a, b) => cartKey(a).localeCompare(cartKey(b)))
+  );
+}
+function readCheckoutDraft() {
+  try {
+    const value = JSON.parse(localStorage.getItem(CHECKOUT_KEY) || "null");
+    return value && typeof value === "object" ? value : null;
+  } catch { return null; }
+}
+function writeCheckoutDraft(value) {
+  if (value) localStorage.setItem(CHECKOUT_KEY, JSON.stringify(value));
+  else localStorage.removeItem(CHECKOUT_KEY);
+}
+function checkoutDraftForCurrentCart() {
+  const draft = readCheckoutDraft();
+  return draft && state.user && draft.uid === state.user.uid && draft.fingerprint === cartFingerprint() ? draft : null;
+}
+function ensureCheckoutDraft() {
+  const existing = checkoutDraftForCurrentCart();
+  if (existing) return existing;
+  const draft = { uid: state.user.uid, fingerprint: cartFingerprint(), idempotencyKey: crypto.randomUUID(), orderId: "", createdAt: new Date().toISOString() };
+  writeCheckoutDraft(draft);
+  return draft;
+}
+function invalidateCheckoutDraft() { writeCheckoutDraft(null); }
 function mergeCarts(local, remote) {
   const merged = new Map();
   for (const item of [...remote, ...local]) {
@@ -120,9 +192,16 @@ function addToCart(projectId, planId, quantity = 1, label = "Oferta") {
   const existing = state.cart.find(item => item.projectId === projectId && item.planId === planId);
   if (existing) existing.quantity = Math.min(50, existing.quantity + quantity);
   else if (state.cart.length < 10) state.cart.push({ projectId, planId, quantity: Math.min(50, Math.max(1, quantity)) });
-  else return showToast("O carrinho aceita no máximo 10 itens.");
+  else { showToast("O carrinho aceita no máximo 10 itens."); return false; }
+  invalidateCheckoutDraft();
   void syncCart();
   showToast(`${label} adicionado ao carrinho.`);
+  return true;
+}
+function buyNow(projectId, planId, label) {
+  const exists = state.cart.some(item => item.projectId === projectId && item.planId === planId);
+  if (!exists && !addToCart(projectId, planId, 1, label)) return;
+  navigate("/carrinho");
 }
 function updateHeader() {
   const count = state.cart.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
@@ -217,7 +296,7 @@ function planCard(project, plan) {
   const actions = el("div", "card-actions");
   actions.append(
     button("Adicionar ao carrinho", "button-secondary", () => addToCart(project.projectId, plan.id, 1, `${project.name} — ${plan.name}`)),
-    button("Comprar agora", "button", () => { addToCart(project.projectId, plan.id, 1, `${project.name} — ${plan.name}`); navigate("/carrinho"); })
+    button("Comprar agora", "button", () => buyNow(project.projectId, plan.id, `${project.name} — ${plan.name}`))
   );
   card.append(actions);
   return card;
@@ -278,7 +357,7 @@ async function renderPrograms() {
   await loadCatalog();
   app.replaceChildren();
   const page = el("section", "page");
-  page.append(titleBlock("Catálogo oficial", "Programas", "Compare recursos, condições e planos disponíveis."));
+  page.append(titleBlock("Catálogo oficial", "Programas", "Conheça os programas oficiais da GuiaSys."));
   const grid = el("div", "catalog-grid");
   for (const project of state.catalog) grid.append(productCard(project, { favoriteAction: true }));
   page.append(grid.childElementCount ? grid : emptyState("Nenhum programa publicado", "Novas ofertas aparecerão aqui quando estiverem disponíveis."));
@@ -349,47 +428,115 @@ async function renderProgram(slug) {
   }
 }
 function cartOffers() { return state.cart.map(findOffer).filter(Boolean); }
-function renderPix(order, payment) {
-  const box = el("section", "pix-box");
-  box.append(el("p", "eyebrow", "Pagamento via PIX"), el("h2", "", `Pedido ${order.orderNumber || order.orderId}`));
+function closePixModal() {
+  if (typeof pixModalCleanup === "function") pixModalCleanup();
+}
+function openPixModal(order, payment) {
+  closePixModal();
+  const previousFocus = document.activeElement;
+  const backdrop = el("div", "pix-modal-backdrop");
+  const dialog = el("section", "pix-modal");
+  dialog.setAttribute("role", "dialog");
+  dialog.setAttribute("aria-modal", "true");
+  dialog.setAttribute("aria-labelledby", "pix-modal-title");
+  dialog.tabIndex = -1;
+
+  const header = el("div", "pix-modal-header");
+  const heading = el("div");
+  heading.append(el("p", "eyebrow", "Pagamento via PIX"));
+  const title = el("h2", "", `Pedido ${order.orderNumber || order.orderId}`);
+  title.id = "pix-modal-title";
+  heading.append(title);
+  const close = button("Fechar", "button-ghost");
+  close.setAttribute("aria-label", "Fechar pagamento PIX");
+  header.append(heading, close);
+
   const grid = el("div", "pix-grid");
+  const qrWrap = el("div", "pix-qr-wrap");
   const qr = el("img"); qr.src = payment.pixQrCodeDataUrl; qr.alt = "QR Code PIX";
-  const details = el("div");
-  details.append(el("p", "", `Valor: ${money.format(Number(payment.amountCents || order.totalCents) / 100)}`));
-  const code = el("textarea"); code.readOnly = true; code.value = payment.pixCode;
-  const copy = button("Copiar código PIX", "button-secondary", async () => { await navigator.clipboard.writeText(payment.pixCode); showToast("Código PIX copiado."); });
+  qrWrap.append(qr);
+  const details = el("div", "pix-details");
+  details.append(el("span", "plan-meta", "Valor do pedido"), el("p", "pix-total", money.format(Number(payment.amountCents || order.totalCents) / 100)));
+  if (payment.pixKey) {
+    const row = el("p", "pix-meta"); row.append(el("strong", "", "Chave PIX: "), document.createTextNode(payment.pixKey)); details.append(row);
+  }
+  if (payment.pixTxid) {
+    const row = el("p", "pix-meta"); row.append(el("strong", "", "Identificação: "), document.createTextNode(payment.pixTxid)); details.append(row);
+  }
+  const codeLabel = el("label", "pix-code-label", "PIX Copia e Cola");
+  const code = el("textarea", "pix-code"); code.readOnly = true; code.value = payment.pixCode; codeLabel.append(code);
+  const copy = button("Copiar código PIX", "button-secondary", async () => {
+    await navigator.clipboard.writeText(payment.pixCode); showToast("Código PIX copiado.");
+  });
   const reported = button("Já efetuei o pagamento", "button", async () => {
     reported.disabled = true;
     try {
       await api(`/api/v1/customer/orders/${encodeURIComponent(order.orderId)}/payment-reported`, { method: "POST", body: JSON.stringify({}) });
-      showToast("Pagamento informado. Aguarde a confirmação manual.");
-      window.open(payment.whatsappUrl, "_blank", "noopener,noreferrer");
+      invalidateCheckoutDraft();
       state.cart = [];
       await syncCart();
+      showToast("Pagamento informado. Envie o comprovante pelo WhatsApp.");
+      window.open(payment.whatsappUrl, "_blank", "noopener,noreferrer");
+      closePixModal();
+      navigate("/conta/compras");
     } catch (error) { showToast(errorMessage(error)); reported.disabled = false; }
   });
-  details.append(code, copy, reported, el("p", "plan-meta", "A confirmação é manual. Envie o comprovante pelo WhatsApp; a licença será exibida em Minhas compras após a aprovação."));
-  grid.append(qr, details); box.append(grid);
-  return box;
+  const actions = el("div", "pix-actions"); actions.append(copy, reported);
+  details.append(codeLabel, actions, el("p", "pix-help", "A confirmação é manual. Envie o comprovante pelo WhatsApp; a licença será exibida em Minhas compras após a aprovação."));
+  grid.append(qrWrap, details); dialog.append(header, grid); backdrop.append(dialog); document.body.append(backdrop); document.body.classList.add("pix-modal-open");
+
+  const focusable = () => [...dialog.querySelectorAll('button:not([disabled]), textarea, [href], [tabindex]:not([tabindex="-1"])')];
+  const onKey = event => {
+    if (event.key === "Escape") return closePixModal();
+    if (event.key !== "Tab") return;
+    const nodes = focusable(); if (!nodes.length) return;
+    const first = nodes[0], last = nodes[nodes.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  };
+  const onBackdrop = event => { if (event.target === backdrop) closePixModal(); };
+  pixModalCleanup = () => {
+    document.removeEventListener("keydown", onKey); backdrop.removeEventListener("click", onBackdrop); backdrop.remove();
+    document.body.classList.remove("pix-modal-open"); pixModalCleanup = null;
+    if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+  };
+  close.addEventListener("click", closePixModal); backdrop.addEventListener("click", onBackdrop); document.addEventListener("keydown", onKey); dialog.focus();
 }
 async function checkout() {
   if (!state.user) return navigate("/entrar?next=%2Fcarrinho");
   if (!state.user.emailVerified) return showToast("Confirme seu e-mail antes de comprar.");
   if (!state.account?.profileComplete) return navigate("/conta/perfil?checkout=1");
-  const offers = cartOffers();
-  if (!offers.length) return;
-  const action = $("#checkout-button");
-  action.disabled = true; action.textContent = "Criando pedido…";
+  const offers = cartOffers(); if (!offers.length) return;
+  const action = $("#checkout-button"); action.disabled = true; action.textContent = "Preparando PIX…";
   try {
-    const created = await api("/api/v1/customer/orders", {
-      method: "POST",
-      body: JSON.stringify({ idempotencyKey: crypto.randomUUID(), items: offers.map(({ item }) => item) })
+    let draft = ensureCheckoutDraft();
+    let order = null;
+    if (draft.orderId) {
+      try {
+        order = (await api(`/api/v1/customer/orders/${encodeURIComponent(draft.orderId)}`)).order;
+        if (!["pending_payment", "payment_failed"].includes(order.status)) {
+          if (["payment_reported", "paid", "fulfilled"].includes(order.status)) {
+            invalidateCheckoutDraft(); state.cart = []; await syncCart();
+            showToast("Este pedido já foi informado. Acompanhe em Minhas compras."); return navigate("/conta/compras");
+          }
+          invalidateCheckoutDraft(); order = null; draft = ensureCheckoutDraft();
+        }
+      } catch (error) {
+        if (error.status !== 404) throw error;
+        invalidateCheckoutDraft(); draft = ensureCheckoutDraft();
+      }
+    }
+    if (!order) {
+      order = (await api("/api/v1/customer/orders", {
+        method: "POST", body: JSON.stringify({ idempotencyKey: draft.idempotencyKey, items: offers.map(({ item }) => item) })
+      })).order;
+      draft = { ...draft, orderId: order.orderId }; writeCheckoutDraft(draft);
+    }
+    const payment = await api(`/api/v1/customer/orders/${encodeURIComponent(order.orderId)}/payment`, {
+      method: "POST", body: JSON.stringify({ method: "pix", idempotencyKey: `pix-${order.orderId}` })
     });
-    const payment = await api(`/api/v1/customer/orders/${encodeURIComponent(created.order.orderId)}/payment`, {
-      method: "POST", body: JSON.stringify({ method: "pix", idempotencyKey: `pix-${created.order.orderId}` })
-    });
-    $("#cart-checkout").append(renderPix(created.order, payment.payment));
-    action.textContent = "Pedido criado";
+    openPixModal(order, payment.payment);
+    action.disabled = false; action.textContent = "Ver PIX";
   } catch (error) {
     if (error.reason === "profile_incomplete") return navigate("/conta/perfil?checkout=1");
     showToast(errorMessage(error)); action.disabled = false; action.textContent = "Finalizar com PIX";
@@ -402,7 +549,7 @@ async function renderCart() {
   saveLocalCart();
   app.replaceChildren();
   const page = el("section", "page");
-  page.append(titleBlock("Compra", "Seu carrinho", "Quantidades geram licenças independentes: 2 unidades resultam em 2 chaves."));
+  page.append(titleBlock("Compra", "Seu carrinho", "Cada unidade comprada gera uma licença independente e uma key própria."));
   const offers = cartOffers();
   if (!offers.length) {
     page.append(emptyState("Seu carrinho está vazio", "Adicione um plano para continuar."), anchor("Explorar programas", "/programas", "button"));
@@ -423,10 +570,11 @@ async function renderCart() {
     const quantity = el("div", "quantity");
     const change = delta => {
       offer.item.quantity = Math.max(1, Math.min(50, offer.item.quantity + delta));
+      invalidateCheckoutDraft();
       void syncCart(); renderCart();
     };
     quantity.append(button("−", "", () => change(-1)), el("span", "", offer.item.quantity), button("+", "", () => change(1)));
-    const remove = button("Remover", "button-ghost", () => { state.cart = state.cart.filter(item => cartKey(item) !== cartKey(offer.item)); void syncCart(); renderCart(); });
+    const remove = button("Remover", "button-ghost", () => { state.cart = state.cart.filter(item => cartKey(item) !== cartKey(offer.item)); invalidateCheckoutDraft(); void syncCart(); renderCart(); });
     row.append(identity, quantity, remove); list.append(row);
   }
   const summary = el("aside", "panel summary"); summary.id = "cart-checkout";
@@ -481,7 +629,7 @@ function authPage(mode) {
       } else {
         await signInWithEmailAndPassword(auth, email.value.trim(), form.elements.password.value);
         const next = new URLSearchParams(location.search).get("next");
-        navigate(next?.startsWith("/") ? next : "/conta/compras");
+        navigate(safeNextPath(next));
       }
     } catch (error) { message.classList.add("error"); message.textContent = "Não foi possível concluir. Verifique os dados e tente novamente."; console.error(error); }
     finally { submit.disabled = false; }
@@ -491,7 +639,7 @@ function authPage(mode) {
       try {
         await signInWithPopup(auth, googleProvider);
         const next = new URLSearchParams(location.search).get("next");
-        navigate(mode === "signup" ? "/conta/perfil" : (next?.startsWith("/") ? next : "/conta/compras"));
+        navigate(mode === "signup" ? "/conta/perfil" : safeNextPath(next));
       } catch (error) { message.textContent = "Login Google cancelado ou indisponível."; }
     });
     panel.append(google);
@@ -539,10 +687,54 @@ async function renderProfile() {
     const wrap = el("label", name === "displayName" || name === "email" || name === "street" ? "full" : "", label);
     const input = el("input"); input.name = name; input.type = type; input.autocomplete = autocomplete; input.value = name === "email" ? state.account.email : (state.account[name] || ""); input.disabled = !editable; if (editable && name !== "complement") input.required = true; if (name === "state") input.maxLength = 2; wrap.append(input); form.append(wrap);
   }
+  form.elements.taxId.value = formatCpf(form.elements.taxId.value);
+  form.elements.phone.value = formatPhone(form.elements.phone.value);
+  form.elements.postalCode.value = formatCep(form.elements.postalCode.value);
+  bindMask(form.elements.taxId, formatCpf, 14);
+  bindMask(form.elements.phone, formatPhone, 15);
+  bindMask(form.elements.postalCode, formatCep, 9);
+  form.elements.taxId.placeholder = "000.000.000-00";
+  form.elements.phone.placeholder = "(00) 00000-0000";
+  form.elements.postalCode.placeholder = "00000-000";
+  form.elements.state.addEventListener("input", () => { form.elements.state.value = form.elements.state.value.replace(/[^A-Za-z]/g, "").slice(0, 2).toUpperCase(); });
+
+  let lastCepLookup = "";
+  let cepLookupBusy = false;
   const submit = button("Salvar perfil", "button"); submit.type = "submit";
   const message = el("p", "form-message full"); form.append(submit, message);
+  const lookupCep = async ({ focusNumber = false } = {}) => {
+    const cep = onlyDigits(form.elements.postalCode.value, 8);
+    if (cep.length !== 8 || cepLookupBusy || cep === lastCepLookup) {
+      if (focusNumber && cep.length === 8) form.elements.number.focus();
+      return;
+    }
+    cepLookupBusy = true; message.className = "form-message full"; message.textContent = "Buscando endereço pelo CEP…";
+    try {
+      const address = (await api(`/api/v1/customer/address/cep/${cep}`)).address || {};
+      if (address.street) form.elements.street.value = address.street;
+      if (address.neighborhood) form.elements.neighborhood.value = address.neighborhood;
+      if (address.city) form.elements.city.value = address.city;
+      if (address.state) form.elements.state.value = address.state;
+      lastCepLookup = cep; message.className = "form-message full success";
+      message.textContent = "Endereço preenchido pelo CEP. Revise os dados e informe o número.";
+      if (focusNumber) form.elements.number.focus();
+    } catch (error) {
+      message.className = "form-message full error";
+      message.textContent = errorMessage(error, "Não foi possível consultar o CEP. Preencha o endereço manualmente.");
+    } finally { cepLookupBusy = false; }
+  };
+  form.elements.postalCode.addEventListener("blur", () => { void lookupCep(); });
+  form.elements.postalCode.addEventListener("keydown", event => {
+    if (event.key !== "Enter") return;
+    event.preventDefault(); void lookupCep({ focusNumber: true });
+  });
   form.addEventListener("submit", async event => {
-    event.preventDefault(); submit.disabled = true; message.textContent = "Salvando…";
+    event.preventDefault();
+    form.elements.taxId.setCustomValidity(isValidCpfClient(form.elements.taxId.value) ? "" : "Informe um CPF válido.");
+    form.elements.phone.setCustomValidity(/^\d{10,11}$/.test(onlyDigits(form.elements.phone.value, 11)) ? "" : "Informe um telefone com DDD.");
+    form.elements.postalCode.setCustomValidity(/^\d{8}$/.test(onlyDigits(form.elements.postalCode.value, 8)) ? "" : "Informe um CEP válido.");
+    if (!form.reportValidity()) return;
+    submit.disabled = true; message.textContent = "Salvando…";
     const payload = Object.fromEntries(fields.filter(field => field[4]).map(([name]) => [name, form.elements[name].value.trim()]));
     try {
       const response = await api("/api/v1/customer/me", { method: "PATCH", body: JSON.stringify(payload) });
@@ -620,7 +812,7 @@ async function renderPurchases() {
       event.currentTarget.disabled = true;
       try {
         const response = await api(`/api/v1/customer/orders/${encodeURIComponent(order.orderId)}/payment`, { method:"POST", body:JSON.stringify({ method:"pix", idempotencyKey:`pix-${order.orderId}` }) });
-        card.append(renderPix(order, response.payment));
+        openPixModal(order, response.payment);
       } catch (error) { showToast(errorMessage(error)); event.currentTarget.disabled = false; }
     }));
     records.append(card);
@@ -708,6 +900,7 @@ $("#account-menu-button").addEventListener("click", event => {
 $("#logout-button").addEventListener("click", async () => {
   state.cart = [];
   state.syncedUid = "";
+  invalidateCheckoutDraft();
   saveLocalCart();
   await signOut(auth);
   navigate("/");
