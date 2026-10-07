@@ -3,142 +3,53 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Licenças oficiais para os programas GuiaSys.">
-  <title>GuiaSys Licensing — Licenças oficiais</title>
+  <meta name="description" content="Programas e licenças oficiais da GuiaSys Studio.">
+  <meta name="theme-color" content="#0C171F">
+  <title>GuiaSys Licensing — Programas e licenças oficiais</title>
   <link rel="stylesheet" href="/assets/catalog.css">
   <script type="module" src="/assets/catalog.js"></script>
 </head>
 <body>
-  <a class="skip-link" href="#catalog">Ir para o catálogo</a>
+  <a class="skip-link" href="#app">Ir para o conteúdo</a>
   <header class="site-header">
-    <a class="brand" href="/" aria-label="GuiaSys Licensing — início">
-      <span class="brand-mark" aria-hidden="true">G</span>
-      <span><strong>GuiaSys</strong><small>Licensing</small></span>
+    <a class="brand" href="/" data-link aria-label="GuiaSys Licensing — início">
+      <img src="/assets/brand/guiasys-licensing-lockup.svg" alt="GuiaSys Licensing" data-brand-image>
+      <span class="brand-fallback" data-brand-fallback hidden>GuiaSys Licensing <small>identidade oficial pendente</small></span>
     </a>
-    <nav class="header-actions" aria-label="Conta do cliente">
-      <a class="header-link" href="#catalog">Programas</a>
-      <button id="account-button" class="secondary-button" type="button">Entrar</button>
-      <button id="logout-button" class="secondary-button" type="button" hidden>Sair</button>
+    <button class="menu-button" type="button" aria-expanded="false" aria-controls="site-nav">Menu</button>
+    <nav id="site-nav" class="site-nav" aria-label="Navegação principal">
+      <a href="/" data-link>Início</a>
+      <a href="/programas" data-link>Programas</a>
+      <a href="/#sobre" data-link>Sobre</a>
+      <a href="/#suporte" data-link>Suporte</a>
+      <a href="/carrinho" data-link>Carrinho <span id="cart-count" class="count-badge">0</span></a>
+      <div class="account-menu">
+        <button id="account-menu-button" class="account-menu-button" type="button" aria-expanded="false" aria-controls="account-dropdown">
+          <img id="account-avatar" alt="" hidden><span id="account-avatar-fallback" class="avatar-fallback" aria-hidden="true">●</span><span id="account-label">Entrar</span>
+        </button>
+        <div id="account-dropdown" class="account-dropdown" hidden>
+          <a href="/conta/perfil" data-link>Meu perfil</a>
+          <a href="/conta/favoritos" data-link>Favoritos</a>
+          <a href="/conta/compras" data-link>Minhas compras</a>
+          <button id="logout-button" class="text-button" type="button">Sair</button>
+        </div>
+      </div>
     </nav>
   </header>
-
-  <main>
-    <section class="hero" aria-labelledby="hero-title">
-      <div class="hero-copy">
-        <p class="eyebrow">LICENÇAS OFICIAIS GUIASYS</p>
-        <h1 id="hero-title">O programa certo, com a licença certa.</h1>
-        <p class="hero-lead">Conheça os programas GuiaSys e compare as ofertas publicadas diretamente pelo catálogo oficial.</p>
-        <a class="primary-link" href="#catalog">Explorar catálogo</a>
-      </div>
-      <div class="hero-art" aria-hidden="true">
-        <span class="hero-orbit orbit-one"></span>
-        <span class="hero-orbit orbit-two"></span>
-        <span class="hero-core">GS</span>
-      </div>
-    </section>
-
-    <section class="catalog-section" id="catalog" aria-labelledby="catalog-title">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">CATÁLOGO</p>
-          <h2 id="catalog-title">Programas disponíveis</h2>
-        </div>
-        <p>Valores em reais e condições definidas pela GuiaSys.</p>
-      </div>
-
-      <div id="catalog-status" class="catalog-status" role="status" aria-live="polite">
-        <span class="spinner" aria-hidden="true"></span>
-        <span>Carregando catálogo…</span>
-      </div>
-      <div id="catalog-grid" class="catalog-grid" hidden></div>
-      <div id="catalog-empty" class="state-card" hidden>
-        <strong>Nenhum programa publicado no momento.</strong>
-        <p>Novas ofertas aparecerão aqui assim que estiverem disponíveis.</p>
-      </div>
-      <div id="catalog-error" class="state-card state-error" role="alert" hidden>
-        <strong>Não foi possível carregar o catálogo.</strong>
-        <p>Verifique sua conexão e tente novamente.</p>
-        <button id="catalog-retry" class="secondary-button" type="button">Tentar novamente</button>
-      </div>
-      <p id="selection-status" class="selection-status" role="status" aria-live="polite" hidden></p>
-    </section>
-
-    <section id="checkout" class="commerce-section" aria-labelledby="checkout-title" hidden>
-      <div class="section-heading">
-        <div><p class="eyebrow">CHECKOUT SEGURO</p><h2 id="checkout-title">Revise seu pedido</h2></div>
-        <p>O valor final é sempre validado no servidor.</p>
-      </div>
-      <div class="checkout-card">
-        <div><strong id="checkout-product"></strong><p id="checkout-plan"></p></div>
-        <dl class="checkout-details">
-          <div><dt>Preço unitário</dt><dd id="checkout-unit-price"></dd></div>
-          <div><dt>Duração</dt><dd id="checkout-duration"></dd></div>
-          <div><dt>Dispositivos</dt><dd id="checkout-devices"></dd></div>
-        </dl>
-        <label class="quantity-field">Quantidade <input id="checkout-quantity" type="number" min="1" max="50" value="1" inputmode="numeric"></label>
-        <div class="checkout-total"><span>Total visual</span><strong id="checkout-total"></strong></div>
-        <button id="create-order-button" class="offer-button" type="button">Criar pedido</button>
-        <p id="checkout-message" role="status" aria-live="polite"></p>
-        <p class="security-note">O valor e os dados do pedido são recalculados no servidor. O pagamento ativo é exclusivamente PIX manual.</p>
-      </div>
-    </section>
-
-    <section id="pix-payment" class="commerce-section pix-payment-section" aria-labelledby="pix-title" hidden>
-      <div class="section-heading">
-        <div><p class="eyebrow">PAGAMENTO VIA PIX</p><h2 id="pix-title">Conclua seu pagamento</h2></div>
-        <p>QR Code e Copia e Cola gerados diretamente pela GuiaSys.</p>
-      </div>
-      <article class="pix-card">
-        <div class="pix-brand"><span class="brand-mark" aria-hidden="true">G</span><div><strong>GuiaSys</strong><small>Licensing</small></div></div>
-        <dl class="pix-order-summary">
-          <div><dt>Pedido</dt><dd id="pix-order-number"></dd></div>
-          <div><dt>Produto</dt><dd id="pix-product"></dd></div>
-          <div><dt>Plano</dt><dd id="pix-plan"></dd></div>
-          <div><dt>Valor</dt><dd id="pix-total"></dd></div>
-          <div><dt>Recebedor visual</dt><dd id="pix-display-name">GuiaSys</dd></div>
-        </dl>
-        <p class="pix-holder-note">Ao pagar, seu banco mostrará os dados cadastrais do titular real da chave PIX.</p>
-        <div class="pix-content">
-          <div class="pix-qr-wrap"><img id="pix-qr-code" alt="QR Code do pagamento PIX"></div>
-          <div class="pix-copy-area">
-            <label for="pix-code">PIX Copia e Cola</label>
-            <textarea id="pix-code" rows="5" readonly></textarea>
-            <button id="copy-pix-code" class="offer-button" type="button">COPIAR CÓDIGO PIX</button>
-            <label for="pix-key">Chave Pix</label>
-            <input id="pix-key" readonly>
-            <button id="copy-pix-key" class="secondary-button" type="button">COPIAR CHAVE</button>
-          </div>
-        </div>
-        <p class="manual-payment-note">O pagamento via PIX é confirmado manualmente pela GuiaSys. Após efetuar o pagamento, clique em “Já efetuei o pagamento” e envie o comprovante pelo WhatsApp. Após a confirmação, sua licença será liberada em Minhas Compras.</p>
-        <button id="report-payment-button" class="pix-primary-button" type="button">JÁ EFETUEI O PAGAMENTO</button>
-        <p id="pix-message" role="status" aria-live="polite"></p>
-      </article>
-    </section>
-
-    <section id="customer-area" class="commerce-section" aria-labelledby="customer-title" hidden>
-      <div class="section-heading"><div><p class="eyebrow">MINHA CONTA</p><h2 id="customer-title">Minhas Compras</h2></div><p id="customer-email"></p></div>
-      <div class="account-grid">
-        <article class="state-card"><h3>Meus pedidos</h3><div id="orders-list"></div></article>
-        <article class="state-card"><h3>Minhas licenças</h3><div id="licenses-list"></div></article>
-      </div>
-    </section>
+  <main id="app" tabindex="-1" aria-live="polite">
+    <section class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Carregando…</p></section>
   </main>
-
-  <dialog id="auth-dialog" class="auth-dialog">
-    <form id="auth-form" method="dialog">
-      <div class="dialog-heading"><h2>Acessar minha conta</h2><button id="auth-close" type="button" aria-label="Fechar">×</button></div>
-      <button id="google-login" class="offer-button" type="button">Continuar com Google</button>
-      <p class="auth-divider">ou</p>
-      <label>E-mail <input id="auth-email" type="email" autocomplete="email" maxlength="160" required></label>
-      <label>Senha <input id="auth-password" type="password" autocomplete="current-password" minlength="6" maxlength="256" required></label>
-      <div class="auth-buttons"><button id="email-login" class="secondary-button" type="button">Entrar</button><button id="email-signup" class="secondary-button" type="button">Criar conta</button></div>
-      <p id="auth-message" role="status" aria-live="polite"></p>
-    </form>
-  </dialog>
-
-  <footer class="site-footer">
-    <span>© <span id="current-year"></span> GuiaSys Studio</span>
-    <span>Catálogo oficial · GSL-v1</span>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <footer class="site-footer" id="suporte">
+    <div><strong>GuiaSys Licensing</strong><p>Licenças oficiais para os programas da GuiaSys Studio.</p></div>
+    <nav aria-label="Links institucionais">
+      <a href="/programas" data-link>Programas</a>
+      <a href="/conta/perfil" data-link>Minha conta</a>
+      <a href="/termos" data-link>Termos de uso</a>
+      <a href="/privacidade" data-link>Privacidade</a>
+      <a href="mailto:suporte@guiasys.online">suporte@guiasys.online</a>
+    </nav>
+    <p>© <span id="current-year"></span> GuiaSys Studio · Catálogo oficial GSL-v1</p>
   </footer>
 </body>
 </html>

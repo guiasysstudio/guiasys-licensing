@@ -22,6 +22,9 @@
     "rules": "storage.rules"
   },
   "emulators": {
+    "auth": {
+      "port": 9099
+    },
     "functions": {
       "port": 5001
     },
@@ -214,6 +217,10 @@
             "functionId": "licensingApi",
             "region": "southamerica-east1"
           }
+        },
+        {
+          "source": "**",
+          "destination": "/index.html"
         }
       ]
     }

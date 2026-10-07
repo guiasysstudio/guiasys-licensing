@@ -72,10 +72,10 @@ async function call(path, method = "GET", body) {
   return { response, data };
 }
 
-async function createOrder(idempotencyKey) {
+async function createOrder(idempotencyKey, quantity = 1) {
   const { response, data } = await call("/api/v1/customer/orders", "POST", {
     idempotencyKey,
-    items: [{ projectId: PROJECT, planId: PLAN, quantity: 1 }]
+    items: [{ projectId: PROJECT, planId: PLAN, quantity }]
   });
   assert.equal(response.status, 201);
   return data.order;
@@ -85,7 +85,9 @@ await firebase.setDoc(`projects/${PROJECT}`, {
   name: "GuiaPlay Emulator",
   prefix: "GPE",
   status: "active",
-  publicCatalog: true
+  publicCatalog: false,
+  slug: "guiaplay-emulator",
+  tagline: "Catálogo C15"
 });
 await firebase.setDoc(`projects/${PROJECT}/plans/${PLAN}`, {
   name: "Plano Emulator",
@@ -96,14 +98,37 @@ await firebase.setDoc(`projects/${PROJECT}/plans/${PLAN}`, {
   deviceLimit: 2,
   startMode: "first_activation",
   active: true,
-  publicCatalog: true
+  publicCatalog: false,
+  publishedInCatalog: true,
+  termsVersion: "2026-10"
 });
 
+const profile = await call("/api/v1/customer/me", "PATCH", {
+  displayName: "Cliente A",
+  taxId: "529.982.247-25",
+  phone: "(69) 99999-9999",
+  postalCode: "76900-000",
+  street: "Rua Emulator",
+  number: "100",
+  complement: "",
+  neighborhood: "Centro",
+  city: "Ji-Paraná",
+  state: "RO"
+});
+assert.equal(profile.response.status, 200);
+assert.equal(profile.data.account.profileComplete, true);
+
+const catalog = await call("/api/v1/catalog");
+assert.equal(catalog.response.status, 200);
+assert.equal(catalog.data.catalog.projects[0].slug, "guiaplay-emulator");
+const detail = await call("/api/v1/catalog/guiaplay-emulator");
+assert.equal(detail.response.status, 200);
+
 const [first, second] = await Promise.all([
-  createOrder("emulator-order-a-001"),
+  createOrder("emulator-order-a-001", 2),
   createOrder("emulator-order-a-002")
 ]);
-assert.equal(first.totalCents, 5000);
+assert.equal(first.totalCents, 10000);
 assert.equal(second.totalCents, 5000);
 assert.notEqual(first.orderNumber, second.orderNumber);
 assert.deepEqual(new Set([first.orderNumber, second.orderNumber]), new Set(["GS-000001", "GS-000002"]));
@@ -142,6 +167,13 @@ const reportReplay = await call(`/api/v1/customer/orders/${first.orderId}/paymen
 assert.equal(reportReplay.response.status, 200);
 assert.equal(reportReplay.data.order.idempotentReplay, true);
 
+const savedCart = await call("/api/v1/customer/cart", "PUT", {
+  items: [{ projectId: PROJECT, planId: PLAN, quantity: 2 }]
+});
+assert.equal(savedCart.response.status, 200);
+const savedFavorite = await call(`/api/v1/customer/favorites/${PROJECT}`, "POST");
+assert.equal(savedFavorite.response.status, 201);
+
 setIdentity("customer-emulator-b", "customer-b@example.com", "Cliente B");
 const foreignOrder = await call(`/api/v1/customer/orders/${first.orderId}`);
 assert.equal(foreignOrder.response.status, 404);
@@ -149,6 +181,8 @@ const foreignOrders = await call("/api/v1/customer/orders");
 const foreignLicenses = await call("/api/v1/customer/licenses");
 assert.deepEqual(foreignOrders.data.orders, []);
 assert.deepEqual(foreignLicenses.data.licenses, []);
+assert.deepEqual((await call("/api/v1/customer/cart")).data.cart.items, []);
+assert.deepEqual((await call("/api/v1/customer/favorites")).data.projectIds, []);
 const nonAdmin = await call(`/api/v1/admin/orders/${first.orderId}/confirm-payment`, "POST", {});
 assert.equal(nonAdmin.response.status, 403);
 
@@ -158,23 +192,25 @@ assert.equal(confirmed.response.status, 200);
 assert.equal(confirmed.data.order.status, "fulfilled");
 assert.equal(confirmed.data.order.paymentStatus, "paid");
 assert.equal(confirmed.data.order.fulfillmentStatus, "fulfilled");
-assert.equal(confirmed.data.order.resultingLicenses.length, 1);
+assert.equal(confirmed.data.order.resultingLicenses.length, 2);
 
 const confirmationReplay = await call(`/api/v1/admin/orders/${first.orderId}/confirm-payment`, "POST", {});
 assert.equal(confirmationReplay.response.status, 200);
 assert.equal(confirmationReplay.data.idempotentReplay, true);
 
 const licenses = await firebase.listCollection(`projects/${PROJECT}/licenses`);
-assert.equal(licenses.length, 1);
+assert.equal(licenses.length, 2);
 const fulfilledOrder = await firebase.getDoc(`orders/${first.orderId}`);
-assert.equal(fulfilledOrder.resultingLicenses.length, 1);
+assert.equal(fulfilledOrder.resultingLicenses.length, 2);
+assert.equal(new Set(fulfilledOrder.resultingLicenses.map(item => item.licenseId)).size, 2);
+assert.ok(fulfilledOrder.resultingLicenses.every(item => item.orderItemId === first.items[0].orderItemId));
 
 setIdentity("customer-emulator-a", "customer-a@example.com", "Cliente A");
 const ownOrders = await call("/api/v1/customer/orders");
 const ownLicenses = await call("/api/v1/customer/licenses");
 assert.equal(ownOrders.data.orders.length, 2);
-assert.equal(ownLicenses.data.licenses.length, 1);
-assert.equal(ownLicenses.data.licenses[0].orderId, first.orderId);
+assert.equal(ownLicenses.data.licenses.length, 2);
+assert.ok(ownLicenses.data.licenses.every(license => license.orderId === first.orderId));
 
 const originalFetch = globalThis.fetch;
 let pagBankNetworkCalls = 0;
@@ -202,7 +238,9 @@ console.log([
   "- manipulação de preço/customerUid/paid bloqueada",
   "- ownership e RBAC administrativo validados",
   "- pending_payment -> payment_reported -> paid -> fulfilled validado",
-  "- confirmação/fulfillment/licença idempotentes (1 licença)",
-  "- Minhas Compras isolada por usuário",
+  "- catálogo C15 por slug e publicação explícita de plano",
+  "- perfil completo obrigatório antes do checkout",
+  "- confirmação/fulfillment idempotentes (2 unidades = 2 licenças)",
+  "- carrinho, favoritos e Minhas Compras isolados por usuário",
   "- PagBank: 0 chamadas de rede; execução sem PAGBANK_TOKEN"
 ].join("\n"));

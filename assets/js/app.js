@@ -1241,20 +1241,16 @@ function projectForm(project = {}) {
         <input name="validationHours" inputmode="numeric" data-mask="integer" data-max-digits="4" value="${e(project.validationHours ?? 24)}">
       </label>
       <label class="field check-field">
-        <input name="publicCatalog" type="checkbox" value="true" ${project.publicCatalog ? "checked" : ""}>
-        ${fieldTitle("Publicado no catálogo", "Exibe este programa no site público quando o status também estiver ativo.")}
-      </label>
-      <label class="field check-field">
         <input name="featured" type="checkbox" value="true" ${project.featured ? "checked" : ""}>
-        ${fieldTitle("Destacar no catálogo", "Aplica destaque visual ao programa no site público.")}
+        ${fieldTitle("Exibir na Home", "Mostra o programa na seção de destaques quando houver ao menos um plano publicado.")}
       </label>
       <label class="field">
         ${fieldTitle("Ordem no catálogo", "Menores números aparecem primeiro. Empates são ordenados por nome e ID.")}
-        <input name="displayOrder" inputmode="numeric" data-mask="integer" data-max-digits="5" value="${e(project.displayOrder ?? 0)}">
+        <input name="catalogOrder" inputmode="numeric" data-mask="integer" data-max-digits="5" value="${e(project.catalogOrder ?? project.displayOrder ?? 0)}">
       </label>
       <label class="field">
-        ${fieldTitle("URL HTTPS da imagem", "Logo ou imagem comercial pública. Apenas URLs HTTPS sem credenciais são aceitas.")}
-        <input name="imageUrl" type="url" maxlength="2048" value="${e(project.imageUrl || "")}" placeholder="https://exemplo.com/logo.png">
+        ${fieldTitle("Ordem de destaque", "Menores números aparecem primeiro entre os programas destacados.")}
+        <input name="featuredOrder" inputmode="numeric" data-mask="integer" data-max-digits="5" value="${e(project.featuredOrder ?? project.displayOrder ?? 0)}">
       </label>
       <label class="field field-full">
         ${fieldTitle("Domínios permitidos para integração Web", "Um domínio por linha. Sites JavaScript/TypeScript só poderão chamar a API pública deste projeto a partir destas origens. Aplicativos desktop/mobile não usam esta restrição de navegador.")}
@@ -1265,9 +1261,67 @@ function projectForm(project = {}) {
         <textarea name="shortDescription" rows="2" maxlength="180" placeholder="Resumo comercial do programa">${e(project.shortDescription || "")}</textarea>
       </label>
       <label class="field field-full">
-        ${fieldTitle("Descrição", "Descrição comercial completa exibida no catálogo público.")}
-        <textarea name="description" rows="3" maxlength="300" placeholder="Descrição comercial do programa">${e(project.description || "")}</textarea>
+        ${fieldTitle("Chamada comercial", "Frase curta exibida em destaque na página do programa.")}
+        <input name="tagline" maxlength="160" value="${e(project.tagline || "")}" placeholder="Uma frase objetiva sobre o programa">
       </label>
+      <label class="field field-full">
+        ${fieldTitle("Descrição técnica", "Resumo administrativo separado do conteúdo comercial público.")}
+        <textarea name="description" rows="3" maxlength="300">${e(project.description || "")}</textarea>
+      </label>
+      <label class="field field-full">
+        ${fieldTitle("Descrição comercial completa", "Conteúdo principal da página pública do programa.")}
+        <textarea name="fullDescription" rows="6" maxlength="12000">${e(project.fullDescription || "")}</textarea>
+      </label>
+      <label class="field field-full">
+        ${fieldTitle("Texto comercial adicional", "Complemento institucional ou comercial exibido na página pública.")}
+        <textarea name="commercialText" rows="4" maxlength="6000">${e(project.commercialText || "")}</textarea>
+      </label>
+      <label class="field field-full">
+        ${fieldTitle("Informações adicionais", "Observações públicas pertinentes ao programa.")}
+        <textarea name="additionalInfo" rows="4" maxlength="6000">${e(project.additionalInfo || "")}</textarea>
+      </label>
+      <label class="field field-full">
+        ${fieldTitle("Recursos", "Um recurso por linha; serão exibidos como lista no portal.")}
+        <textarea name="features" rows="5">${e((project.features || []).join("\n"))}</textarea>
+      </label>
+      <label class="field field-full">
+        ${fieldTitle("Requisitos", "Um requisito por linha; serão exibidos como lista no portal.")}
+        <textarea name="requirements" rows="5">${e((project.requirements || []).join("\n"))}</textarea>
+      </label>
+      <label class="field field-full">
+        ${fieldTitle("Screenshots por URL", "Uma URL HTTPS por linha, no máximo 12.")}
+        <textarea name="screenshots" rows="4">${e((project.screenshots || []).join("\n"))}</textarea>
+      </label>
+      <label class="field">
+        ${fieldTitle("URL do logo", "Logo comercial público em HTTPS.")}
+        <input name="logoUrl" type="url" maxlength="2048" value="${e(project.logoUrl || project.imageUrl || "")}">
+      </label>
+      <label class="field">
+        ${fieldTitle("URL do ícone", "Ícone comercial público em HTTPS.")}
+        <input name="iconUrl" type="url" maxlength="2048" value="${e(project.iconUrl || "")}">
+      </label>
+      <label class="field field-full">
+        ${fieldTitle("URL do banner", "Imagem principal pública em HTTPS.")}
+        <input name="bannerUrl" type="url" maxlength="2048" value="${e(project.bannerUrl || "")}">
+      </label>
+      <label class="field">
+        ${fieldTitle("Título SEO", "Até 70 caracteres.")}
+        <input name="seoTitle" maxlength="70" value="${e(project.seoTitle || "")}">
+      </label>
+      <label class="field">
+        ${fieldTitle("Descrição SEO", "Até 180 caracteres.")}
+        <input name="seoDescription" maxlength="180" value="${e(project.seoDescription || "")}">
+      </label>
+      ${project.id ? `
+      <div class="field field-full">
+        ${fieldTitle("Upload de mídia comercial", "JPG, PNG ou WebP de até 5 MB. O envio atualiza o campo correspondente imediatamente.")}
+        <div class="toolbar-actions">
+          <label class="btn btn-ghost btn-sm">Logo<input type="file" accept=".jpg,.jpeg,.png,.webp" data-media-kind="logo" hidden></label>
+          <label class="btn btn-ghost btn-sm">Ícone<input type="file" accept=".jpg,.jpeg,.png,.webp" data-media-kind="icon" hidden></label>
+          <label class="btn btn-ghost btn-sm">Banner<input type="file" accept=".jpg,.jpeg,.png,.webp" data-media-kind="banner" hidden></label>
+          <label class="btn btn-ghost btn-sm">Screenshot<input type="file" accept=".jpg,.jpeg,.png,.webp" data-media-kind="screenshot" hidden></label>
+        </div>
+      </div>` : ""}
     </div>
   `;
 }
@@ -1275,12 +1329,43 @@ function projectForm(project = {}) {
 function projectPayload(values, form = null) {
   return {
     ...values,
-    publicCatalog: form ? form.elements.publicCatalog?.checked === true : Boolean(values.publicCatalog),
     featured: form ? form.elements.featured?.checked === true : Boolean(values.featured),
-    displayOrder: Math.max(0, Number(values.displayOrder || 0)),
+    catalogOrder: Math.max(0, Number(values.catalogOrder || 0)),
+    featuredOrder: Math.max(0, Number(values.featuredOrder || 0)),
+    screenshots: String(values.screenshots || "").split(/\r?\n/).map(value => value.trim()).filter(Boolean),
+    features: String(values.features || "").split(/\r?\n/).map(value => value.trim()).filter(Boolean),
+    requirements: String(values.requirements || "").split(/\r?\n/).map(value => value.trim()).filter(Boolean),
     offlineDays: Number(values.offlineDays || 0),
     validationHours: Math.max(1, Number(values.validationHours || 24))
   };
+}
+
+function bindProjectMediaUploads(backdrop, projectId) {
+  backdrop.querySelectorAll("[data-media-kind]").forEach(input => input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) return toast("A mídia deve ter no máximo 5 MB.", "danger");
+    const dataBase64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",")[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    input.disabled = true;
+    try {
+      const response = await api(`/api/v1/admin/projects/${encodeURIComponent(projectId)}/media`, {
+        method: "POST",
+        body: JSON.stringify({ kind: input.dataset.mediaKind, fileName: file.name, contentType: file.type, dataBase64 })
+      });
+      const fieldName = { logo: "logoUrl", icon: "iconUrl", banner: "bannerUrl" }[input.dataset.mediaKind];
+      if (fieldName) backdrop.querySelector(`[name="${fieldName}"]`).value = response.upload.url;
+      if (input.dataset.mediaKind === "screenshot") backdrop.querySelector('[name="screenshots"]').value = (response.project.screenshots || []).join("\n");
+      toast("Mídia enviada.");
+    } finally {
+      input.disabled = false;
+      input.value = "";
+    }
+  }));
 }
 
 function openProjectCreate() {
@@ -1316,6 +1401,7 @@ function openProjectEdit(project) {
     body: projectForm(project),
     submitLabel: "Salvar alterações",
     wide: true,
+    onOpen: backdrop => bindProjectMediaUploads(backdrop, project.id),
     onSubmit: async (values, form) => {
       const data = await api(`/api/v1/admin/projects/${encodeURIComponent(project.id)}`, {
         method: "PATCH",
@@ -1424,15 +1510,23 @@ function planForm(plan = {}) {
       </label>
       <label class="field">
         ${fieldTitle("Ordem no catálogo", "Menores números aparecem primeiro. Empates são ordenados por nome e ID.")}
-        <input name="displayOrder" inputmode="numeric" data-mask="integer" data-max-digits="5" value="${e(plan.displayOrder ?? 0)}">
+        <input name="catalogOrder" inputmode="numeric" data-mask="integer" data-max-digits="5" value="${e(plan.catalogOrder ?? plan.displayOrder ?? 0)}">
       </label>
       <label class="field check-field">
-        <input name="publicCatalog" type="checkbox" value="true" ${plan.publicCatalog ? "checked" : ""}>
-        ${fieldTitle("Publicado no catálogo", "Exibe esta oferta no site público quando o plano e o programa também estiverem ativos.")}
+        <input name="publishedInCatalog" type="checkbox" value="true" ${(plan.publishedInCatalog ?? plan.publicCatalog) ? "checked" : ""}>
+        ${fieldTitle("Publicado no catálogo", "Exibe esta oferta no portal quando o plano e o programa estiverem ativos. Esta é a fonte única de publicação.")}
+      </label>
+      <label class="field field-full">
+        ${fieldTitle("Descrição técnica", "Anotação administrativa do plano.")}
+        <textarea name="description" rows="3">${e(plan.description || "")}</textarea>
       </label>
       <label class="field field-full">
         ${fieldTitle("Descrição comercial", "Texto público apresentado no card desta oferta.")}
-        <textarea name="description" rows="3">${e(plan.description || "")}</textarea>
+        <textarea name="commercialDescription" rows="3" maxlength="2000">${e(plan.commercialDescription || plan.description || "")}</textarea>
+      </label>
+      <label class="field">
+        ${fieldTitle("Versão dos termos", "Versão das condições comerciais registrada no snapshot da compra.")}
+        <input name="termsVersion" maxlength="80" value="${e(plan.termsVersion || "")}" placeholder="Ex.: 2026-10">
       </label>
     </div>
   `;
@@ -1458,9 +1552,9 @@ async function plansView() {
             <td>${formatMoney(plan.price)}</td>
             <td>${plan.lifetime ? '<span class="badge badge-success">Vitalício</span>' : `${e(plan.durationDays)} dias`}</td>
             <td>${e(plan.deviceLimit)}</td>
-            <td>${e(plan.displayOrder ?? 0)}</td>
+            <td>${e(plan.catalogOrder ?? plan.displayOrder ?? 0)}</td>
             <td>${plan.active ? '<span class="badge badge-success">Ativo</span>' : '<span class="badge badge-muted">Inativo</span>'}</td>
-            <td>${plan.publicCatalog ? '<span class="badge badge-success">Venda</span>' : '<span class="badge badge-muted">Oculto</span>'}</td>
+            <td>${(plan.publishedInCatalog ?? plan.publicCatalog) ? '<span class="badge badge-success">Venda</span>' : '<span class="badge badge-muted">Oculto</span>'}</td>
             <td class="table-actions"><button class="btn btn-ghost btn-sm edit-plan" data-id="${e(plan.id)}" type="button">Editar</button><button class="btn btn-ghost btn-sm delete-plan" data-id="${e(plan.id)}" type="button">Excluir</button></td>
           </tr>
         `),
@@ -1514,8 +1608,8 @@ function openPlan(plan = null) {
         startMode: values.startMode || "first_activation",
         lifetime: form.elements.lifetime.checked,
         active: form.elements.active.checked,
-        publicCatalog: form.elements.publicCatalog.checked,
-        displayOrder: Math.max(0, Number(values.displayOrder || 0))
+        publishedInCatalog: form.elements.publishedInCatalog.checked,
+        catalogOrder: Math.max(0, Number(values.catalogOrder || 0))
       };
       const path = plan
         ? `/api/v1/admin/projects/${state.selectedProjectId}/plans/${plan.id}`
@@ -3417,12 +3511,26 @@ function normalizedWhatsapp(value) {
 async function openOrderDetails(orderId) {
   const { order, audit = [] } = await api(`/api/v1/admin/orders/${encodeURIComponent(orderId)}`);
   const item = order.items?.[0] || {};
+  const orderItems = Array.isArray(order.items) ? order.items : [];
+  const itemsHtml = orderItems.length ? `
+    <div class="table-toolbar" style="margin-top:22px"><h3>Itens do pedido</h3><span class="badge">${orderItems.reduce((sum, current) => sum + Number(current.quantity || 0), 0)} licença(s)</span></div>
+    <div class="table-scroll"><table><thead><tr><th>Item</th><th>Produto</th><th>Plano</th><th>Qtd.</th><th>Unitário</th><th>Total</th><th>Termos</th></tr></thead><tbody>
+      ${orderItems.map(current => `<tr>
+        <td><code>${e(current.orderItemId || "—")}</code></td>
+        <td>${e(current.projectNameSnapshot || "—")}</td>
+        <td>${e(current.planNameSnapshot || "—")}</td>
+        <td>${e(current.quantity || 0)}</td>
+        <td>${e(formatMoney(Number(current.unitPriceCents || 0) / 100))}</td>
+        <td>${e(formatMoney(Number(current.lineTotalCents || 0) / 100))}</td>
+        <td>${e(current.purchasedTermsVersionSnapshot || "—")}</td>
+      </tr>`).join("")}
+    </tbody></table></div>` : "";
   const canConfirm = order.status === "payment_reported" && hasPermission("manageOrders");
   const fulfilled = ["paid", "fulfilled"].includes(order.status) && order.fulfillmentStatus === "fulfilled";
   const notification = customerNotification(order);
   openModal({
     title: `Pedido ${order.orderNumber || order.orderId}`,
-    subtitle: `${order.productName || item.projectNameSnapshot || "Produto"} · ${order.planName || item.planNameSnapshot || "Plano"}`,
+    subtitle: orderItems.length > 1 ? `${orderItems.length} itens · ${orderItems.reduce((sum, current) => sum + Number(current.quantity || 0), 0)} licenças` : `${order.productName || item.projectNameSnapshot || "Produto"} · ${order.planName || item.planNameSnapshot || "Plano"}`,
     wide: true,
     submitLabel: canConfirm ? "CONFIRMAR PAGAMENTO E LIBERAR LICENÇA" : "Fechar",
     body: `
@@ -3443,6 +3551,7 @@ async function openOrderDetails(orderId) {
         <div><span>Status</span>${badge(order.status)}</div>
         <div><span>Licença relacionada</span><code>${e(order.licenseId || order.resultingLicenses?.map(result => result.licenseId).join(", ") || "—")}</code></div>
       </div>
+      ${itemsHtml}
       ${fulfilled ? '<button class="btn btn-primary" id="notify-order-customer" type="button">AVISAR CLIENTE PELO WHATSAPP</button>' : ""}
       <div class="table-toolbar" style="margin-top:22px"><h3>Auditoria</h3><span class="badge">${audit.length} evento(s)</span></div>
       ${audit.length ? `<div class="table-scroll"><table><thead><tr><th>Evento</th><th>Ator</th><th>Data</th></tr></thead><tbody>${audit.map(log => `<tr><td><code>${e(log.action)}</code></td><td>${e(log.actor || log.details?.actorUid || "—")}</td><td>${e(formatDate(log.createdAt, true))}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted-box">Nenhum evento de auditoria encontrado.</p>'}
@@ -3482,8 +3591,8 @@ async function ordersView() {
     <tr data-order-status="${e(order.status)}">
       <td><strong>${e(order.orderNumber || order.orderId)}</strong><small><code>${e(order.orderId)}</code></small></td>
       <td><strong>${e(order.customerName || "—")}</strong><small>${e(order.customerEmail || "—")}</small></td>
-      <td>${e(order.productName || order.items?.[0]?.projectNameSnapshot || "—")}</td>
-      <td>${e(order.planName || order.items?.[0]?.planNameSnapshot || "—")}</td>
+      <td>${e(order.items?.length > 1 ? `${order.items.length} produtos` : (order.productName || order.items?.[0]?.projectNameSnapshot || "—"))}</td>
+      <td>${e(order.items?.length > 1 ? `${order.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0)} licenças` : (order.planName || order.items?.[0]?.planNameSnapshot || "—"))}</td>
       <td>${e(formatMoney(Number(order.totalCents || 0) / 100))}</td>
       <td>${e(formatDate(order.createdAt, true))}</td>
       <td>${badge(order.status)}</td>

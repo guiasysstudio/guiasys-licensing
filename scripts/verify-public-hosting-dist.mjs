@@ -29,7 +29,7 @@ async function walk(directory, prefix = "") {
 }
 
 const files = (await walk(dist)).sort();
-const expected = ["404.html", "assets/catalog.css", "assets/catalog.js", "index.html"];
+const expected = ["404.html", "assets/brand/README.md", "assets/catalog.css", "assets/catalog.js", "index.html"];
 
 if (JSON.stringify(files) !== JSON.stringify(expected)) {
   fail(`arquivo fora da allowlist: ${files.join(", ") || "(vazia)"}`);
@@ -37,8 +37,8 @@ if (JSON.stringify(files) !== JSON.stringify(expected)) {
 
 const index = await readFile(path.join(dist, "index.html"), "utf8");
 const app = await readFile(path.join(dist, "assets/catalog.js"), "utf8");
-if (!/GuiaSys Licensing/.test(index) || !/id="catalog"/.test(index)) {
-  fail("index público deve identificar a loja e o catálogo GuiaSys Licensing.");
+if (!/GuiaSys Licensing/.test(index) || !/id="app"/.test(index)) {
+  fail("index público deve identificar a loja e o shell SPA GuiaSys Licensing.");
 }
 if (!/fetch\("\/api\/v1\/catalog"/.test(app)) {
   fail("frontend público deve consumir GET /api/v1/catalog pelo mesmo origin.");
