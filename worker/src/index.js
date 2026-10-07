@@ -2923,6 +2923,43 @@ async function ensureCustomerAccount(env, user) {
   });
 }
 
+export async function lookupBrazilianPostalCode(value, fetchImpl = fetch) {
+  const postalCode = String(value || "").replace(/\D/g, "");
+  if (!/^\d{8}$/.test(postalCode)) {
+    throw Object.assign(new Error("Informe um CEP válido."), { status: 400, reason: "invalid_postal_code" });
+  }
+  const response = await fetchWithTimeout(
+    `https://viacep.com.br/ws/${postalCode}/json/`,
+    { headers: { Accept: "application/json", "User-Agent": "GuiaSys-Licensing/2.1" } },
+    5_000,
+    fetchImpl
+  );
+  if (!response.ok) {
+    throw Object.assign(new Error("Serviço de CEP temporariamente indisponível."), { status: 502, reason: "upstream_error" });
+  }
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw Object.assign(new Error("Resposta inválida do serviço de CEP."), { status: 502, reason: "upstream_error" });
+  }
+  if (payload?.erro === true || payload?.erro === "true") {
+    throw Object.assign(new Error("CEP não encontrado."), { status: 404, reason: "postal_code_not_found" });
+  }
+  const clean = (field, max) => String(payload?.[field] || "").trim().slice(0, max);
+  const state = clean("uf", 2).toUpperCase();
+  if (state && !/^[A-Z]{2}$/.test(state)) {
+    throw Object.assign(new Error("Resposta inválida do serviço de CEP."), { status: 502, reason: "upstream_error" });
+  }
+  return {
+    postalCode,
+    street: clean("logradouro", 160),
+    neighborhood: clean("bairro", 100),
+    city: clean("localidade", 100),
+    state
+  };
+}
+
 async function updateCustomerProfile(env, account, rawBody) {
   if ("photoUrl" in rawBody || "photoStoragePath" in rawBody) {
     throw Object.assign(new Error("Use a rota de upload para alterar a foto."), { status: 400, reason: "invalid_request" });
@@ -4059,6 +4096,10 @@ async function handleCustomer(request, env, origin, url, user) {
   if (parts.length === 2 && parts[0] === "me" && parts[1] === "photo" && request.method === "DELETE") {
     const saved = await removeCustomerPhoto(env, account);
     return json({ ok: true, account: customerAccountView(saved) }, 200, origin);
+  }
+  if (parts.length === 3 && parts[0] === "address" && parts[1] === "cep" && request.method === "GET") {
+    await enforceRateLimit(env, request, "cep-lookup", 30, 60);
+    return json({ ok: true, address: await lookupBrazilianPostalCode(parts[2]) }, 200, origin);
   }
   if (parts.length === 1 && parts[0] === "cart") {
     if (request.method === "GET") return json({ ok: true, cart: await getCustomerCart(env, account.id) }, 200, origin);
