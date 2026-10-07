@@ -25,6 +25,15 @@ O fluxo é:
 
 Replays da criação, informação ou confirmação do pagamento são idempotentes. O cliente nunca informa preço, status pago, `paidAt`, UID, `licenseId` ou dados de fulfillment.
 
+### UX do checkout C15
+
+No portal C15, o PIX manual é exibido em modal responsivo sobre o carrinho e também pode ser reaberto em **Minhas compras** para pedidos ainda em `pending_payment`. O modal apresenta QR Code, valor, número do pedido, chave/identificação quando disponível, PIX Copia e Cola e a ação **Já efetuei o pagamento**.
+
+O navegador mantém um draft local de checkout por conta e fingerprint do carrinho apenas para reutilizar a mesma idempotency key e o mesmo `orderId` pendente quando o usuário fecha o modal ou recarrega a página. Alterar/remover itens invalida o draft. A autoridade de preço, idempotência, estado e ownership continua integralmente no backend.
+
+A abertura do WhatsApp preserva a interação do usuário: uma janela em branco é criada sincronamente no clique e só é direcionada ao `wa.me` depois que o backend registra `payment_reported`. Se a gravação falhar, a janela é fechada e o pedido permanece pendente.
+
+
 ## Modelo comum
 
 `payments/{paymentId}` armazena valor em centavos, moeda, provedor, referencia externa, metodo e timestamps. `paymentEvents/{eventId}` armazena somente metadados normalizados; payload bruto, PAN, CVV, senha, token e dados bancarios nao sao persistidos.
