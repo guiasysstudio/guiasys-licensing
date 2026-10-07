@@ -269,12 +269,18 @@ function productCard(project, { favoriteControls = false, favoriteAction = false
   body.append(el("h3", "", project.name), el("p", "", project.tagline || project.shortDescription || "Programa oficial GuiaSys."));
   const actions = el("div", "card-actions");
   actions.append(anchor("Ver programa", `/programas/${encodeURIComponent(project.slug)}`, "button-secondary"));
-  if (favoriteAction) actions.append(button("♡ Favoritar", "button-ghost", async event => {
-    if (!state.user) return navigate(`/entrar?next=${encodeURIComponent(location.pathname)}`);
-    await api(`/api/v1/customer/favorites/${encodeURIComponent(project.projectId)}`, { method: "POST" });
-    event.currentTarget.textContent = "♥ Favoritado";
-    event.currentTarget.disabled = true;
-  }));
+  if (favoriteAction) {
+    const alreadyFavorite = state.favorites.includes(project.projectId);
+    const favoriteButton = button(alreadyFavorite ? "♥ Favoritado" : "♡ Favoritar", "button-ghost", async event => {
+      if (!state.user) return navigate(`/entrar?next=${encodeURIComponent(location.pathname)}`);
+      await api(`/api/v1/customer/favorites/${encodeURIComponent(project.projectId)}`, { method: "POST" });
+      if (!state.favorites.includes(project.projectId)) state.favorites.push(project.projectId);
+      event.currentTarget.textContent = "♥ Favoritado";
+      event.currentTarget.disabled = true;
+    });
+    favoriteButton.disabled = alreadyFavorite;
+    actions.append(favoriteButton);
+  }
   if (favoriteControls) actions.append(button("Remover favorito", "button-ghost", async () => {
     await api(`/api/v1/customer/favorites/${encodeURIComponent(project.projectId)}`, { method: "DELETE" });
     state.favorites = state.favorites.filter(id => id !== project.projectId);
@@ -380,14 +386,24 @@ async function renderProgram(slug) {
     copy.append(el("p", "eyebrow", "Programa GuiaSys"), el("h1", "", project.name));
     if (project.tagline) copy.append(el("p", "lead", project.tagline));
     if (project.shortDescription || project.description) copy.append(el("p", "", project.shortDescription || project.description));
-    const favorite = button("Adicionar aos favoritos", "button-ghost", async () => {
+    const alreadyFavorite = state.favorites.includes(project.projectId);
+    const favorite = button(alreadyFavorite ? "♥ Favoritado" : "Adicionar aos favoritos", "button-ghost", async () => {
       if (!state.user) return navigate(`/entrar?next=${encodeURIComponent(location.pathname)}`);
       await api(`/api/v1/customer/favorites/${encodeURIComponent(project.projectId)}`, { method: "POST" });
-      favorite.textContent = "Favoritado";
+      if (!state.favorites.includes(project.projectId)) state.favorites.push(project.projectId);
+      favorite.textContent = "♥ Favoritado";
       favorite.disabled = true;
     });
+    favorite.disabled = alreadyFavorite;
     copy.append(favorite);
-    const visual = image(project.bannerUrl || project.logoUrl || project.imageUrl, `Imagem de ${project.name}`, "detail-banner") || el("div", "asset-fallback", "Imagem comercial não cadastrada.");
+    const visual = image(project.bannerUrl || project.logoUrl || project.imageUrl, `Imagem de ${project.name}`, "detail-banner") || (() => {
+      const fallback = el("div", "asset-fallback detail-fallback");
+      fallback.append(
+        el("span", "monogram", String(project.name || "GS").slice(0, 2).toUpperCase()),
+        el("strong", "", project.name)
+      );
+      return fallback;
+    })();
     hero.append(copy, visual);
     page.append(crumbs, hero);
     if (project.fullDescription || project.commercialText) {
@@ -879,12 +895,18 @@ async function renderRoute() {
 async function onSignedIn(user) {
   if (state.user && state.user.uid !== user.uid) {
     state.cart = [];
+    state.favorites = [];
     saveLocalCart();
   }
   state.user = user;
   try {
-    const [me, remoteCart] = await Promise.all([api("/api/v1/customer/me"), api("/api/v1/customer/cart")]);
+    const [me, remoteCart, favorites] = await Promise.all([
+      api("/api/v1/customer/me"),
+      api("/api/v1/customer/cart"),
+      api("/api/v1/customer/favorites").catch(() => ({ projectIds: [] }))
+    ]);
     state.account = me.account;
+    state.favorites = favorites.projectIds || [];
     if (state.syncedUid !== user.uid) {
       state.cart = mergeCarts(state.cart, remoteCart.cart?.items || []);
       state.syncedUid = user.uid;
@@ -912,6 +934,7 @@ $("#account-menu-button").addEventListener("click", event => {
 });
 $("#logout-button").addEventListener("click", async () => {
   state.cart = [];
+  state.favorites = [];
   state.syncedUid = "";
   invalidateCheckoutDraft();
   saveLocalCart();
@@ -936,7 +959,7 @@ onAuthStateChanged(auth, async user => {
   if (user) await onSignedIn(user);
   else {
     const hadUser = Boolean(state.user);
-    state.user = null; state.account = null; state.syncedUid = "";
+    state.user = null; state.account = null; state.favorites = []; state.syncedUid = "";
     if (hadUser) { state.cart = []; saveLocalCart(); }
     updateHeader();
   }
