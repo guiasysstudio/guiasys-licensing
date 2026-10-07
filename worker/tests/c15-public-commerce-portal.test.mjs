@@ -285,6 +285,11 @@ test("admin autorizado envia mídia comercial e slug duplicado é recusado", asy
   }), environment(api));
   assert.equal(upload.status, 201);
   assert.match((await upload.json()).project.logoUrl, /^https:\/\/firebasestorage\.googleapis\.com/);
+  const replacement = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}/media`, "POST", {
+    kind: "logo", fileName: "logo.png", contentType: "image/png", dataBase64: png
+  }), environment(api));
+  assert.equal(replacement.status, 201);
+  assert.equal(api.uploads.filter(item => item.deleted).length, 1);
   const duplicate = await handleRequest(request("/api/v1/admin/projects", "POST", {
     name: "Outro programa", slug: "programa-c15", prefix: "OUT"
   }), environment(api));
@@ -317,7 +322,8 @@ test("portal SPA contém rotas, carrinho sem navegação automática, PIX manual
   assert.match(js, /formatCpf\(/);
   assert.match(js, /formatPhone\(/);
   assert.match(js, /formatCep\(/);
-  assert.match(js, /customer\/address\/cep/);
+  assert.match(js, /api\("\/api\/v1\/customer\/address\/cep",\s*\{/);
+  assert.doesNotMatch(js, /customer\/address\/cep\/\$\{cep\}/);
   assert.match(js, /safeNextPath\(/);
   assert.match(js, /CHECKOUT_KEY/);
   assert.match(js, /window\.open\("about:blank", "_blank"\)/);
