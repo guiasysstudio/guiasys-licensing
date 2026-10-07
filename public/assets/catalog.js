@@ -698,7 +698,39 @@ async function renderProfile() {
   if (!await requireAccount()) return;
   const content = el("section", "panel");
   content.append(titleBlock("Minha conta", "Perfil e endereço", "Seus dados são usados para identificar a compra e emitir licenças."));
-  if (!state.user.emailVerified) content.append(el("p", "form-message error", "Confirme o e-mail enviado pelo Firebase antes de finalizar compras."));
+  if (!state.user.emailVerified) {
+    const verifyBox = el("div", "form-message error");
+    verifyBox.append(el("span", "", "Confirme seu e-mail antes de finalizar compras."));
+    const verifyActions = el("div", "inline-actions");
+    verifyActions.append(
+      button("Reenviar confirmação", "button-secondary", async event => {
+        event.currentTarget.disabled = true;
+        try {
+          await sendEmailVerification(state.user);
+          showToast("E-mail de confirmação reenviado.");
+        } catch (error) {
+          showToast(errorMessage(error, "Não foi possível reenviar a confirmação agora."));
+        } finally { event.currentTarget.disabled = false; }
+      }),
+      button("Já confirmei", "button-ghost", async event => {
+        event.currentTarget.disabled = true;
+        try {
+          await state.user.reload();
+          await state.user.getIdToken(true);
+          if (state.user.emailVerified) {
+            showToast("E-mail confirmado.");
+            await renderProfile();
+          } else {
+            showToast("A confirmação ainda não foi identificada.");
+          }
+        } catch (error) {
+          showToast(errorMessage(error, "Não foi possível atualizar o estado do e-mail."));
+        } finally { if (event.currentTarget.isConnected) event.currentTarget.disabled = false; }
+      })
+    );
+    verifyBox.append(verifyActions);
+    content.append(verifyBox);
+  }
   if (new URLSearchParams(location.search).get("checkout")) content.append(el("p", "form-message", "Complete os campos obrigatórios para voltar ao carrinho."));
   const form = el("form", "form-grid"); form.noValidate = true;
   const fields = [
@@ -740,10 +772,10 @@ async function renderProfile() {
         method: "POST",
         body: JSON.stringify({ postalCode: cep })
       })).address || {};
-      if (address.street) form.elements.street.value = address.street;
-      if (address.neighborhood) form.elements.neighborhood.value = address.neighborhood;
-      if (address.city) form.elements.city.value = address.city;
-      if (address.state) form.elements.state.value = address.state;
+      form.elements.street.value = address.street || "";
+      form.elements.neighborhood.value = address.neighborhood || "";
+      form.elements.city.value = address.city || "";
+      form.elements.state.value = address.state || "";
       lastCepLookup = cep; message.className = "form-message full success";
       message.textContent = "Endereço preenchido pelo CEP. Revise os dados e informe o número.";
       if (focusNumber) form.elements.number.focus();
