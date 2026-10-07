@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
-import { finalizePaidOrder, handleRequest } from "../src/index.js";
+import { finalizePaidOrder, handleRequest, lookupBrazilianPostalCode } from "../src/index.js";
 import {
   isValidCpf,
   validateCartPayload,
@@ -191,6 +191,27 @@ test("perfil incompleto bloqueia checkout e valida CPF, telefone, CEP e UF", asy
   assert.throws(() => validateCustomerProfilePayload({ taxId: "111.111.111-11" }), error => error.reason === "invalid_cpf");
 });
 
+test("consulta de CEP valida entrada, sanitiza resposta e trata inexistente", async () => {
+  const found = await lookupBrazilianPostalCode("76900-000", async url => {
+    assert.equal(url, "https://viacep.com.br/ws/76900000/json/");
+    return new Response(JSON.stringify({
+      cep: "76900-000", logradouro: "Rua Exemplo", bairro: "Centro",
+      localidade: "Ji-Paraná", uf: "RO"
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+  assert.deepEqual(found, {
+    postalCode: "76900000", street: "Rua Exemplo", neighborhood: "Centro", city: "Ji-Paraná", state: "RO"
+  });
+  await assert.rejects(
+    () => lookupBrazilianPostalCode("123", async () => new Response("{}")),
+    error => error.reason === "invalid_postal_code"
+  );
+  await assert.rejects(
+    () => lookupBrazilianPostalCode("76900999", async () => new Response(JSON.stringify({ erro: true }), { status: 200 })),
+    error => error.reason === "postal_code_not_found"
+  );
+});
+
 test("carrinho e favoritos persistem apenas IDs/quantidade e ficam isolados por conta", async () => {
   const api = services(projectData());
   const cart = { items: [{ projectId: PROJECT, planId: PLAN, quantity: 2 }] };
@@ -289,7 +310,16 @@ test("portal SPA contém rotas, carrinho sem navegação automática, PIX manual
   assert.match(js, /Adicionar ao carrinho/);
   assert.match(js, /Comprar agora/);
   assert.match(js, /showToast\(\`\$\{label\} adicionado ao carrinho/);
-  assert.match(js, /Comprar agora"[\s\S]{0,180}navigate\("\/carrinho"\)/);
+  assert.match(js, /function buyNow\([\s\S]{0,360}navigate\("\/carrinho"\)/);
+  assert.doesNotMatch(js, /Comprar agora"[\s\S]{0,180}addToCart\([\s\S]{0,180}navigate\("\/carrinho"\)/);
+  assert.match(js, /function openPixModal\(/);
+  assert.match(js, /el\("section", "pix-modal"\)/);
+  assert.match(js, /formatCpf\(/);
+  assert.match(js, /formatPhone\(/);
+  assert.match(js, /formatCep\(/);
+  assert.match(js, /customer\/address\/cep/);
+  assert.match(js, /safeNextPath\(/);
+  assert.match(js, /CHECKOUT_KEY/);
   assert.match(js, /cart-count"\)\.hidden = count === 0/);
   assert.match(js, /sendPasswordResetEmail/);
   assert.match(js, /signInWithPopup\(auth, googleProvider\)/);
