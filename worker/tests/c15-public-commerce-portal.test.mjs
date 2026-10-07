@@ -322,6 +322,8 @@ test("portal SPA contém rotas, carrinho sem navegação automática, PIX manual
   assert.match(js, /formatCpf\(/);
   assert.match(js, /formatPhone\(/);
   assert.match(js, /formatCep\(/);
+  assert.match(js, /Reenviar confirmação/);
+  assert.match(js, /state\.user\.reload\(\)/);
   assert.match(js, /api\("\/api\/v1\/customer\/address\/cep",\s*\{/);
   assert.doesNotMatch(js, /customer\/address\/cep\/\$\{cep\}/);
   assert.match(js, /safeNextPath\(/);
