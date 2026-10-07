@@ -224,8 +224,13 @@ function updateHeader() {
   });
 }
 function setDocument(title, description = "Programas e licenças oficiais da GuiaSys Studio.") {
-  document.title = `${title} — GuiaSys Licensing`;
+  const fullTitle = `${title} — GuiaSys Licensing`;
+  document.title = fullTitle;
   document.querySelector('meta[name="description"]').content = description;
+  const ogTitle = document.querySelector('meta[property="og:title"]');
+  const ogDescription = document.querySelector('meta[property="og:description"]');
+  if (ogTitle) ogTitle.content = fullTitle;
+  if (ogDescription) ogDescription.content = description;
   updateHeader();
 }
 function navigate(href, replace = false) {
@@ -889,6 +894,7 @@ function renderLegal(kind) {
   const sections = privacy ? [
     ["Dados tratados", "Tratamos dados de conta, contato, endereço, pedidos, pagamentos informados e licenças para operar o serviço."],
     ["Finalidades", "Os dados são usados para autenticação, atendimento, prevenção a fraude, confirmação manual do pagamento e entrega das licenças."],
+    ["Consulta de CEP", "Quando você usa o preenchimento automático de endereço, somente o CEP informado é enviado ao serviço de consulta de endereço; CPF, telefone e demais dados do perfil não fazem parte dessa consulta."],
     ["Segurança e direitos", "Aplicamos controle de acesso por conta. Solicitações sobre dados podem ser encaminhadas ao suporte oficial."]
   ] : [
     ["Objeto", "Este portal comercializa licenças oficiais de programas GuiaSys conforme o plano e as condições apresentados no pedido."],
