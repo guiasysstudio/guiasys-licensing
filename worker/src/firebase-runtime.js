@@ -1,6 +1,8 @@
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
+import { randomUUID } from "node:crypto";
 
 import { assertFirestorePath, assertSafePathSegment } from "./security.js";
 
@@ -92,6 +94,11 @@ export function createFirebaseRuntime({
   const firebaseApp = app || getApps()[0] || initializeApp();
   const authClient = auth || getAuth(firebaseApp);
   const db = firestore || getFirestore(firebaseApp);
+  let storageBucket = null;
+  const bucket = () => {
+    storageBucket ||= getStorage(firebaseApp).bucket();
+    return storageBucket;
+  };
   const projectId = projectIdFromEnvironment(firebaseApp);
 
   function doc(path) {
@@ -121,6 +128,47 @@ export function createFirebaseRuntime({
       await doc(path).delete();
     } catch (error) {
       throw firestoreError(error);
+    }
+  }
+
+  async function uploadStorageObject(path, { bytes, contentType }) {
+    const safePath = assertFirestorePath(path);
+    const token = randomUUID();
+    try {
+      const activeBucket = bucket();
+      const file = activeBucket.file(safePath);
+      await file.save(Buffer.from(bytes), {
+        resumable: false,
+        validation: "crc32c",
+        metadata: {
+          contentType,
+          cacheControl: "public, max-age=31536000, immutable",
+          metadata: { firebaseStorageDownloadTokens: token }
+        }
+      });
+      return {
+        path: safePath,
+        url: `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(activeBucket.name)}/o/${encodeURIComponent(safePath)}?alt=media&token=${encodeURIComponent(token)}`
+      };
+    } catch (error) {
+      throw Object.assign(new Error("Falha ao gravar a mídia no Storage."), {
+        status: 502,
+        reason: "upstream_error",
+        cause: error
+      });
+    }
+  }
+
+  async function deleteStorageObject(path) {
+    const safePath = assertFirestorePath(path);
+    try {
+      await bucket().file(safePath).delete({ ignoreNotFound: true });
+    } catch (error) {
+      throw Object.assign(new Error("Falha ao remover a mídia do Storage."), {
+        status: 502,
+        reason: "upstream_error",
+        cause: error
+      });
     }
   }
 
@@ -272,6 +320,8 @@ export function createFirebaseRuntime({
     getDoc,
     setDoc,
     deleteDoc,
+    uploadStorageObject,
+    deleteStorageObject,
     listCollection,
     atomicClient,
     log: structuredLog

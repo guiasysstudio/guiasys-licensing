@@ -21,10 +21,21 @@ const docId = path => String(path).split("/").pop();
 function services(initial = {}) {
   const store = new Map(Object.entries(initial).map(([path, value]) => [path, clone(value)]));
   let identity = { uid: "customer-c", email: "cliente@example.com", name: "Cliente Teste" };
+  const seedProfile = ({ uid, email, name }) => {
+    const accountId = `acct_${sha(uid).slice(0, 20)}`;
+    if (!store.has(`customerAccounts/${accountId}`)) store.set(`customerAccounts/${accountId}`, {
+      accountId, firebaseUid: uid, email, emailVerified: true, displayName: name,
+      taxId: "52998224725", phone: "69999999999", postalCode: "76900000",
+      street: "Rua Teste", number: "100", complement: "", neighborhood: "Centro",
+      city: "Ji-Paraná", state: "RO", status: "active",
+      createdAt: "2026-10-06T00:00:00.000Z", updatedAt: "2026-10-06T00:00:00.000Z"
+    });
+  };
+  seedProfile(identity);
   const read = path => store.has(path) ? { id: docId(path), ...clone(store.get(path)) } : null;
   return {
     store,
-    setIdentity(uid, email, name = email) { identity = { uid, email, name }; },
+    setIdentity(uid, email, name = email) { identity = { uid, email, name }; seedProfile(identity); },
     runtime: "firebase-functions-v2",
     async verifyIdToken() {
       const now = Math.floor(Date.now() / 1000);
@@ -291,14 +302,14 @@ test("frontends expõem checkout, Minhas Compras e confirmação administrativa"
     readFile(new URL("../../public/assets/catalog.css", import.meta.url), "utf8"),
     readFile(new URL("../../assets/js/app.js", import.meta.url), "utf8")
   ]);
-  assert.match(catalogHtml, /id="pix-payment"/);
-  assert.match(catalogHtml, /PIX Copia e Cola/);
-  assert.match(catalogHtml, /JÁ EFETUEI O PAGAMENTO/);
-  assert.match(catalogHtml, /Minhas Compras/);
+  assert.match(catalogHtml, /href="\/carrinho"/);
+  assert.match(catalogJs, /Pagamento via PIX/);
+  assert.match(catalogJs, /Já efetuei o pagamento/);
+  assert.match(catalogJs, /Compras e licenças/);
   assert.match(catalogJs, /payment-reported/);
   assert.match(catalogJs, /Continuar pagamento/);
-  assert.match(catalogJs, /COPIAR LICENÇA/);
-  assert.match(catalogCss, /\.pix-content/);
+  assert.match(catalogJs, /Chave copiada/);
+  assert.match(catalogCss, /\.pix-grid/);
   assert.match(adminJs, /\/api\/v1\/admin\/payment-settings/);
   assert.match(adminJs, /CONFIRMAR PAGAMENTO E LIBERAR LICENÇA/);
   assert.match(adminJs, /AVISAR CLIENTE PELO WHATSAPP/);

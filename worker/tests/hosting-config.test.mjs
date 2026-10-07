@@ -49,14 +49,17 @@ test("Hosting público usa target próprio com frontend de catálogo isolado", (
 test("Hosting admin e público encaminham somente API/health para a Function v2 correta", () => {
   for (const target of ["admin", "public"]) {
     const rewrites = firebase.hosting.find(item => item.target === target).rewrites;
-    assert.deepEqual(rewrites.map(item => item.source), ["/api/**", "/health"]);
+    const functionRewrites = rewrites.filter(item => item.function);
+    assert.deepEqual(functionRewrites.map(item => item.source), ["/api/**", "/health"]);
 
-    for (const rewrite of rewrites) {
+    for (const rewrite of functionRewrites) {
       assert.equal(rewrite.function.functionId, "licensingApi");
       assert.equal(rewrite.function.region, "southamerica-east1");
       assert.equal("pinTag" in rewrite.function, false);
     }
   }
+  const publicHosting = firebase.hosting.find(item => item.target === "public");
+  assert.deepEqual(publicHosting.rewrites.at(-1), { source: "**", destination: "/index.html" });
 });
 
 test("Hosting aplica headers de cache e hardening", () => {
@@ -109,7 +112,7 @@ test("emulador Hosting usa porta conhecida para smoke local", () => {
 test("Hosting não usa pinTag para evitar alteração de tráfego no Cloud Run", () => {
   for (const target of ["admin", "public"]) {
     const hosting = firebase.hosting.find(item => item.target === target);
-    for (const rewrite of hosting.rewrites) {
+    for (const rewrite of hosting.rewrites.filter(item => item.function)) {
       assert.equal("pinTag" in rewrite.function, false);
     }
   }

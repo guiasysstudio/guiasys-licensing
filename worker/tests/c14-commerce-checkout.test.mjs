@@ -18,10 +18,21 @@ const docId = path => String(path).split("/").pop();
 function services(initial = {}) {
   const store = new Map(Object.entries(initial).map(([path, value]) => [path, clone(value)]));
   let identity = { uid: "customer-a", email: "a@example.com" };
+  const seedProfile = ({ uid, email }) => {
+    const accountId = `acct_${sha(uid).slice(0, 20)}`;
+    if (!store.has(`customerAccounts/${accountId}`)) store.set(`customerAccounts/${accountId}`, {
+      accountId, firebaseUid: uid, email, emailVerified: true, displayName: email,
+      taxId: "52998224725", phone: "69999999999", postalCode: "76900000",
+      street: "Rua Teste", number: "100", complement: "", neighborhood: "Centro",
+      city: "Ji-Paraná", state: "RO", status: "active",
+      createdAt: "2026-10-06T00:00:00.000Z", updatedAt: "2026-10-06T00:00:00.000Z"
+    });
+  };
+  seedProfile(identity);
   const read = path => store.has(path) ? { id: docId(path), ...clone(store.get(path)) } : null;
   const api = {
     store,
-    setIdentity(uid, email) { identity = { uid, email }; },
+    setIdentity(uid, email) { identity = { uid, email }; seedProfile(identity); },
     runtime: "firebase-functions-v2",
     async verifyIdToken() {
       const now = Math.floor(Date.now() / 1000);
@@ -96,11 +107,11 @@ test("pedido usa preço do Firestore, não emite key e repete idempotentemente",
   assert.equal([...api.store.keys()].filter(path => /^orders\//.test(path)).length, 1);
 });
 
-test("projeto ou plano oculto e planId inexistente não podem ser comprados", async () => {
+test("projeto inativo, plano oculto ou planId inexistente não podem ser comprados", async () => {
   for (const variant of ["project", "plan", "missing"]) {
     const data = baseData();
-    if (variant === "project") data[`projects/${PROJECT}`].publicCatalog = false;
-    if (variant === "plan") data[`projects/${PROJECT}/plans/${PLAN}`].active = false;
+    if (variant === "project") data[`projects/${PROJECT}`].status = "inactive";
+    if (variant === "plan") data[`projects/${PROJECT}/plans/${PLAN}`].publishedInCatalog = false;
     if (variant === "missing") delete data[`projects/${PROJECT}/plans/${PLAN}`];
     const response = await handleRequest(request("/api/v1/customer/orders", "POST", { idempotencyKey: `request-${variant}`, items: [{ projectId: PROJECT, planId: PLAN, quantity: 1 }] }), env(services(data)));
     assert.ok([404, 409].includes(response.status));

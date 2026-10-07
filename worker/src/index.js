@@ -46,13 +46,17 @@ import {
 } from "./auth-policy.js";
 import {
   readJsonBody,
+  isValidCpf,
   validateAdminPayload,
+  validateCartPayload,
+  validateCustomerProfilePayload,
   validateCustomerPayload,
   validateLicenseActionPayload,
   validateLicenseCreatePayload,
   validateOrderCreatePayload,
   validatePaymentCreatePayload,
   validatePaymentReconcilePayload,
+  validateMediaPayload,
   validatePlanPayload,
   validateProjectPayload,
   validatePublicLicensePayload,
@@ -60,6 +64,8 @@ import {
   validatePublicTrialPayload,
   validateRenewalOrderPayload
 } from "./validation.js";
+
+const MAX_MEDIA_JSON_BYTES = 7 * 1024 * 1024;
 
 // GuiaSys Licensing API — runtime principal em Firebase Functions v2; Worker legado somente para rollback
 const PROTOCOL_VERSION = "GSL-v1";
@@ -1404,9 +1410,23 @@ function projectSummaryView(project) {
     description: project.description || "",
     shortDescription: project.shortDescription || "",
     imageUrl: project.imageUrl || "",
+    logoUrl: project.logoUrl || "",
+    iconUrl: project.iconUrl || "",
+    bannerUrl: project.bannerUrl || "",
+    tagline: project.tagline || "",
+    fullDescription: project.fullDescription || "",
+    screenshots: Array.isArray(project.screenshots) ? project.screenshots : [],
+    features: Array.isArray(project.features) ? project.features : [],
+    requirements: Array.isArray(project.requirements) ? project.requirements : [],
+    additionalInfo: project.additionalInfo || "",
+    commercialText: project.commercialText || "",
+    seoTitle: project.seoTitle || "",
+    seoDescription: project.seoDescription || "",
     status: project.status || "inactive",
     publicCatalog: Boolean(project.publicCatalog),
     featured: Boolean(project.featured),
+    featuredOrder: Math.max(0, Number(project.featuredOrder ?? project.displayOrder ?? 0)),
+    catalogOrder: Math.max(0, Number(project.catalogOrder ?? project.displayOrder ?? 0)),
     displayOrder: Math.max(0, Number(project.displayOrder || 0)),
     trialEnabled: Boolean(project.trialEnabled),
     trialDays: Math.max(0, Number(project.trialDays || 0)),
@@ -1448,10 +1468,23 @@ function projectDetailView(project, admin) {
   return view;
 }
 
+async function assertAvailableProjectSlug(env, slug, projectId = "") {
+  const duplicate = (await listCollection(env, "projects"))
+    .find(project => project.id !== projectId && slugify(project.slug) === slug);
+  if (duplicate) {
+    throw Object.assign(new Error("Este slug já está em uso por outro projeto."), {
+      status: 409,
+      reason: "project_slug_exists"
+    });
+  }
+}
+
 async function createProject(env, body, admin) {
   body = validateProjectPayload(body);
   const name = String(body.name || "").trim();
   if (!name) throw Object.assign(new Error("Informe o nome do projeto."), { status: 400 });
+  const requestedSlug = slugify(body.slug || name);
+  await assertAvailableProjectSlug(env, requestedSlug);
 
   return await atomicClient(env).runTransaction(async tx => {
     const id = randomId("prj");
@@ -1464,15 +1497,29 @@ async function createProject(env, body, admin) {
 
     const project = {
       name,
-      slug: slugify(body.slug || name) || id,
+      slug: requestedSlug || id,
       prefix: normalizePrefix(body.prefix || name.slice(0, 4)) || "GSS",
       integrationCode,
       description: String(body.description || "").trim(),
       shortDescription: String(body.shortDescription || "").trim(),
       imageUrl: String(body.imageUrl || "").trim(),
+      logoUrl: String(body.logoUrl || "").trim(),
+      iconUrl: String(body.iconUrl || "").trim(),
+      bannerUrl: String(body.bannerUrl || "").trim(),
+      tagline: String(body.tagline || "").trim(),
+      fullDescription: String(body.fullDescription || "").trim(),
+      screenshots: body.screenshots || [],
+      features: body.features || [],
+      requirements: body.requirements || [],
+      additionalInfo: String(body.additionalInfo || "").trim(),
+      commercialText: String(body.commercialText || "").trim(),
+      seoTitle: String(body.seoTitle || "").trim(),
+      seoDescription: String(body.seoDescription || "").trim(),
       status: body.status === "inactive" ? "inactive" : "active",
       publicCatalog: Boolean(body.publicCatalog),
       featured: Boolean(body.featured),
+      featuredOrder: Math.max(0, Number(body.featuredOrder ?? body.displayOrder ?? 0)),
+      catalogOrder: Math.max(0, Number(body.catalogOrder ?? body.displayOrder ?? 0)),
       displayOrder: Math.max(0, Number(body.displayOrder || 0)),
       allowedOrigins: normalizeAllowedOrigins(body.allowedOrigins || []),
       trialEnabled: Boolean(body.trialEnabled ?? trialDays > 0),
@@ -1489,8 +1536,10 @@ async function createProject(env, body, admin) {
     };
 
     const lookupId = await sha256Hex(integrationCode);
+    const slugLookupId = await sha256Hex(project.slug);
     tx.create(projectPath(id), project);
     tx.create(`integrationCodes/${lookupId}`, { projectId: id, createdAt });
+    tx.create(`catalogSlugs/${slugLookupId}`, { projectId: id, slug: project.slug, createdAt });
     tx.create(`projects/${id}/internal/signing`, signing);
     queueLogInTransaction(
       tx,
@@ -1537,6 +1586,12 @@ async function createPlan(env, projectId, body, admin) {
       startMode,
       active: body.active !== false,
       publicCatalog: Boolean(body.publicCatalog),
+      publishedInCatalog: body.publishedInCatalog != null
+        ? Boolean(body.publishedInCatalog)
+        : Boolean(body.publicCatalog),
+      commercialDescription: String(body.commercialDescription || body.description || "").trim(),
+      termsVersion: String(body.termsVersion || "").trim(),
+      catalogOrder: Math.max(0, Number(body.catalogOrder ?? body.displayOrder ?? 0)),
       displayOrder: Math.max(0, Number(body.displayOrder || 0)),
       createdAt,
       updatedAt: createdAt
@@ -1755,6 +1810,10 @@ async function updateEntity(env, projectId, entity, id, body, admin) {
         clean.startMode = "first_activation";
       }
       if ("publicCatalog" in clean) clean.publicCatalog = Boolean(clean.publicCatalog);
+      if ("publishedInCatalog" in clean) {
+        clean.publishedInCatalog = Boolean(clean.publishedInCatalog);
+        clean.publicCatalog = clean.publishedInCatalog;
+      }
 
       const nextLifetime = "lifetime" in clean ? Boolean(clean.lifetime) : Boolean(current.lifetime);
       if (nextLifetime) {
@@ -2599,7 +2658,7 @@ async function publicTrialValidate(env, body, origin = "") {
 
 function compareCatalogItems(a, b, idField = "id") {
   return (
-    a.displayOrder - b.displayOrder ||
+    Number(a.catalogOrder ?? a.displayOrder ?? 0) - Number(b.catalogOrder ?? b.displayOrder ?? 0) ||
     String(a.name || "").localeCompare(String(b.name || ""), "pt-BR") ||
     String(a[idField] || "").localeCompare(String(b[idField] || ""))
   );
@@ -2625,11 +2684,14 @@ function publicCatalogPlanView(plan) {
     id: plan.id,
     name: plan.name,
     description: plan.description || "",
+    commercialDescription: plan.commercialDescription || plan.description || "",
+    termsVersion: plan.termsVersion || "",
     price: priceCents / 100,
     durationDays: catalogNonNegativeNumber(plan.durationDays),
     lifetime: Boolean(plan.lifetime),
     deviceLimit: Math.max(1, catalogNonNegativeNumber(plan.deviceLimit, 1)),
     startMode: plan.startMode || "first_activation",
+    catalogOrder: catalogNonNegativeNumber(plan.catalogOrder ?? plan.displayOrder),
     displayOrder: catalogNonNegativeNumber(plan.displayOrder)
   };
 }
@@ -2643,8 +2705,22 @@ function publicCatalogProjectView(project, plans) {
     prefix: project.prefix,
     description: project.description || "",
     shortDescription: project.shortDescription || "",
+    tagline: project.tagline || "",
+    fullDescription: project.fullDescription || project.description || "",
+    commercialText: project.commercialText || "",
+    additionalInfo: project.additionalInfo || "",
+    features: Array.isArray(project.features) ? project.features : [],
+    requirements: Array.isArray(project.requirements) ? project.requirements : [],
+    screenshots: (Array.isArray(project.screenshots) ? project.screenshots : []).map(catalogImageUrl).filter(Boolean),
     imageUrl: catalogImageUrl(project.imageUrl),
+    logoUrl: catalogImageUrl(project.logoUrl || project.imageUrl),
+    iconUrl: catalogImageUrl(project.iconUrl || project.imageUrl),
+    bannerUrl: catalogImageUrl(project.bannerUrl || project.imageUrl),
+    seoTitle: project.seoTitle || "",
+    seoDescription: project.seoDescription || "",
     featured: Boolean(project.featured),
+    featuredOrder: catalogNonNegativeNumber(project.featuredOrder ?? project.displayOrder),
+    catalogOrder: catalogNonNegativeNumber(project.catalogOrder ?? project.displayOrder),
     displayOrder: catalogNonNegativeNumber(project.displayOrder),
     trial: {
       enabled: Boolean(project.trialEnabled && Number(project.trialDays || 0) > 0),
@@ -2654,10 +2730,15 @@ function publicCatalogProjectView(project, plans) {
   };
 }
 
+function planPublishedInCatalog(plan) {
+  return plan.publishedInCatalog === true ||
+    (plan.publishedInCatalog == null && plan.publicCatalog === true);
+}
+
 async function catalogProjectCandidate(env, project) {
   project = await ensureProjectIntegrationCode(env, project);
   const plans = (await listCollection(env, `projects/${project.id}/plans`))
-    .filter(plan => plan.active !== false && plan.publicCatalog === true)
+    .filter(plan => plan.active !== false && planPublishedInCatalog(plan))
     .map(publicCatalogPlanView)
     .sort((a, b) => compareCatalogItems(a, b));
   return publicCatalogProjectView(project, plans);
@@ -2665,12 +2746,28 @@ async function catalogProjectCandidate(env, project) {
 
 async function publicCatalog(env) {
   const projects = (await listCollection(env, "projects"))
-    .filter(project => project.status === "active" && project.publicCatalog === true);
+    .filter(project => project.status === "active");
 
   const items = [];
-  for (const project of projects) items.push(await catalogProjectCandidate(env, project));
+  for (const project of projects) {
+    const candidate = await catalogProjectCandidate(env, project);
+    if (candidate.plans.length) items.push(candidate);
+  }
   items.sort((a, b) => compareCatalogItems(a, b, "projectId"));
   return { protocolVersion: PROTOCOL_VERSION, projects: items, serverTime: nowIso() };
+}
+
+async function publicCatalogProject(env, slug) {
+  const normalized = slugify(slug);
+  if (!normalized || normalized !== slug) {
+    throw Object.assign(new Error("Programa não encontrado."), { status: 404, reason: "catalog_project_not_found" });
+  }
+  const catalog = await publicCatalog(env);
+  const project = catalog.projects.find(item => item.slug === normalized);
+  if (!project) {
+    throw Object.assign(new Error("Programa não encontrado."), { status: 404, reason: "catalog_project_not_found" });
+  }
+  return project;
 }
 
 const PAYMENT_SETTINGS_PATH = "platformSettings/payments";
@@ -2753,6 +2850,16 @@ function customerAccountView(account) {
     emailVerified: Boolean(account.emailVerified),
     displayName: account.displayName || "",
     phone: account.phone || "",
+    taxId: account.taxId || "",
+    postalCode: account.postalCode || "",
+    street: account.street || "",
+    number: account.number || "",
+    complement: account.complement || "",
+    neighborhood: account.neighborhood || "",
+    city: account.city || "",
+    state: account.state || "",
+    photoUrl: account.photoUrl || "",
+    profileComplete: customerProfileComplete(account),
     status: account.status || "active",
     createdAt: account.createdAt,
     updatedAt: account.updatedAt
@@ -2765,12 +2872,7 @@ function customerOrderView(order) {
 }
 
 async function ensureCustomerAccount(env, user) {
-  if (!user.email || !user.emailVerified) {
-    throw Object.assign(new Error("Confirme seu e-mail antes de realizar compras."), {
-      status: 403,
-      reason: "verified_email_required"
-    });
-  }
+  if (!user.email) throw Object.assign(new Error("A conta precisa possuir um e-mail."), { status: 403, reason: "email_required" });
   const accountId = `acct_${(await sha256Hex(user.uid)).slice(0, 20)}`;
   return await atomicClient(env).runTransaction(async tx => {
     const path = `customerAccounts/${accountId}`;
@@ -2782,12 +2884,12 @@ async function ensureCustomerAccount(env, user) {
       throw Object.assign(new Error("Esta conta está bloqueada para compras."), { status: 403, reason: "account_blocked" });
     }
     const normalizedEmail = String(user.email).toLowerCase();
-    const displayName = user.name || current?.displayName || "";
+    const displayName = current?.displayName || user.name || "";
     if (
       current &&
       current.firebaseUid === user.uid &&
       current.email === normalizedEmail &&
-      current.emailVerified === true &&
+      current.emailVerified === Boolean(user.emailVerified) &&
       current.displayName === displayName
     ) {
       return { id: accountId, ...current };
@@ -2795,13 +2897,23 @@ async function ensureCustomerAccount(env, user) {
 
     const now = nowIso();
     const account = {
+      ...(current || {}),
       accountId,
       firebaseUid: user.uid,
       email: normalizedEmail,
-      emailVerified: true,
+      emailVerified: Boolean(user.emailVerified),
       displayName,
       phone: current?.phone || "",
       taxId: current?.taxId || "",
+      postalCode: current?.postalCode || "",
+      street: current?.street || "",
+      number: current?.number || "",
+      complement: current?.complement || "",
+      neighborhood: current?.neighborhood || "",
+      city: current?.city || "",
+      state: current?.state || "",
+      photoUrl: current?.photoUrl || user.picture || "",
+      photoStoragePath: current?.photoStoragePath || "",
       status: current?.status || "active",
       createdAt: current?.createdAt || now,
       updatedAt: now
@@ -2809,6 +2921,71 @@ async function ensureCustomerAccount(env, user) {
     current ? tx.set(path, account) : tx.create(path, account);
     return { id: accountId, ...account };
   });
+}
+
+async function updateCustomerProfile(env, account, rawBody) {
+  if ("photoUrl" in rawBody || "photoStoragePath" in rawBody) {
+    throw Object.assign(new Error("Use a rota de upload para alterar a foto."), { status: 400, reason: "invalid_request" });
+  }
+  const body = validateCustomerProfilePayload(rawBody);
+  const next = { ...account, ...body, updatedAt: nowIso() };
+  delete next.id;
+  await setDoc(env, `customerAccounts/${account.id}`, next);
+  return { id: account.id, ...next };
+}
+
+async function getCustomerCart(env, accountId) {
+  const stored = await getDoc(env, `customerAccounts/${accountId}/state/cart`);
+  return { items: Array.isArray(stored?.items) ? stored.items : [], updatedAt: stored?.updatedAt || null };
+}
+
+async function saveCustomerCart(env, accountId, rawBody) {
+  const cart = validateCartPayload(rawBody);
+  const record = { ...cart, updatedAt: nowIso() };
+  await setDoc(env, `customerAccounts/${accountId}/state/cart`, record);
+  return record;
+}
+
+async function listCustomerFavorites(env, accountId) {
+  const items = await listCollection(env, `customerAccounts/${accountId}/favorites`);
+  return items.map(item => item.projectId || item.id).filter(Boolean);
+}
+
+async function addCustomerFavorite(env, accountId, projectId) {
+  projectId = assertProjectId(projectId);
+  const project = (await publicCatalog(env)).projects.find(item => item.projectId === projectId);
+  if (!project) throw Object.assign(new Error("Programa não encontrado."), { status: 404, reason: "catalog_project_not_found" });
+  const record = { projectId, createdAt: nowIso() };
+  await setDoc(env, `customerAccounts/${accountId}/favorites/${projectId}`, record);
+  return record;
+}
+
+async function uploadCustomerPhoto(env, account, request) {
+  const body = validateMediaPayload(await readJsonBody(request, MAX_MEDIA_JSON_BYTES), { maxBytes: 2 * 1024 * 1024 });
+  if (typeof env.__services?.uploadStorageObject !== "function") {
+    throw Object.assign(new Error("Upload indisponível neste runtime."), { status: 503, reason: "storage_unavailable" });
+  }
+  const extension = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" }[body.contentType];
+  const path = `profiles/${assertSafePathSegment(account.firebaseUid, "uid")}/avatar-${crypto.randomUUID()}.${extension}`;
+  const bytes = Uint8Array.from(atob(body.dataBase64), character => character.charCodeAt(0));
+  const uploaded = await env.__services.uploadStorageObject(path, { bytes, contentType: body.contentType });
+  const next = { ...account, photoUrl: uploaded.url, photoStoragePath: uploaded.path, updatedAt: nowIso() };
+  delete next.id;
+  await setDoc(env, `customerAccounts/${account.id}`, next);
+  if (account.photoStoragePath && account.photoStoragePath !== uploaded.path && typeof env.__services.deleteStorageObject === "function") {
+    await env.__services.deleteStorageObject(account.photoStoragePath).catch(() => {});
+  }
+  return { account: { id: account.id, ...next }, upload: uploaded };
+}
+
+async function removeCustomerPhoto(env, account) {
+  if (account.photoStoragePath && typeof env.__services?.deleteStorageObject === "function") {
+    await env.__services.deleteStorageObject(account.photoStoragePath);
+  }
+  const next = { ...account, photoUrl: "", photoStoragePath: "", updatedAt: nowIso() };
+  delete next.id;
+  await setDoc(env, `customerAccounts/${account.id}`, next);
+  return { id: account.id, ...next };
 }
 
 async function projectCustomerIdentity(accountId, projectId) {
@@ -2860,23 +3037,27 @@ function canonicalPlanPriceInTransaction(tx, path, plan) {
 
 async function buildNewOrderItem(tx, input) {
   const project = await tx.get(`projects/${input.projectId}`);
-  if (!project || project.status !== "active" || project.publicCatalog !== true) {
+  if (!project || project.status !== "active") {
     throw Object.assign(new Error("Produto indisponível para compra."), { status: 409, reason: "project_not_purchasable" });
   }
   const planPath = `projects/${input.projectId}/plans/${input.planId}`;
   const plan = await tx.get(planPath);
   if (!plan) throw Object.assign(new Error("Plano não encontrado."), { status: 404, reason: "plan_not_found" });
-  if (plan.active === false || plan.publicCatalog !== true) {
+  if (plan.active === false || !planPublishedInCatalog(plan)) {
     throw Object.assign(new Error("Plano indisponível para compra."), { status: 409, reason: "plan_not_purchasable" });
   }
   const unitPriceCents = canonicalPlanPriceInTransaction(tx, planPath, plan);
   return {
+    orderItemId: randomId("item"),
     type: "new_license",
     projectId: input.projectId,
     planId: input.planId,
     projectNameSnapshot: project.name || "Produto GuiaSys",
     planNameSnapshot: plan.name || "Plano",
     unitPriceCents,
+    unitPrice: unitPriceCents / 100,
+    commercialDescriptionSnapshot: plan.commercialDescription || plan.description || "",
+    purchasedTermsVersionSnapshot: plan.termsVersion || "",
     quantity: input.quantity,
     durationDaysSnapshot: Boolean(plan.lifetime) ? 0 : Math.max(1, Number(plan.durationDays || 30)),
     lifetimeSnapshot: Boolean(plan.lifetime),
@@ -2887,6 +3068,7 @@ async function buildNewOrderItem(tx, input) {
 }
 
 async function createCustomerOrder(env, account, rawBody) {
+  requireCheckoutAccount(account);
   const body = validateOrderCreatePayload(rawBody);
   const idempotencyHash = await sha256Hex(body.idempotencyKey);
   const requestHash = await sha256Hex(JSON.stringify(body.items));
@@ -3115,6 +3297,32 @@ function pagBankPixPayload(order, account, paymentId) {
       }
     }]
   };
+}
+
+function customerProfileComplete(account) {
+  return Boolean(
+    String(account?.displayName || "").trim().length >= 2 &&
+    isValidCpf(account?.taxId) &&
+    /^\d{10,11}$/.test(String(account?.phone || "").replace(/\D/g, "")) &&
+    /^\d{8}$/.test(String(account?.postalCode || "").replace(/\D/g, "")) &&
+    ["street", "number", "neighborhood", "city", "state"].every(field => String(account?.[field] || "").trim()) &&
+    /^[A-Z]{2}$/.test(String(account?.state || ""))
+  );
+}
+
+function requireCheckoutAccount(account) {
+  if (!account.emailVerified) {
+    throw Object.assign(new Error("Confirme seu e-mail antes de realizar compras."), {
+      status: 403,
+      reason: "verified_email_required"
+    });
+  }
+  if (!customerProfileComplete(account)) {
+    throw Object.assign(new Error("Complete nome, CPF, telefone e endereço antes de finalizar a compra."), {
+      status: 409,
+      reason: "profile_incomplete"
+    });
+  }
 }
 
 function customerPaymentView(payment, idempotentReplay) {
@@ -3606,6 +3814,7 @@ async function listOwnedLicenses(env, accountId) {
 }
 
 async function createRenewalOrder(env, account, licenseId, rawBody) {
+  requireCheckoutAccount(account);
   licenseId = assertEntityId("licenses", licenseId);
   const body = validateRenewalOrderPayload(rawBody);
   const owned = await getDoc(env, `customerAccounts/${account.id}/licenses/${licenseId}`);
@@ -3628,14 +3837,17 @@ async function createRenewalOrder(env, account, licenseId, rawBody) {
     const project = await tx.get(`projects/${projectId}`);
     const planPath = `projects/${projectId}/plans/${body.planId}`;
     const plan = await tx.get(planPath);
-    if (!project || project.status !== "active" || project.publicCatalog !== true || !plan || plan.active === false || plan.publicCatalog !== true) {
+    if (!project || project.status !== "active" || !plan || plan.active === false || !planPublishedInCatalog(plan)) {
       throw Object.assign(new Error("Oferta de renovação indisponível."), { status: 409, reason: "renewal_plan_not_purchasable" });
     }
     const unitPriceCents = canonicalPlanPriceInTransaction(tx, planPath, plan);
     const item = {
-      type: "renewal", projectId, planId: body.planId, licenseId,
+      orderItemId: randomId("item"), type: "renewal", projectId, planId: body.planId, licenseId,
       projectNameSnapshot: project.name || "Produto GuiaSys", planNameSnapshot: plan.name || "Renovação",
-      unitPriceCents, quantity: 1, durationDaysSnapshot: Boolean(plan.lifetime) ? 0 : Math.max(1, Number(plan.durationDays || 30)),
+      unitPriceCents, unitPrice: unitPriceCents / 100,
+      commercialDescriptionSnapshot: plan.commercialDescription || plan.description || "",
+      purchasedTermsVersionSnapshot: plan.termsVersion || "",
+      quantity: 1, durationDaysSnapshot: Boolean(plan.lifetime) ? 0 : Math.max(1, Number(plan.durationDays || 30)),
       lifetimeSnapshot: Boolean(plan.lifetime), deviceLimitSnapshot: Math.max(1, Number(plan.deviceLimit || 1)),
       startModeSnapshot: plan.startMode === "immediate" ? "immediate" : "first_activation", lineTotalCents: unitPriceCents
     };
@@ -3726,12 +3938,21 @@ export async function finalizePaidOrder(env, orderId, paymentContext) {
           const license = await issueLicenseInTransaction({
             tx, project, projectId: item.projectId, customer, customerId: customer.id,
             plan: { id: item.planId, name: item.planNameSnapshot, lifetime: item.lifetimeSnapshot, durationDays: item.durationDaysSnapshot, deviceLimit: item.deviceLimitSnapshot, startMode: item.startModeSnapshot },
-            now, source: "order", externalOrderId: orderId, accountId: order.accountId, paymentId, id,
+            now, source: "order", externalOrderId: orderId, accountId: order.accountId,
+            customerUid: order.customerUid, orderItemId: item.orderItemId || "", paymentId, id,
             key: generateLicenseKey(project.prefix), hashLicenseKey: value => sha256Hex(normalizeLicenseKey(value)), plusDays,
             queueLog: queueLogInTransaction, actor: "payment.fulfillment"
           });
-          tx.create(`customerAccounts/${order.accountId}/licenses/${id}`, { licenseId: id, projectId: item.projectId, customerId: customer.id, orderId, paymentId, createdAt: now });
-          results.push({ type: "new_license", projectId: item.projectId, licenseId: id, key: license.key });
+          tx.create(`customerAccounts/${order.accountId}/licenses/${id}`, {
+            licenseId: id, projectId: item.projectId, planId: item.planId,
+            customerId: customer.id, customerUid: order.customerUid,
+            orderId, orderItemId: item.orderItemId || "", paymentId, createdAt: now
+          });
+          results.push({
+            type: "new_license", projectId: item.projectId, planId: item.planId,
+            orderItemId: item.orderItemId || "", unitIndex: index + 1,
+            customerUid: order.customerUid, licenseId: id, key: license.key
+          });
         }
       } else if (item.type === "renewal") {
         const licensePath = `projects/${item.projectId}/licenses/${item.licenseId}`;
@@ -3739,10 +3960,21 @@ export async function finalizePaidOrder(env, orderId, paymentContext) {
         const ownership = await tx.get(`customerAccounts/${order.accountId}/licenses/${item.licenseId}`);
         if (!license || !ownership || license.accountId !== order.accountId) throw Object.assign(new Error("Licença de renovação não pertence à conta."), { status: 403, reason: "license_ownership_mismatch" });
         const renewal = transitionLicense(license, "renew", item.lifetimeSnapshot ? { lifetime: true } : { days: item.durationDaysSnapshot }, now, plusDays);
-        const next = { ...renewal.license, orderId, paymentId, updatedAt: now };
+        const next = {
+          ...renewal.license,
+          orderId,
+          orderItemId: item.orderItemId || "",
+          customerUid: order.customerUid,
+          paymentId,
+          updatedAt: now
+        };
         tx.set(licensePath, next);
         queueLogInTransaction(tx, item.projectId, "license.renewed_from_order", { licenseId: item.licenseId, orderId, paymentId, days: item.durationDaysSnapshot, lifetime: item.lifetimeSnapshot }, "payment.fulfillment", now);
-        results.push({ type: "renewal", projectId: item.projectId, licenseId: item.licenseId, key: next.key });
+        results.push({
+          type: "renewal", projectId: item.projectId, planId: item.planId,
+          orderItemId: item.orderItemId || "", unitIndex: 1,
+          customerUid: order.customerUid, licenseId: item.licenseId, key: next.key
+        });
       }
     }
     const payment = existingPayment ? {
@@ -3815,6 +4047,32 @@ async function handleCustomer(request, env, origin, url, user) {
   const parts = decodeAdminPathSegments(path);
   if (parts.length === 1 && parts[0] === "me" && request.method === "GET") {
     return json({ ok: true, account: customerAccountView(account) }, 200, origin);
+  }
+  if (parts.length === 1 && parts[0] === "me" && request.method === "PATCH") {
+    const saved = await updateCustomerProfile(env, account, await readJson(request));
+    return json({ ok: true, account: customerAccountView(saved) }, 200, origin);
+  }
+  if (parts.length === 2 && parts[0] === "me" && parts[1] === "photo" && request.method === "POST") {
+    const saved = await uploadCustomerPhoto(env, account, request);
+    return json({ ok: true, account: customerAccountView(saved.account), upload: saved.upload }, 200, origin);
+  }
+  if (parts.length === 2 && parts[0] === "me" && parts[1] === "photo" && request.method === "DELETE") {
+    const saved = await removeCustomerPhoto(env, account);
+    return json({ ok: true, account: customerAccountView(saved) }, 200, origin);
+  }
+  if (parts.length === 1 && parts[0] === "cart") {
+    if (request.method === "GET") return json({ ok: true, cart: await getCustomerCart(env, account.id) }, 200, origin);
+    if (request.method === "PUT") return json({ ok: true, cart: await saveCustomerCart(env, account.id, await readJson(request)) }, 200, origin);
+  }
+  if (parts.length === 1 && parts[0] === "favorites" && request.method === "GET") {
+    return json({ ok: true, projectIds: await listCustomerFavorites(env, account.id) }, 200, origin);
+  }
+  if (parts.length === 2 && parts[0] === "favorites") {
+    if (request.method === "POST") return json({ ok: true, favorite: await addCustomerFavorite(env, account.id, parts[1]) }, 201, origin);
+    if (request.method === "DELETE") {
+      await deleteDoc(env, `customerAccounts/${account.id}/favorites/${assertProjectId(parts[1])}`);
+      return json({ ok: true, deleted: true }, 200, origin);
+    }
   }
   if (parts.length === 1 && parts[0] === "orders") {
     if (request.method === "GET") return json({ ok: true, orders: await listOwnedOrders(env, account.id) }, 200, origin);
@@ -4019,6 +4277,38 @@ function adminCanViewCommerceOrder(admin, order) {
   return items.length > 0 && items.every(item => allowed.has(item.projectId));
 }
 
+async function uploadProjectMedia(env, projectId, request, admin) {
+  requirePermission(admin, "manageProjectSettings", "Você não possui permissão para enviar mídias deste projeto.");
+  const body = validateMediaPayload(await readJsonBody(request, MAX_MEDIA_JSON_BYTES), { maxBytes: 5 * 1024 * 1024, allowKind: true });
+  if (typeof env.__services?.uploadStorageObject !== "function") {
+    throw Object.assign(new Error("Upload indisponível neste runtime."), { status: 503, reason: "storage_unavailable" });
+  }
+  const extension = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" }[body.contentType];
+  const path = `commerce/projects/${projectId}/${body.kind}/${crypto.randomUUID()}.${extension}`;
+  const bytes = Uint8Array.from(atob(body.dataBase64), character => character.charCodeAt(0));
+  const uploaded = await env.__services.uploadStorageObject(path, { bytes, contentType: body.contentType });
+  const project = await getDoc(env, projectPath(projectId));
+  const field = { logo: "logoUrl", icon: "iconUrl", banner: "bannerUrl" }[body.kind];
+  const next = { ...project, updatedAt: nowIso() };
+  if (field) {
+    next[field] = uploaded.url;
+    next[`${body.kind}StoragePath`] = uploaded.path;
+  } else {
+    const screenshots = Array.isArray(project.screenshots) ? project.screenshots : [];
+    if (screenshots.length >= 12) {
+      if (typeof env.__services?.deleteStorageObject === "function") {
+        await env.__services.deleteStorageObject(uploaded.path).catch(() => {});
+      }
+      throw Object.assign(new Error("O limite de 12 screenshots foi atingido."), { status: 409, reason: "screenshot_limit" });
+    }
+    next.screenshots = [...screenshots, uploaded.url];
+    next.screenshotStoragePaths = [...(Array.isArray(project.screenshotStoragePaths) ? project.screenshotStoragePaths : []), uploaded.path];
+  }
+  delete next.id;
+  await setDoc(env, projectPath(projectId), next);
+  return { ...uploaded, kind: body.kind, project: { id: projectId, ...next } };
+}
+
 async function handleAdmin(request, env, origin, url, admin) {
   const method = request.method;
   const path = url.pathname.replace(/^\/api\/v1\/admin\/?/, "");
@@ -4216,6 +4506,11 @@ async function handleAdmin(request, env, origin, url, admin) {
 
     requireProjectAccess(admin, projectId);
 
+    if (parts.length === 3 && parts[2] === "media" && method === "POST") {
+      const upload = await uploadProjectMedia(env, projectId, request, admin);
+      return json({ ok: true, upload, project: projectDetailView(upload.project, admin) }, 201, origin);
+    }
+
     if (parts.length === 3 && parts[2] === "catalog-preview") {
       if (method !== "GET") {
         return errorResponse(origin, 405, "method_not_allowed", "Use GET para esta rota.", { expectedMethods: ["GET"] });
@@ -4233,7 +4528,7 @@ async function handleAdmin(request, env, origin, url, admin) {
       return json({
         ok: true,
         preview: {
-          published: rawProject.status === "active" && rawProject.publicCatalog === true,
+          published: rawProject.status === "active" && candidate.plans.length > 0,
           project: candidate
         }
       }, 200, origin);
@@ -4255,6 +4550,7 @@ async function handleAdmin(request, env, origin, url, admin) {
       }
       if (method === "PATCH") {
         const body = validateProjectPayload(await readJson(request), { partial: true });
+        if (body.slug) await assertAvailableProjectSlug(env, slugify(body.slug), projectId);
         const saved = await atomicClient(env).runTransaction(async tx => {
           const current = await tx.get(projectPath(projectId));
           if (!current) {
@@ -4318,7 +4614,25 @@ async function handleAdmin(request, env, origin, url, admin) {
             updatedAt: nowIso()
           };
 
+          const nextSlugLookupId = await sha256Hex(next.slug);
+          const nextSlugLookupPath = `catalogSlugs/${nextSlugLookupId}`;
+          const slugOwner = await tx.get(nextSlugLookupPath);
+          if (slugOwner && slugOwner.projectId !== projectId) {
+            throw Object.assign(new Error("Este slug já está em uso por outro projeto."), {
+              status: 409,
+              reason: "project_slug_exists"
+            });
+          }
+
           tx.set(projectPath(projectId), next);
+          slugOwner
+            ? tx.set(nextSlugLookupPath, { ...slugOwner, projectId, slug: next.slug, updatedAt: next.updatedAt })
+            : tx.create(nextSlugLookupPath, { projectId, slug: next.slug, createdAt: next.updatedAt });
+          if (current.slug && slugify(current.slug) !== next.slug) {
+            const previousSlugLookupPath = `catalogSlugs/${await sha256Hex(slugify(current.slug))}`;
+            const previousOwner = await tx.get(previousSlugLookupPath);
+            if (previousOwner?.projectId === projectId) tx.delete(previousSlugLookupPath);
+          }
           if (integrationCreated) {
             const integrationLookupId = await sha256Hex(next.integrationCode);
             tx.create(`integrationCodes/${integrationLookupId}`, {
@@ -4768,7 +5082,7 @@ const ROUTE_METHODS = Object.freeze({
 });
 
 function isPublicApiPath(pathname) {
-  return [
+  return pathname.startsWith("/api/v1/catalog/") || [
     "/api/v1/catalog",
     "/api/v1/payment-config",
     "/api/v1/project/config",
@@ -4829,6 +5143,16 @@ async function routeRequest(request, env) {
       if (request.method === "GET" && url.pathname === "/api/v1/catalog") {
         await enforceRateLimit(env, request, "catalog", 120, 60);
         return json({ ok: true, catalog: await publicCatalog(env) }, 200, origin, true);
+      }
+
+      if (url.pathname.startsWith("/api/v1/catalog/")) {
+        if (request.method !== "GET") {
+          return errorResponse(origin, 405, "method_not_allowed", "Use o método GET para esta rota.", { expectedMethod: "GET" }, true);
+        }
+        await enforceRateLimit(env, request, "catalog-detail", 120, 60);
+        const parts = decodeAdminPathSegments(url.pathname.replace(/^\/api\/v1\/catalog\/?/, ""));
+        if (parts.length !== 1) return errorResponse(origin, 404, "not_found", "Programa não encontrado.", null, true);
+        return json({ ok: true, project: await publicCatalogProject(env, parts[0]) }, 200, origin, true);
       }
 
       if (request.method === "GET" && url.pathname === "/api/v1/payment-config") {

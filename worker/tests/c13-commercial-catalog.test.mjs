@@ -193,11 +193,14 @@ test("catálogo publica somente programas e planos elegíveis, ordenados e sanit
     id: "plan_aaaaaaaaaaaaaaaaaaaa",
     name: "Vitalícia",
     description: "Oferta mensal",
+    commercialDescription: "Oferta mensal",
+    termsVersion: "",
     price: 499,
     durationDays: 0,
     lifetime: true,
     deviceLimit: 5,
     startMode: "first_activation",
+    catalogOrder: 10,
     displayOrder: 10
   });
 
@@ -281,19 +284,20 @@ test("frontend público cobre carregamento, vazio, erro, CTA e renderização an
   const app = await readFile(new URL("../../public/assets/catalog.js", import.meta.url), "utf8");
   const css = await readFile(new URL("../../public/assets/catalog.css", import.meta.url), "utf8");
 
-  assert.match(html, /id="catalog-status"[^>]*role="status"/);
-  assert.match(html, /id="catalog-empty"/);
-  assert.match(html, /id="catalog-error"[^>]*role="alert"/);
+  assert.match(html, /id="app"[^>]*aria-live="polite"/);
+  assert.match(html, /href="\/programas"/);
+  assert.match(html, /href="\/carrinho"/);
+  assert.match(app, /"\/conta\/perfil"/);
   assert.match(app, /fetch\("\/api\/v1\/catalog"/);
-  assert.match(app, /showState\("empty"\)/);
-  assert.match(app, /showState\("error"\)/);
-  assert.match(app, /query\.set\("projectId", project\.projectId\)/);
-  assert.match(app, /query\.set\("planId", plan\.id\)/);
+  assert.match(app, /function addToCart/);
+  assert.match(app, /function renderProgram/);
+  assert.match(app, /function renderCart/);
+  assert.match(app, /function emptyState/);
   assert.match(app, /textContent/);
   assert.equal(/innerHTML|insertAdjacentHTML|document\.write/.test(app), false);
   assert.match(app, /url\.protocol === "https:"/);
   assert.match(app, /!url\.username && !url\.password/);
-  assert.match(css, /@media \(max-width: 760px\)/);
+  assert.match(css, /@media\(max-width:820px\)/);
   assert.match(css, /prefers-reduced-motion/);
 });
 
@@ -324,7 +328,10 @@ test("preview comercial exige permissão de catálogo ou planos", async () => {
 });
 
 test("preview administrativo reutiliza a projeção pública sem campos sensíveis", async () => {
-  const services = memoryServices({ [`projects/${PROJECT_A}`]: project() });
+  const services = memoryServices({
+    [`projects/${PROJECT_A}`]: project(),
+    [`projects/${PROJECT_A}/plans/plan_aaaaaaaaaaaaaaaaaaaa`]: plan()
+  });
   const env = {
     ...envFor(services),
     ADMIN_FIREBASE_UID: "uid-master-test"
