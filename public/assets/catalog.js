@@ -469,6 +469,8 @@ function openPixModal(order, payment) {
     await navigator.clipboard.writeText(payment.pixCode); showToast("Código PIX copiado.");
   });
   const reported = button("Já efetuei o pagamento", "button", async () => {
+    const whatsappWindow = window.open("about:blank", "_blank");
+    if (whatsappWindow) whatsappWindow.opener = null;
     reported.disabled = true;
     try {
       await api(`/api/v1/customer/orders/${encodeURIComponent(order.orderId)}/payment-reported`, { method: "POST", body: JSON.stringify({}) });
@@ -476,10 +478,18 @@ function openPixModal(order, payment) {
       state.cart = [];
       await syncCart();
       showToast("Pagamento informado. Envie o comprovante pelo WhatsApp.");
-      window.open(payment.whatsappUrl, "_blank", "noopener,noreferrer");
       closePixModal();
-      navigate("/conta/compras");
-    } catch (error) { showToast(errorMessage(error)); reported.disabled = false; }
+      if (whatsappWindow) {
+        whatsappWindow.location.replace(payment.whatsappUrl);
+        navigate("/conta/compras");
+      } else {
+        location.assign(payment.whatsappUrl);
+      }
+    } catch (error) {
+      if (whatsappWindow) whatsappWindow.close();
+      showToast(errorMessage(error));
+      reported.disabled = false;
+    }
   });
   const actions = el("div", "pix-actions"); actions.append(copy, reported);
   details.append(codeLabel, actions, el("p", "pix-help", "A confirmação é manual. Envie o comprovante pelo WhatsApp; a licença será exibida em Minhas compras após a aprovação."));
