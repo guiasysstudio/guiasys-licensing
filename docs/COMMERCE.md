@@ -14,7 +14,12 @@ Planos novos ou alterados recebem `priceCents`. No primeiro pedido, planos legad
 
 ## API do cliente
 
-- `GET /api/v1/customer/me`
+- `GET|PATCH /api/v1/customer/me`
+- `POST|DELETE /api/v1/customer/me/photo`
+- `POST /api/v1/customer/address/cep` (consulta autenticada; CEP fica no corpo, não no path/log)
+- `GET|PUT /api/v1/customer/cart`
+- `GET /api/v1/customer/favorites`
+- `POST|DELETE /api/v1/customer/favorites/{projectId}`
 - `GET|POST /api/v1/customer/orders`
 - `GET /api/v1/customer/orders/{orderId}`
 - `POST /api/v1/customer/orders/{orderId}/payment` (PIX manual operacional)
@@ -50,3 +55,12 @@ O início do pagamento valida autenticação, ownership e estado do pedido. A ro
 Depois do `POST /orders`, uma transação confere novamente pedido, conta, ambiente, valor, moeda e IDs antes de vincular a resposta normalizada ao payment e os vínculos mínimos ao order. O order não é marcado como pago e nenhum fulfillment ocorre nessa etapa.
 
 Replays com a mesma chave não criam outro payment, e `order.activePaymentId` reserva atomicamente uma única tentativa ativa mesmo quando chaves diferentes chegam em concorrência. Cobranças já vinculadas são consultadas por `providerOrderId`; envios com resultado incerto ficam bloqueados para novo POST, pois a API Order não possui idempotência remota documentada no contrato consultado. Um administrador com `viewPayments` e `manageOrders`, autenticação recente e escopo no pedido pode reconciliar Sandbox em `POST /api/v1/admin/payments/{paymentId}/reconcile`, informando somente um `providerOrderId` (`ORDE_...`) confirmado operacionalmente. Produção permanece fail-closed enquanto `POST /orders` depender da whitelist. O evento `ORDER.CHARGE` segue pendente no protocolo PagBank `1457285324`, sem alteração nos endpoints ou na validação de assinatura dos webhooks.
+
+
+## Portal C15 — continuidade do checkout
+
+O botão **Adicionar ao carrinho** incrementa a quantidade e mantém o usuário na página. **Comprar agora** apenas adiciona quando a oferta ainda não está no carrinho; se já estiver, abre o carrinho sem incrementar silenciosamente.
+
+O navegador mantém um draft de checkout por conta + fingerprint do carrinho para reutilizar a mesma idempotency key e o mesmo pedido pendente após fechar/reabrir o PIX. Alterar o carrinho invalida esse draft. O backend continua sendo a autoridade de idempotência.
+
+CPF, telefone e CEP recebem máscara no frontend e validação real no backend. A consulta de CEP é mediada pela Function e envia somente o CEP ao serviço de endereço. O PIX é exibido em modal responsivo; fechar o modal não apaga o pedido pendente.
