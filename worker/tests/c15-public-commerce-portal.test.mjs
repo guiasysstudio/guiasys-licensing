@@ -326,6 +326,8 @@ test("portal SPA contém rotas, carrinho sem navegação automática, PIX manual
   assert.doesNotMatch(js, /customer\/address\/cep\/\$\{cep\}/);
   assert.match(js, /safeNextPath\(/);
   assert.match(js, /CHECKOUT_KEY/);
+  assert.match(js, /state\.favorites = favorites\.projectIds \|\| \[\]/);
+  assert.doesNotMatch(js, /Imagem comercial não cadastrada\./);
   assert.match(js, /window\.open\("about:blank", "_blank"\)/);
   assert.match(js, /whatsappWindow\.location\.replace\(payment\.whatsappUrl\)/);
   assert.match(js, /cart-count"\)\.hidden = count === 0/);
