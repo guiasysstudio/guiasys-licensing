@@ -2,9 +2,9 @@
 
 Central universal de licenciamento multi-projeto da GuiaSys Studio.
 
-## Comércio C14-C
+## Portal comercial C15 + pagamento C14-C
 
-A plataforma inclui conta global Firebase, checkout PIX manual, pedidos numerados, valores autoritativos em centavos, renovação da mesma key e fulfillment interno idempotente. O site público usa uma sessão Firebase nomeada e acessa dados exclusivamente pela Function.
+A plataforma inclui portal público completo, conta global Firebase, catálogo por programa, favoritos, carrinho persistente, perfil, Minhas compras, checkout PIX manual, pedidos numerados, valores autoritativos em centavos, renovação da mesma key e fulfillment interno idempotente. O site público usa uma sessão Firebase nomeada e acessa dados exclusivamente pela Function.
 
 O PagBank da C14-B permanece preservado, porém congelado por `PAYMENT_PROVIDER=manual_pix` e `PAGBANK_ENABLED=false`; seus tokens não são necessários no runtime atual. Consulte [docs/COMMERCE.md](docs/COMMERCE.md), [docs/PAYMENTS.md](docs/PAYMENTS.md) e [docs/RELATORIO-C14C-MANUAL-PIX.md](docs/RELATORIO-C14C-MANUAL-PIX.md).
 
@@ -41,7 +41,7 @@ Firebase Auth + Cloud Firestore
 - Function: `licensingApi`
 - Região: `southamerica-east1`
 - Node.js: 22
-- Portal público reservado: `https://licencas.guiasys.online`
+- Portal público: `https://licencas.guiasys.online`
 - Painel administrativo: `https://painel.licencas.guiasys.online`
 - Hosting admin Firebase: `https://guiasys-licensing-admin.web.app`
 - Protocolo dos clientes: `GSL-v1`
@@ -135,21 +135,22 @@ integrationCodes/{sha256(integrationCode)}
 rateLimits/{sha256(client|bucket)}
 ```
 
-## Domínio comercial C13
+## Domínio comercial C15
 
 Não existe coleção paralela `products`. Um programa/produto continua sendo `projects/{projectId}` e suas ofertas continuam em `projects/{projectId}/plans/{planId}`.
 
-Campos comerciais do programa: `name`, `slug`, `description`, `shortDescription`, `imageUrl` (HTTPS), `status`, `publicCatalog`, `featured` e `displayOrder`. Campos comerciais adicionais da oferta: `displayOrder`, preservando `name`, `description`, `price`, `durationDays`, `lifetime`, `deviceLimit`, `startMode`, `active` e `publicCatalog`.
+O projeto concentra identidade e CMS comercial (`slug`, logo/ícone/banner, descrições, recursos, requisitos, screenshots, SEO, destaque e ordens). O plano concentra preço, duração, dispositivos, descrição comercial, status e `publishedInCatalog`.
 
-Somente programas ativos e publicados e planos ativos e publicados entram em `GET /api/v1/catalog`. A projeção é uma allowlist: dados administrativos, origens permitidas e material privado de assinatura nunca são serializados. A ordem é `displayOrder`, nome em `pt-BR` e ID como desempate.
+A visibilidade pública é derivada: o projeto precisa estar `active` e possuir ao menos um plano ativo com `publishedInCatalog=true`. O antigo `publicCatalog` permanece somente como compatibilidade de dados legados e não é uma segunda trava do projeto. A projeção do catálogo continua sendo allowlist e não serializa material administrativo ou privado.
 
-Fluxo comercial planejado:
+Fluxo operacional:
 
 ```text
-Programa/Projeto -> Planos/Ofertas -> Catálogo -> futuro Pedido -> futuro Pagamento -> futura Licença
+Programa/Projeto -> Planos/Ofertas -> Catálogo -> Carrinho -> Pedido -> PIX manual
+-> confirmação administrativa -> fulfillment idempotente -> Licença(s)
 ```
 
-O PagBank pertence ao C14, não ao C13.
+O PagBank da C14-B permanece versionado, porém congelado; o provider operacional é `manual_pix`.
 
 ## API pública GSL-v1
 
