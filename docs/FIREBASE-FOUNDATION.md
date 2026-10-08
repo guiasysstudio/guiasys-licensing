@@ -12,6 +12,25 @@ Projeto Firebase: `guiasys-licensing`.
 - Local Emulator Suite
 - scripts de validação e staging
 
+## Mídia da aplicação
+
+Toda mídia dinâmica (logo, ícone, banner, screenshot e foto de perfil) é gravada pela
+Function no Firebase Storage por meio do Admin SDK. O navegador envia o arquivo ou uma
+URL HTTPS usada somente como fonte de importação; a Function valida download, tipo,
+assinatura e tamanho, grava o objeto e persiste no Firestore apenas a URL oficial com
+download token e o `storagePath` correspondente.
+
+Os namespaces usados são:
+
+- `commerce/projects/{projectId}/{logo|icon|banner|screenshot}/{uuid}.{ext}`;
+- `profiles/{uid}/avatar-{uuid}.{ext}`.
+
+`storage.rules` permanece com `allow read, write: if false`. Não há upload direto do
+navegador: gravação e exclusão são operações privilegiadas do Admin SDK, enquanto a
+leitura pública de uma mídia usa somente a URL oficial emitida com
+`firebaseStorageDownloadTokens`. Assets estáticos em `public/assets/**` continuam sendo
+servidos pelo Firebase Hosting.
+
 ## Functions
 
 - source: `worker/`

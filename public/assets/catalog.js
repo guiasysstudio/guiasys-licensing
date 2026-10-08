@@ -46,9 +46,18 @@ function titleBlock(kicker, title, description = "") {
   return wrap;
 }
 function safeHttpsUrl(value) {
+  const raw = String(value || "").trim();
+  if (/^\/assets\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/.test(raw) && !raw.includes("..")) return raw;
   try {
-    const url = new URL(String(value || ""));
-    return url.protocol === "https:" && !url.username && !url.password ? url.href : "";
+    const url = new URL(raw, location.origin);
+    if (url.protocol !== "https:" || url.username || url.password) return "";
+    if (url.origin === location.origin && url.pathname.startsWith("/assets/") && !url.pathname.includes("..")) return url.href;
+    if (url.hostname !== "firebasestorage.googleapis.com") return "";
+    const match = url.pathname.match(/^\/v0\/b\/([^/]+)\/o\/(.+)$/);
+    if (!match || !["guiasys-licensing.firebasestorage.app", "guiasys-licensing.appspot.com"].includes(decodeURIComponent(match[1]))) return "";
+    const objectPath = decodeURIComponent(match[2]);
+    if (!/^(?:commerce\/projects\/prj_[a-f0-9]{20}\/(?:logo|icon|banner|screenshot)|profiles\/[A-Za-z0-9_-]+)\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(objectPath)) return "";
+    return url.searchParams.get("alt") === "media" && url.searchParams.get("token") ? url.href : "";
   } catch { return ""; }
 }
 function safeNextPath(value, fallback = "/conta/compras") {
@@ -209,7 +218,7 @@ function updateHeader() {
   $("#cart-count").hidden = count === 0;
   $("#account-label").textContent = state.user ? "Minha conta" : "Entrar";
   const avatar = $("#account-avatar");
-  const avatarUrl = safeHttpsUrl(state.account?.photoUrl || state.user?.photoURL);
+  const avatarUrl = safeHttpsUrl(state.account?.photoUrl);
   avatar.hidden = !avatarUrl;
   avatar.src = avatarUrl || "";
   avatar.alt = avatarUrl ? "Foto do perfil" : "";

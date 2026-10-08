@@ -348,7 +348,7 @@ export function validatePlanPayload(body, { partial = false } = {}) {
 export function validateCustomerProfilePayload(body) {
   const allowed = new Set([
     "displayName", "taxId", "phone", "postalCode", "street", "number",
-    "complement", "neighborhood", "city", "state", "photoUrl", "photoStoragePath"
+    "complement", "neighborhood", "city", "state"
   ]);
   allowFields(body, allowed);
   const result = {};
@@ -375,9 +375,6 @@ export function validateCustomerProfilePayload(body) {
     assignIfDefined(result, field, readString(body, field, { max }));
   }
   assignIfDefined(result, "state", readString(body, "state", { max: 2, pattern: /^[A-Za-z]{2}$/, normalize: value => value.toUpperCase() }));
-  const photoUrl = readString(body, "photoUrl", { max: 2048 });
-  assignIfDefined(result, "photoUrl", validateSecureImageUrl(photoUrl, "photoUrl"));
-  assignIfDefined(result, "photoStoragePath", readString(body, "photoStoragePath", { max: 300, pattern: /^profiles\/[A-Za-z0-9_-]+\/[A-Za-z0-9._-]+$/ }));
   return result;
 }
 

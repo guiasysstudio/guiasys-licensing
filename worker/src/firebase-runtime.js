@@ -4,7 +4,11 @@ import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { randomUUID } from "node:crypto";
 
-import { assertFirestorePath, assertSafePathSegment } from "./security.js";
+import {
+  assertFirestorePath,
+  assertSafePathSegment,
+  assertStorageObjectPath
+} from "./security.js";
 
 function projectIdFromEnvironment(app) {
   if (app?.options?.projectId) return app.options.projectId;
@@ -89,6 +93,7 @@ export function createFirebaseRuntime({
   app = null,
   auth = null,
   firestore = null,
+  storage = null,
   log = null
 } = {}) {
   const firebaseApp = app || getApps()[0] || initializeApp();
@@ -96,7 +101,7 @@ export function createFirebaseRuntime({
   const db = firestore || getFirestore(firebaseApp);
   let storageBucket = null;
   const bucket = () => {
-    storageBucket ||= getStorage(firebaseApp).bucket();
+    storageBucket ||= (storage || getStorage(firebaseApp)).bucket();
     return storageBucket;
   };
   const projectId = projectIdFromEnvironment(firebaseApp);
@@ -132,7 +137,7 @@ export function createFirebaseRuntime({
   }
 
   async function uploadStorageObject(path, { bytes, contentType }) {
-    const safePath = assertFirestorePath(path);
+    const safePath = assertStorageObjectPath(path);
     const token = randomUUID();
     try {
       const activeBucket = bucket();
@@ -160,7 +165,7 @@ export function createFirebaseRuntime({
   }
 
   async function deleteStorageObject(path) {
-    const safePath = assertFirestorePath(path);
+    const safePath = assertStorageObjectPath(path);
     try {
       await bucket().file(safePath).delete({ ignoreNotFound: true });
     } catch (error) {

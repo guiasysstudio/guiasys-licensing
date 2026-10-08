@@ -5,11 +5,13 @@ import {
   assertFirestorePath,
   assertProjectId,
   assertSafePathSegment,
+  assertStorageObjectPath,
   decodeAdminPathSegments
 } from "./security.js";
 import { assertCents, moneyToCents, transitionOrderStatus, transitionPaymentStatus } from "./commerce-policy.js";
 import { issueLicenseInTransaction } from "./license-service.js";
 import { fetchWithTimeout } from "./network.js";
+import { downloadRemoteImage } from "./remote-image.js";
 import { PagBankProvider } from "./payments/payment-provider.js";
 import {
   DEFAULT_PAYMENT_SETTINGS,
@@ -566,7 +568,7 @@ async function requireFirebaseUser(request, env) {
       uid: user.sub,
       email: user.email || account?.email || null,
       name: user.name || account?.displayName || null,
-      picture: user.picture || account?.photoUrl || null,
+      picture: null,
       emailVerified: Boolean(account?.emailVerified ?? user.email_verified),
       authTime: Number(user.auth_time),
       issuedAt: Number(user.iat),
@@ -1401,7 +1403,212 @@ async function projectExists(env, projectId) {
   return Boolean(await getDoc(env, projectPath(projectId)));
 }
 
+const FIREBASE_STORAGE_BUCKETS = new Set([
+  "guiasys-licensing.firebasestorage.app",
+  "guiasys-licensing.appspot.com"
+]);
+const PROJECT_MEDIA_FIELDS = Object.freeze([
+  ["imageUrl", "imageStoragePath", "logo"],
+  ["logoUrl", "logoStoragePath", "logo"],
+  ["iconUrl", "iconStoragePath", "icon"],
+  ["bannerUrl", "bannerStoragePath", "banner"]
+]);
+
+function firebaseStorageMediaUrl(value, expectedPath, expectedPrefix) {
+  if (!value || !expectedPath) return "";
+  let safePath;
+  try {
+    safePath = assertStorageObjectPath(expectedPath);
+  } catch {
+    return "";
+  }
+  if (!safePath.startsWith(expectedPrefix)) return "";
+
+  try {
+    const url = new URL(String(value));
+    const match = url.pathname.match(/^\/v0\/b\/([^/]+)\/o\/(.+)$/);
+    if (
+      url.protocol !== "https:" ||
+      url.hostname !== "firebasestorage.googleapis.com" ||
+      url.username ||
+      url.password ||
+      !match ||
+      !FIREBASE_STORAGE_BUCKETS.has(decodeURIComponent(match[1])) ||
+      decodeURIComponent(match[2]) !== safePath ||
+      url.searchParams.get("alt") !== "media" ||
+      !url.searchParams.get("token")
+    ) {
+      return "";
+    }
+    return url.href;
+  } catch {
+    return "";
+  }
+}
+
+function hostedStaticImageUrl(value) {
+  const raw = String(value || "").trim();
+  if (/^\/assets\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/.test(raw) && !raw.includes("..")) return raw;
+  try {
+    const url = new URL(raw);
+    const allowedHosts = new Set([
+      "licencas.guiasys.online",
+      "guiasys-licensing.web.app",
+      "guiasys-licensing.firebaseapp.com",
+      "painel.licencas.guiasys.online",
+      "guiasys-licensing-admin.web.app",
+      "guiasys-licensing-admin.firebaseapp.com"
+    ]);
+    return url.protocol === "https:" && !url.username && !url.password && allowedHosts.has(url.hostname) && url.pathname.startsWith("/assets/")
+      ? url.href
+      : "";
+  } catch {
+    return "";
+  }
+}
+
+function managedProjectImageUrl(project, value, storagePath) {
+  return firebaseStorageMediaUrl(
+    value,
+    storagePath,
+    `commerce/projects/${project.id}/`
+  ) || hostedStaticImageUrl(value);
+}
+
+function projectStorageReferences(project) {
+  return new Set([
+    project?.imageStoragePath,
+    project?.logoStoragePath,
+    project?.iconStoragePath,
+    project?.bannerStoragePath,
+    ...(Array.isArray(project?.screenshotStoragePaths) ? project.screenshotStoragePaths : [])
+  ].map(value => String(value || "")).filter(Boolean));
+}
+
+function projectMediaState(project) {
+  return JSON.stringify({
+    imageUrl: project?.imageUrl || "",
+    imageStoragePath: project?.imageStoragePath || "",
+    logoUrl: project?.logoUrl || "",
+    logoStoragePath: project?.logoStoragePath || "",
+    iconUrl: project?.iconUrl || "",
+    iconStoragePath: project?.iconStoragePath || "",
+    bannerUrl: project?.bannerUrl || "",
+    bannerStoragePath: project?.bannerStoragePath || "",
+    screenshots: Array.isArray(project?.screenshots) ? project.screenshots : [],
+    screenshotStoragePaths: Array.isArray(project?.screenshotStoragePaths) ? project.screenshotStoragePaths : []
+  });
+}
+
+async function deleteProjectStoragePathsIfUnreferenced(env, projectId, paths) {
+  const candidates = [...new Set(paths.map(value => String(value || "")).filter(Boolean))];
+  if (!candidates.length || typeof env.__services?.deleteStorageObject !== "function") return;
+  const persisted = await getDoc(env, projectPath(projectId));
+  const referenced = projectStorageReferences(persisted);
+  for (const path of candidates) {
+    if (referenced.has(path)) continue;
+    await env.__services.deleteStorageObject(path).catch(error => {
+      env.__services?.log?.("warn", "storage.cleanup_failed", { projectId, path, reason: error?.reason || error?.message });
+    });
+  }
+}
+
+async function deleteNewStoragePaths(env, paths) {
+  if (typeof env.__services?.deleteStorageObject !== "function") return;
+  for (const path of [...new Set(paths)]) {
+    await env.__services.deleteStorageObject(path).catch(() => {});
+  }
+}
+
+async function importProjectImage(env, projectId, kind, sourceUrl) {
+  if (typeof env.__services?.uploadStorageObject !== "function") {
+    throw Object.assign(new Error("Importação de mídia indisponível neste runtime."), { status: 503, reason: "storage_unavailable" });
+  }
+  const downloader = typeof env.__services?.downloadRemoteImage === "function"
+    ? env.__services.downloadRemoteImage
+    : downloadRemoteImage;
+  const image = await downloader(sourceUrl, { maxBytes: 5 * 1024 * 1024, timeoutMs: 8_000, maxRedirects: 3 });
+  const path = `commerce/projects/${projectId}/${kind}/${crypto.randomUUID()}.${image.extension}`;
+  return await env.__services.uploadStorageObject(path, {
+    bytes: image.bytes,
+    contentType: image.contentType
+  });
+}
+
+async function prepareProjectMediaChanges(env, projectId, input, current = null) {
+  const body = { ...input };
+  const createdPaths = [];
+  const removedPaths = [];
+  try {
+    for (const [field, pathField, kind] of PROJECT_MEDIA_FIELDS) {
+      if (!(field in body)) continue;
+      const source = String(body[field] || "").trim();
+      const previousPath = String(current?.[pathField] || "");
+      if (!source) {
+        body[field] = "";
+        body[pathField] = "";
+        if (previousPath) removedPaths.push(previousPath);
+        continue;
+      }
+      const unchangedManaged = source === current?.[field] && managedProjectImageUrl(current, source, previousPath);
+      if (unchangedManaged) {
+        body[field] = source;
+        body[pathField] = previousPath;
+        continue;
+      }
+      const uploaded = await importProjectImage(env, projectId, kind, source);
+      createdPaths.push(uploaded.path);
+      body[field] = uploaded.url;
+      body[pathField] = uploaded.path;
+      if (previousPath && previousPath !== uploaded.path) removedPaths.push(previousPath);
+    }
+
+    if ("screenshots" in body) {
+      const existingUrls = Array.isArray(current?.screenshots) ? current.screenshots : [];
+      const existingPaths = Array.isArray(current?.screenshotStoragePaths) ? current.screenshotStoragePaths : [];
+      const available = new Map();
+      existingUrls.forEach((url, index) => {
+        const path = String(existingPaths[index] || "");
+        if (!available.has(url)) available.set(url, []);
+        available.get(url).push(path);
+      });
+
+      const nextUrls = [];
+      const nextPaths = [];
+      for (const source of body.screenshots) {
+        const matches = available.get(source) || [];
+        const matchedPath = matches.shift() || "";
+        if (matches.length) available.set(source, matches);
+        else available.delete(source);
+        if (matchedPath && managedProjectImageUrl(current, source, matchedPath)) {
+          nextUrls.push(source);
+          nextPaths.push(matchedPath);
+          continue;
+        }
+        if (matchedPath) removedPaths.push(matchedPath);
+        const uploaded = await importProjectImage(env, projectId, "screenshot", source);
+        createdPaths.push(uploaded.path);
+        nextUrls.push(uploaded.url);
+        nextPaths.push(uploaded.path);
+      }
+      for (const paths of available.values()) removedPaths.push(...paths.filter(Boolean));
+      for (let index = existingUrls.length; index < existingPaths.length; index++) {
+        if (existingPaths[index]) removedPaths.push(existingPaths[index]);
+      }
+      body.screenshots = nextUrls;
+      body.screenshotStoragePaths = nextPaths;
+    }
+    return { body, createdPaths, removedPaths };
+  } catch (error) {
+    await deleteNewStoragePaths(env, createdPaths);
+    throw error;
+  }
+}
+
 function projectSummaryView(project) {
+  const screenshots = (Array.isArray(project.screenshots) ? project.screenshots : [])
+    .map((url, index) => managedProjectImageUrl(project, url, project.screenshotStoragePaths?.[index]))
+    .filter(Boolean);
   return {
     id: project.id,
     name: project.name,
@@ -1409,13 +1616,13 @@ function projectSummaryView(project) {
     prefix: project.prefix || "",
     description: project.description || "",
     shortDescription: project.shortDescription || "",
-    imageUrl: project.imageUrl || "",
-    logoUrl: project.logoUrl || "",
-    iconUrl: project.iconUrl || "",
-    bannerUrl: project.bannerUrl || "",
+    imageUrl: managedProjectImageUrl(project, project.imageUrl, project.imageStoragePath),
+    logoUrl: managedProjectImageUrl(project, project.logoUrl, project.logoStoragePath),
+    iconUrl: managedProjectImageUrl(project, project.iconUrl, project.iconStoragePath),
+    bannerUrl: managedProjectImageUrl(project, project.bannerUrl, project.bannerStoragePath),
     tagline: project.tagline || "",
     fullDescription: project.fullDescription || "",
-    screenshots: Array.isArray(project.screenshots) ? project.screenshots : [],
+    screenshots,
     features: Array.isArray(project.features) ? project.features : [],
     requirements: Array.isArray(project.requirements) ? project.requirements : [],
     additionalInfo: project.additionalInfo || "",
@@ -1485,9 +1692,12 @@ async function createProject(env, body, admin) {
   if (!name) throw Object.assign(new Error("Informe o nome do projeto."), { status: 400 });
   const requestedSlug = slugify(body.slug || name);
   await assertAvailableProjectSlug(env, requestedSlug);
+  const id = randomId("prj");
+  const preparedMedia = await prepareProjectMediaChanges(env, id, body);
+  body = preparedMedia.body;
 
-  return await atomicClient(env).runTransaction(async tx => {
-    const id = randomId("prj");
+  try {
+    return await atomicClient(env).runTransaction(async tx => {
     const createdAt = nowIso();
     const validationHours = Math.max(1, Number(body.validationHours || 24));
     const offlineDays = Math.max(0, Number(body.offlineDays ?? 7));
@@ -1503,12 +1713,17 @@ async function createProject(env, body, admin) {
       description: String(body.description || "").trim(),
       shortDescription: String(body.shortDescription || "").trim(),
       imageUrl: String(body.imageUrl || "").trim(),
+      imageStoragePath: String(body.imageStoragePath || ""),
       logoUrl: String(body.logoUrl || "").trim(),
+      logoStoragePath: String(body.logoStoragePath || ""),
       iconUrl: String(body.iconUrl || "").trim(),
+      iconStoragePath: String(body.iconStoragePath || ""),
       bannerUrl: String(body.bannerUrl || "").trim(),
+      bannerStoragePath: String(body.bannerStoragePath || ""),
       tagline: String(body.tagline || "").trim(),
       fullDescription: String(body.fullDescription || "").trim(),
       screenshots: body.screenshots || [],
+      screenshotStoragePaths: body.screenshotStoragePaths || [],
       features: body.features || [],
       requirements: body.requirements || [],
       additionalInfo: String(body.additionalInfo || "").trim(),
@@ -1550,8 +1765,12 @@ async function createProject(env, body, admin) {
       createdAt
     );
 
-    return { id, ...project };
-  });
+      return { id, ...project };
+    });
+  } catch (error) {
+    await deleteNewStoragePaths(env, preparedMedia.createdPaths);
+    throw error;
+  }
 }
 
 async function createPlan(env, projectId, body, admin) {
@@ -2674,13 +2893,8 @@ function catalogNonNegativeNumber(value, fallback = 0) {
   return Number.isFinite(number) && number >= 0 ? number : fallback;
 }
 
-function catalogImageUrl(value) {
-  try {
-    const url = new URL(String(value || ""));
-    return url.protocol === "https:" && !url.username && !url.password ? url.href : "";
-  } catch {
-    return "";
-  }
+function catalogImageUrl(project, value, storagePath) {
+  return managedProjectImageUrl(project, value, storagePath);
 }
 
 function publicCatalogPlanView(plan) {
@@ -2716,11 +2930,13 @@ function publicCatalogProjectView(project, plans) {
     additionalInfo: project.additionalInfo || "",
     features: Array.isArray(project.features) ? project.features : [],
     requirements: Array.isArray(project.requirements) ? project.requirements : [],
-    screenshots: (Array.isArray(project.screenshots) ? project.screenshots : []).map(catalogImageUrl).filter(Boolean),
-    imageUrl: catalogImageUrl(project.imageUrl),
-    logoUrl: catalogImageUrl(project.logoUrl || project.imageUrl),
-    iconUrl: catalogImageUrl(project.iconUrl || project.imageUrl),
-    bannerUrl: catalogImageUrl(project.bannerUrl || project.imageUrl),
+    screenshots: (Array.isArray(project.screenshots) ? project.screenshots : [])
+      .map((url, index) => catalogImageUrl(project, url, project.screenshotStoragePaths?.[index]))
+      .filter(Boolean),
+    imageUrl: catalogImageUrl(project, project.imageUrl, project.imageStoragePath),
+    logoUrl: catalogImageUrl(project, project.logoUrl, project.logoStoragePath) || catalogImageUrl(project, project.imageUrl, project.imageStoragePath),
+    iconUrl: catalogImageUrl(project, project.iconUrl, project.iconStoragePath) || catalogImageUrl(project, project.imageUrl, project.imageStoragePath),
+    bannerUrl: catalogImageUrl(project, project.bannerUrl, project.bannerStoragePath) || catalogImageUrl(project, project.imageUrl, project.imageStoragePath),
     seoTitle: project.seoTitle || "",
     seoDescription: project.seoDescription || "",
     featured: Boolean(project.featured),
@@ -2849,6 +3065,11 @@ async function nextOrderNumberInTransaction(tx) {
 }
 
 function customerAccountView(account) {
+  const photoUrl = firebaseStorageMediaUrl(
+    account.photoUrl,
+    account.photoStoragePath,
+    `profiles/${account.firebaseUid}/`
+  );
   return {
     accountId: account.id || account.accountId,
     email: account.email || "",
@@ -2863,7 +3084,7 @@ function customerAccountView(account) {
     neighborhood: account.neighborhood || "",
     city: account.city || "",
     state: account.state || "",
-    photoUrl: account.photoUrl || "",
+    photoUrl,
     profileComplete: customerProfileComplete(account),
     status: account.status || "active",
     createdAt: account.createdAt,
@@ -2890,12 +3111,18 @@ async function ensureCustomerAccount(env, user) {
     }
     const normalizedEmail = String(user.email).toLowerCase();
     const displayName = current?.displayName || user.name || "";
+    const managedPhotoUrl = firebaseStorageMediaUrl(
+      current?.photoUrl,
+      current?.photoStoragePath,
+      `profiles/${user.uid}/`
+    );
     if (
       current &&
       current.firebaseUid === user.uid &&
       current.email === normalizedEmail &&
       current.emailVerified === Boolean(user.emailVerified) &&
-      current.displayName === displayName
+      current.displayName === displayName &&
+      String(current.photoUrl || "") === managedPhotoUrl
     ) {
       return { id: accountId, ...current };
     }
@@ -2917,8 +3144,8 @@ async function ensureCustomerAccount(env, user) {
       neighborhood: current?.neighborhood || "",
       city: current?.city || "",
       state: current?.state || "",
-      photoUrl: current?.photoUrl || user.picture || "",
-      photoStoragePath: current?.photoStoragePath || "",
+      photoUrl: managedPhotoUrl,
+      photoStoragePath: managedPhotoUrl ? (current?.photoStoragePath || "") : "",
       status: current?.status || "active",
       createdAt: current?.createdAt || now,
       updatedAt: now
@@ -3011,22 +3238,51 @@ async function uploadCustomerPhoto(env, account, request) {
   const path = `profiles/${assertSafePathSegment(account.firebaseUid, "uid")}/avatar-${crypto.randomUUID()}.${extension}`;
   const bytes = Uint8Array.from(atob(body.dataBase64), character => character.charCodeAt(0));
   const uploaded = await env.__services.uploadStorageObject(path, { bytes, contentType: body.contentType });
-  const next = { ...account, photoUrl: uploaded.url, photoStoragePath: uploaded.path, updatedAt: nowIso() };
-  delete next.id;
-  await setDoc(env, `customerAccounts/${account.id}`, next);
-  if (account.photoStoragePath && account.photoStoragePath !== uploaded.path && typeof env.__services.deleteStorageObject === "function") {
-    await env.__services.deleteStorageObject(account.photoStoragePath).catch(() => {});
+  let saved;
+  try {
+    saved = await atomicClient(env).runTransaction(async tx => {
+      const current = await tx.get(`customerAccounts/${account.id}`);
+      if (!current || current.firebaseUid !== account.firebaseUid) {
+        throw Object.assign(new Error("Conta de cliente não encontrada."), { status: 404, reason: "account_not_found" });
+      }
+      const next = { ...current, photoUrl: uploaded.url, photoStoragePath: uploaded.path, updatedAt: nowIso() };
+      delete next.id;
+      tx.set(`customerAccounts/${account.id}`, next);
+      return { next, previousStoragePath: String(current.photoStoragePath || "") };
+    });
+  } catch (error) {
+    if (typeof env.__services?.deleteStorageObject === "function") {
+      await env.__services.deleteStorageObject(uploaded.path).catch(() => {});
+    }
+    throw error;
   }
-  return { account: { id: account.id, ...next }, upload: uploaded };
+  if (saved.previousStoragePath && saved.previousStoragePath !== uploaded.path && typeof env.__services.deleteStorageObject === "function") {
+    await env.__services.deleteStorageObject(saved.previousStoragePath).catch(() => {});
+  }
+  return { account: { id: account.id, ...saved.next }, upload: uploaded };
 }
 
 async function removeCustomerPhoto(env, account) {
-  if (account.photoStoragePath && typeof env.__services?.deleteStorageObject === "function") {
-    await env.__services.deleteStorageObject(account.photoStoragePath);
+  const saved = await atomicClient(env).runTransaction(async tx => {
+    const current = await tx.get(`customerAccounts/${account.id}`);
+    if (!current || current.firebaseUid !== account.firebaseUid) {
+      throw Object.assign(new Error("Conta de cliente não encontrada."), { status: 404, reason: "account_not_found" });
+    }
+    const next = { ...current, photoUrl: "", photoStoragePath: "", updatedAt: nowIso() };
+    delete next.id;
+    tx.set(`customerAccounts/${account.id}`, next);
+    return { next, previousStoragePath: String(current.photoStoragePath || "") };
+  });
+  const { next, previousStoragePath } = saved;
+  if (previousStoragePath && typeof env.__services?.deleteStorageObject === "function") {
+    await env.__services.deleteStorageObject(previousStoragePath).catch(error => {
+      env.__services?.log?.("warn", "storage.cleanup_failed", {
+        accountId: account.id,
+        path: previousStoragePath,
+        reason: error?.reason || error?.message
+      });
+    });
   }
-  const next = { ...account, photoUrl: "", photoStoragePath: "", updatedAt: nowIso() };
-  delete next.id;
-  await setDoc(env, `customerAccounts/${account.id}`, next);
   return { id: account.id, ...next };
 }
 
@@ -4337,39 +4593,54 @@ async function uploadProjectMedia(env, projectId, request, admin) {
   if (typeof env.__services?.uploadStorageObject !== "function") {
     throw Object.assign(new Error("Upload indisponível neste runtime."), { status: 503, reason: "storage_unavailable" });
   }
+  const project = await getDoc(env, projectPath(projectId));
+  const existingScreenshots = Array.isArray(project?.screenshots) ? project.screenshots : [];
+  if (body.kind === "screenshot" && existingScreenshots.length >= 12) {
+    throw Object.assign(new Error("O limite de 12 screenshots foi atingido."), { status: 409, reason: "screenshot_limit" });
+  }
   const extension = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" }[body.contentType];
   const path = `commerce/projects/${projectId}/${body.kind}/${crypto.randomUUID()}.${extension}`;
   const bytes = Uint8Array.from(atob(body.dataBase64), character => character.charCodeAt(0));
   const uploaded = await env.__services.uploadStorageObject(path, { bytes, contentType: body.contentType });
-  const project = await getDoc(env, projectPath(projectId));
-  const field = { logo: "logoUrl", icon: "iconUrl", banner: "bannerUrl" }[body.kind];
-  const previousStoragePath = field ? String(project?.[`${body.kind}StoragePath`] || "") : "";
-  const next = { ...project, updatedAt: nowIso() };
-  if (field) {
-    next[field] = uploaded.url;
-    next[`${body.kind}StoragePath`] = uploaded.path;
-  } else {
-    const screenshots = Array.isArray(project.screenshots) ? project.screenshots : [];
-    if (screenshots.length >= 12) {
-      if (typeof env.__services?.deleteStorageObject === "function") {
-        await env.__services.deleteStorageObject(uploaded.path).catch(() => {});
+  let saved;
+  try {
+    saved = await atomicClient(env).runTransaction(async tx => {
+      const current = await tx.get(projectPath(projectId));
+      if (!current) {
+        throw Object.assign(new Error("Projeto não encontrado."), { status: 404, reason: "project_not_found" });
       }
-      throw Object.assign(new Error("O limite de 12 screenshots foi atingido."), { status: 409, reason: "screenshot_limit" });
+      const field = { logo: "logoUrl", icon: "iconUrl", banner: "bannerUrl" }[body.kind];
+      const screenshots = Array.isArray(current.screenshots) ? current.screenshots : [];
+      if (!field && screenshots.length >= 12) {
+        throw Object.assign(new Error("O limite de 12 screenshots foi atingido."), { status: 409, reason: "screenshot_limit" });
+      }
+      const previousStoragePath = field ? String(current[`${body.kind}StoragePath`] || "") : "";
+      const next = { ...current, updatedAt: nowIso() };
+      if (field) {
+        next[field] = uploaded.url;
+        next[`${body.kind}StoragePath`] = uploaded.path;
+      } else {
+        next.screenshots = [...screenshots, uploaded.url];
+        next.screenshotStoragePaths = [...(Array.isArray(current.screenshotStoragePaths) ? current.screenshotStoragePaths : []), uploaded.path];
+      }
+      delete next.id;
+      tx.set(projectPath(projectId), next);
+      return { next, previousStoragePath };
+    });
+  } catch (error) {
+    if (typeof env.__services?.deleteStorageObject === "function") {
+      await env.__services.deleteStorageObject(uploaded.path).catch(() => {});
     }
-    next.screenshots = [...screenshots, uploaded.url];
-    next.screenshotStoragePaths = [...(Array.isArray(project.screenshotStoragePaths) ? project.screenshotStoragePaths : []), uploaded.path];
+    throw error;
   }
-  delete next.id;
-  await setDoc(env, projectPath(projectId), next);
   if (
-    field &&
-    previousStoragePath &&
-    previousStoragePath !== uploaded.path &&
+    saved.previousStoragePath &&
+    saved.previousStoragePath !== uploaded.path &&
     typeof env.__services?.deleteStorageObject === "function"
   ) {
-    await env.__services.deleteStorageObject(previousStoragePath).catch(() => {});
+    await env.__services.deleteStorageObject(saved.previousStoragePath).catch(() => {});
   }
-  return { ...uploaded, kind: body.kind, project: { id: projectId, ...next } };
+  return { ...uploaded, kind: body.kind, project: { id: projectId, ...saved.next } };
 }
 
 async function handleAdmin(request, env, origin, url, admin) {
@@ -4612,14 +4883,38 @@ async function handleAdmin(request, env, origin, url, admin) {
         return json({ ok: true, project: projectDetailView(project, admin) }, 200, origin);
       }
       if (method === "PATCH") {
-        const body = validateProjectPayload(await readJson(request), { partial: true });
+        let body = validateProjectPayload(await readJson(request), { partial: true });
+        const mediaChangeRequested = ["imageUrl", "logoUrl", "iconUrl", "bannerUrl", "screenshots"]
+          .some(field => field in body);
         if (body.slug) await assertAvailableProjectSlug(env, slugify(body.slug), projectId);
-        const saved = await atomicClient(env).runTransaction(async tx => {
+        const mediaCurrent = await getDoc(env, projectPath(projectId));
+        const expectedMediaState = projectMediaState(mediaCurrent);
+        const restoringArchived = mediaCurrent.status === "archived" && body.status != null;
+        if (restoringArchived) {
+          requirePermission(admin, "manageProjects", "Somente quem gerencia projetos pode restaurar um projeto arquivado.");
+          if (Object.keys(body).some(key => key !== "status")) {
+            requirePermission(admin, "manageProjectSettings", "Você não possui permissão para alterar as configurações deste projeto.");
+          }
+          assertRecentAuthentication(admin);
+        } else {
+          requirePermission(admin, "manageProjectSettings", "Você não possui permissão para alterar as configurações deste projeto.");
+        }
+        const preparedMedia = await prepareProjectMediaChanges(env, projectId, body, mediaCurrent);
+        body = preparedMedia.body;
+        let saved;
+        try {
+          saved = await atomicClient(env).runTransaction(async tx => {
           const current = await tx.get(projectPath(projectId));
           if (!current) {
             throw Object.assign(new Error("Projeto não encontrado."), {
               status: 404,
               reason: "project_not_found"
+            });
+          }
+          if (mediaChangeRequested && projectMediaState(current) !== expectedMediaState) {
+            throw Object.assign(new Error("A mídia do projeto foi alterada por outra operação. Recarregue e tente novamente."), {
+              status: 409,
+              reason: "concurrency_conflict"
             });
           }
 
@@ -4716,7 +5011,12 @@ async function handleAdmin(request, env, origin, url, admin) {
             next.updatedAt
           );
           return { id: projectId, ...next };
-        });
+          });
+        } catch (error) {
+          await deleteNewStoragePaths(env, preparedMedia.createdPaths);
+          throw error;
+        }
+        await deleteProjectStoragePathsIfUnreferenced(env, projectId, preparedMedia.removedPaths);
         return json({ ok: true, project: projectDetailView(saved, admin) }, 200, origin);
       }
       if (method === "DELETE") {

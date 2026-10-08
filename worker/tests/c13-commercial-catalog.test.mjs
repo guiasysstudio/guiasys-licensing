@@ -161,6 +161,8 @@ test("catálogo publica somente programas e planos elegíveis, ordenados e sanit
       name: "Alfa",
       slug: "alfa",
       prefix: "ALF",
+      imageUrl: `https://firebasestorage.googleapis.com/v0/b/guiasys-licensing.firebasestorage.app/o/${encodeURIComponent(`commerce/projects/${PROJECT_B}/logo/programa.png`)}?alt=media&token=test`,
+      imageStoragePath: `commerce/projects/${PROJECT_B}/logo/programa.png`,
       displayOrder: 10,
       featured: true,
       integrationCode: "GSLI-BCDE-FGHJ-KLMN"
@@ -185,7 +187,7 @@ test("catálogo publica somente programas e planos elegíveis, ordenados e sanit
 
   const alfa = body.catalog.projects[0];
   assert.equal(alfa.shortDescription, "Descrição curta");
-  assert.equal(alfa.imageUrl, "https://cdn.example.com/programa.png");
+  assert.match(alfa.imageUrl, /^https:\/\/firebasestorage\.googleapis\.com/);
   assert.equal(alfa.featured, true);
   assert.equal(body.catalog.projects[1].imageUrl, "");
   assert.deepEqual(alfa.plans.map(item => item.name), ["Vitalícia", "Anual"]);
@@ -295,8 +297,9 @@ test("frontend público cobre carregamento, vazio, erro, CTA e renderização an
   assert.match(app, /function emptyState/);
   assert.match(app, /textContent/);
   assert.equal(/innerHTML|insertAdjacentHTML|document\.write/.test(app), false);
-  assert.match(app, /url\.protocol === "https:"/);
-  assert.match(app, /!url\.username && !url\.password/);
+  assert.match(app, /url\.protocol !== "https:"/);
+  assert.match(app, /url\.username \|\| url\.password/);
+  assert.match(app, /url\.hostname !== "firebasestorage\.googleapis\.com"/);
   assert.match(css, /@media\(max-width:820px\)/);
   assert.match(css, /prefers-reduced-motion/);
 });

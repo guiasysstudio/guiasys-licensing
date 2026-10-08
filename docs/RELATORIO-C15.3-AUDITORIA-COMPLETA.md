@@ -259,12 +259,12 @@ Os commits posteriores ao último gate funcional alteraram apenas documentação
 
 ## 8. Pontos não bloqueantes restantes
 
-### 8.1 Screenshots comerciais órfãos
+### 8.1 Screenshots comerciais órfãos — resolvido na correção C15 Storage
 
-Logo/ícone/banner substituídos agora são limpos. Porém, se um screenshot enviado ao Storage for depois removido apenas editando a lista de URLs no CMS, o objeto antigo pode permanecer no bucket.
-
-**Risco:** custo/limpeza, não autorização ou exposição de dados.  
-**Recomendação futura:** criar gerenciador de screenshots com endpoint explícito de exclusão.
+A edição da lista agora mantém URLs e `screenshotStoragePaths` alinhados, persiste primeiro
+o estado correto e remove depois somente objetos que deixaram de ser referenciados. URLs
+externas informadas no CMS são fontes de importação e não são mais persistidas como mídia
+definitiva.
 
 ### 8.2 Lockfile do backend
 

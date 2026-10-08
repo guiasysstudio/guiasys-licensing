@@ -6,6 +6,7 @@ import {
   assertEntityId,
   assertFirestorePath,
   assertProjectId,
+  assertStorageObjectPath,
   decodeAdminPathSegments
 } from "../src/security.js";
 
@@ -66,6 +67,32 @@ test("Firestore aceita apenas segmentos simples e nunca normaliza traversal", ()
     `projects/${projectId}/`
   ]) {
     assertInvalidIdentifier(() => assertFirestorePath(path));
+  }
+});
+
+test("Storage aceita extensões e namespaces de mídia sem enfraquecer o Firestore", () => {
+  const paths = [
+    `commerce/projects/${projectId}/logo/550e8400-e29b-41d4-a716-446655440000.png`,
+    `commerce/projects/${projectId}/icon/550e8400-e29b-41d4-a716-446655440000.webp`,
+    `commerce/projects/${projectId}/banner/550e8400-e29b-41d4-a716-446655440000.jpg`,
+    `commerce/projects/${projectId}/screenshot/550e8400-e29b-41d4-a716-446655440000.png`,
+    "profiles/customer-uid/avatar-550e8400-e29b-41d4-a716-446655440000.png",
+    "uuid.png",
+    "uuid.jpg",
+    "uuid.webp"
+  ];
+  for (const path of paths) assert.equal(assertStorageObjectPath(path), path);
+  assertInvalidIdentifier(() => assertFirestorePath(paths[0]));
+});
+
+test("Storage rejeita traversal, separadores e caracteres perigosos", () => {
+  for (const path of [
+    "", "../uuid.png", "..", "./uuid.png", "/uuid.png", "uuid.png/",
+    "commerce//uuid.png", "commerce\\uuid.png", "commerce/%2e%2e/uuid.png",
+    "commerce/%252e%252e/uuid.png", "commerce/uuid?.png", "commerce/uuid\u0000.png",
+    `${"a".repeat(1025)}.png`
+  ]) {
+    assertInvalidIdentifier(() => assertStorageObjectPath(path));
   }
 });
 

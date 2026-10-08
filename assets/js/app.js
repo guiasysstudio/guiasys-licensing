@@ -883,19 +883,11 @@ function renderProjectSwitcher() {
 
 function renderUser() {
   const name = state.user?.displayName || state.administrator?.name || "Administrador";
-  const photo = state.user?.photoURL || state.administrator?.picture || "";
   el.userName.textContent = name;
   el.userEmail.textContent = state.user?.email || state.administrator?.email || "";
-
-  if (photo) {
-    el.userAvatar.textContent = "";
-    el.userAvatar.style.backgroundImage = `url("${photo.replace(/"/g, "%22")}")`;
-    el.userAvatar.classList.add("has-photo");
-  } else {
-    el.userAvatar.style.backgroundImage = "";
-    el.userAvatar.classList.remove("has-photo");
-    el.userAvatar.textContent = initials(name);
-  }
+  el.userAvatar.style.backgroundImage = "";
+  el.userAvatar.classList.remove("has-photo");
+  el.userAvatar.textContent = initials(name);
 
   document.querySelector(".version").textContent = `Painel v${PANEL_VERSION}`;
 }
@@ -1289,19 +1281,19 @@ function projectForm(project = {}) {
         <textarea name="requirements" rows="5">${e((project.requirements || []).join("\n"))}</textarea>
       </label>
       <label class="field field-full">
-        ${fieldTitle("Screenshots por URL", "Uma URL HTTPS por linha, no máximo 12.")}
+        ${fieldTitle("Importar screenshots por URL", "Uma URL HTTPS por linha, no máximo 12. O backend baixa, valida e salva no Firebase Storage.")}
         <textarea name="screenshots" rows="4">${e((project.screenshots || []).join("\n"))}</textarea>
       </label>
       <label class="field">
-        ${fieldTitle("URL do logo", "Logo comercial público em HTTPS.")}
+        ${fieldTitle("Importar logo por URL", "A imagem será baixada, validada e salva no Firebase Storage.")}
         <input name="logoUrl" type="url" maxlength="2048" value="${e(project.logoUrl || project.imageUrl || "")}">
       </label>
       <label class="field">
-        ${fieldTitle("URL do ícone", "Ícone comercial público em HTTPS.")}
+        ${fieldTitle("Importar ícone por URL", "A imagem será baixada, validada e salva no Firebase Storage.")}
         <input name="iconUrl" type="url" maxlength="2048" value="${e(project.iconUrl || "")}">
       </label>
       <label class="field field-full">
-        ${fieldTitle("URL do banner", "Imagem principal pública em HTTPS.")}
+        ${fieldTitle("Importar banner por URL", "A imagem será baixada, validada e salva no Firebase Storage.")}
         <input name="bannerUrl" type="url" maxlength="2048" value="${e(project.bannerUrl || "")}">
       </label>
       <label class="field">

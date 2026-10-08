@@ -134,7 +134,7 @@ test("CSP permite Firebase Auth sem liberar execução arbitrária", () => {
   assert.equal(/script-src[^;]*'unsafe-eval'/.test(csp), false);
 });
 
-test("CSP público permite somente assets locais, API same-origin e imagens HTTPS", () => {
+test("CSP público permite somente assets locais, API same-origin e Firebase Storage", () => {
   const publicHosting = firebase.hosting.find(item => item.target === "public");
   const globalHeaders = publicHosting.headers.find(item => item.source === "**")?.headers || [];
   const csp = globalHeaders.find(item => item.key === "Content-Security-Policy")?.value || "";
@@ -142,7 +142,8 @@ test("CSP público permite somente assets locais, API same-origin e imagens HTTP
   assert.match(csp, /default-src 'self'/);
   assert.match(csp, /script-src 'self'/);
   assert.match(csp, /style-src 'self'/);
-  assert.match(csp, /img-src 'self' data: https:/);
+  assert.match(csp, /img-src 'self' data: https:\/\/firebasestorage\.googleapis\.com/);
+  assert.equal(/img-src[^;]*https:(?:;|\s)/.test(csp), false);
   assert.match(csp, /connect-src 'self'/);
   assert.match(csp, /object-src 'none'/);
   assert.equal(csp.includes("unsafe-inline"), false);

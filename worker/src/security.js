@@ -1,4 +1,6 @@
 const SAFE_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+const STORAGE_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const MAX_STORAGE_OBJECT_PATH_LENGTH = 1024;
 const PROJECT_ID_PATTERN = /^prj_[a-f0-9]{20}$/;
 const ADMIN_ID_PATTERN = /^[a-f0-9]{64}$/;
 const ENTITY_ID_PATTERNS = Object.freeze({
@@ -84,6 +86,36 @@ export function assertFirestorePath(path) {
   const segments = raw.split("/");
   for (let index = 0; index < segments.length; index++) {
     assertSafePathSegment(segments[index], `Segmento Firestore ${index + 1}`);
+  }
+
+  return segments.join("/");
+}
+
+export function assertStorageObjectPath(path) {
+  const raw = String(path ?? "");
+  if (
+    !raw ||
+    raw.length > MAX_STORAGE_OBJECT_PATH_LENGTH ||
+    raw.startsWith("/") ||
+    raw.endsWith("/") ||
+    raw.includes("//") ||
+    raw.includes("\\") ||
+    /[\u0000-\u001f\u007f]/.test(raw)
+  ) {
+    throw invalidIdentifier("Path do Storage");
+  }
+
+  const segments = raw.split("/");
+  for (let index = 0; index < segments.length; index++) {
+    const segment = segments[index];
+    if (
+      segment === "." ||
+      segment === ".." ||
+      segment.endsWith(".") ||
+      !STORAGE_PATH_SEGMENT_PATTERN.test(segment)
+    ) {
+      throw invalidIdentifier(`Segmento Storage ${index + 1}`);
+    }
   }
 
   return segments.join("/");

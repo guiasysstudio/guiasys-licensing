@@ -130,11 +130,34 @@ function createMocks() {
     }
   };
 
+  const storageObjects = new Map();
+  const storage = {
+    bucket() {
+      return {
+        name: "guiasys-licensing.firebasestorage.app",
+        file(path) {
+          return {
+            async save(bytes, options) {
+              calls.push(["storage.save", path, bytes, options]);
+              storageObjects.set(path, { bytes, options });
+            },
+            async delete(options) {
+              calls.push(["storage.delete", path, options]);
+              storageObjects.delete(path);
+            }
+          };
+        }
+      };
+    }
+  };
+
   return {
     calls,
     docs,
     auth,
     firestore,
+    storage,
+    storageObjects,
     app: { options: { projectId: "guiasys-licensing" } }
   };
 }
@@ -195,6 +218,45 @@ test("CRUD usa Firestore Admin mantendo shape dos documentos", async () => {
 
   await runtime.deleteDoc(projectPath);
   assert.equal(await runtime.getDoc(projectPath), null);
+});
+
+test("runtime real grava e remove nomes de objetos com extensão no Firebase Storage", async () => {
+  const mocks = createMocks();
+  const runtime = createFirebaseRuntime(mocks);
+  const paths = [
+    "commerce/projects/prj_0123456789abcdefabcd/logo/uuid.png",
+    "commerce/projects/prj_0123456789abcdefabcd/icon/uuid.webp",
+    "commerce/projects/prj_0123456789abcdefabcd/banner/uuid.jpg",
+    "commerce/projects/prj_0123456789abcdefabcd/screenshot/uuid.png",
+    "profiles/customer-uid/avatar-uuid.png"
+  ];
+  for (const path of paths) {
+    const uploaded = await runtime.uploadStorageObject(path, {
+      bytes: Uint8Array.from([1, 2, 3]),
+      contentType: path.endsWith(".webp") ? "image/webp" : path.endsWith(".jpg") ? "image/jpeg" : "image/png"
+    });
+    assert.equal(uploaded.path, path);
+    assert.match(uploaded.url, /^https:\/\/firebasestorage\.googleapis\.com\/v0\/b\/guiasys-licensing\.firebasestorage\.app\/o\//);
+    assert.equal(mocks.storageObjects.has(path), true);
+    const saved = mocks.storageObjects.get(path);
+    assert.equal(saved.options.validation, "crc32c");
+    assert.equal(saved.options.metadata.cacheControl, "public, max-age=31536000, immutable");
+    assert.ok(saved.options.metadata.metadata.firebaseStorageDownloadTokens);
+    await runtime.deleteStorageObject(path);
+    assert.equal(mocks.storageObjects.has(path), false);
+  }
+});
+
+test("runtime Storage rejeita traversal antes de acessar o bucket", async () => {
+  const mocks = createMocks();
+  const runtime = createFirebaseRuntime(mocks);
+  for (const path of ["../x.png", "x//y.png", "/x.png", "x.png/", "x\\y.png", "x/%2e%2e/y.png"]) {
+    await assert.rejects(
+      () => runtime.uploadStorageObject(path, { bytes: Uint8Array.from([1]), contentType: "image/png" }),
+      error => error?.status === 400 && error?.reason === "invalid_identifier"
+    );
+  }
+  assert.equal(mocks.calls.some(call => call[0] === "storage.save"), false);
 });
 
 test("transação Admin SDK mantém leituras antes das escritas enfileiradas", async () => {

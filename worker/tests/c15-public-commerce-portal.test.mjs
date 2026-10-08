@@ -55,11 +55,12 @@ function services(initial = {}) {
         aud: "guiasys-licensing", iss: "https://securetoken.google.com/guiasys-licensing",
         sub: identity.uid, exp: now + 3600, iat: now - 5, auth_time: now - 5,
         email: identity.email, email_verified: true, name: identity.name,
+        picture: "https://lh3.googleusercontent.com/external-avatar",
         firebase: { sign_in_provider: "password" }
       };
     },
     async getAccountState() {
-      return { localId: identity.uid, email: identity.email, displayName: identity.name, photoUrl: "", emailVerified: true, disabled: false, validSince: "0" };
+      return { localId: identity.uid, email: identity.email, displayName: identity.name, photoUrl: "https://lh3.googleusercontent.com/external-avatar", emailVerified: true, disabled: false, validSince: "0" };
     },
     async getDoc(path) { return read(path); },
     async setDoc(path, value) { store.set(path, clone(value)); return read(path); },
@@ -72,7 +73,15 @@ function services(initial = {}) {
     },
     async uploadStorageObject(path, value) {
       uploads.push({ path, ...value });
-      return { path, url: `https://firebasestorage.googleapis.com/v0/b/test/o/${encodeURIComponent(path)}?alt=media&token=test` };
+      return { path, url: `https://firebasestorage.googleapis.com/v0/b/guiasys-licensing.firebasestorage.app/o/${encodeURIComponent(path)}?alt=media&token=test` };
+    },
+    async downloadRemoteImage(url, options) {
+      uploads.push({ importedFrom: url, options });
+      return {
+        bytes: Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        contentType: "image/png",
+        extension: "png"
+      };
     },
     async deleteStorageObject(path) { uploads.push({ deleted: path }); },
     atomicClient() {
@@ -153,6 +162,7 @@ test("catálogo ignora booleano legado do projeto e usa publicação explícita 
   assert.deepEqual(catalog.projects.map(item => item.slug), ["primeiro-destaque", "programa-c15"]);
   assert.equal(catalog.projects[1].plans[0].commercialDescription, "Oferta anual");
   assert.equal(catalog.projects[1].plans[0].termsVersion, "2026-10");
+  assert.equal(catalog.projects[1].logoUrl, "", "catálogo não expõe URL externa legada");
 
   api.store.set(`projects/${PROJECT}/plans/${PLAN}`, { ...api.store.get(`projects/${PROJECT}/plans/${PLAN}`), publishedInCatalog: false, publicCatalog: true });
   const hidden = await handleRequest(new Request("https://licencas.guiasys.online/api/v1/catalog"), environment(api));
@@ -268,12 +278,27 @@ test("upload valida MIME, extensão, assinatura e exige autenticação", async (
     fileName: "avatar.png", contentType: "image/png", dataBase64: png
   }), environment(api));
   assert.equal(uploaded.status, 200);
-  assert.equal(api.uploads.length, 1);
-  assert.match(api.uploads[0].path, /^profiles\/customer-c15-a\/avatar-/);
+  assert.match(api.uploads.find(item => item.path)?.path, /^profiles\/customer-c15-a\/avatar-/);
+  assert.match((await uploaded.json()).account.photoUrl, /^https:\/\/firebasestorage\.googleapis\.com/);
+  const replacement = await handleRequest(request("/api/v1/customer/me/photo", "POST", {
+    fileName: "avatar.png", contentType: "image/png", dataBase64: png
+  }), environment(api));
+  assert.equal(replacement.status, 200);
+  assert.equal(api.uploads.filter(item => item.deleted).length, 1, "a troca remove a foto anterior depois de persistir");
   const removed = await handleRequest(request("/api/v1/customer/me/photo", "DELETE"), environment(api));
   assert.equal(removed.status, 200);
   assert.equal((await removed.json()).account.photoUrl, "");
-  assert.equal(api.uploads.some(item => item.deleted), true);
+  assert.equal(api.uploads.filter(item => item.deleted).length, 2);
+});
+
+test("avatar externo do Google não é persistido nem exposto", async () => {
+  const api = services(projectData());
+  const response = await handleRequest(request("/api/v1/customer/me"), environment(api));
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).account.photoUrl, "");
+  const stored = [...api.store.values()].find(value => value?.firebaseUid === "customer-c15-a");
+  assert.equal(stored.photoUrl, "");
+  assert.equal(stored.photoStoragePath, "");
 });
 
 test("admin autorizado envia mídia comercial e slug duplicado é recusado", async () => {
@@ -290,6 +315,57 @@ test("admin autorizado envia mídia comercial e slug duplicado é recusado", asy
   }), environment(api));
   assert.equal(replacement.status, 201);
   assert.equal(api.uploads.filter(item => item.deleted).length, 1);
+  for (const kind of ["icon", "banner"]) {
+    const first = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}/media`, "POST", {
+      kind, fileName: `${kind}.png`, contentType: "image/png", dataBase64: png
+    }), environment(api));
+    assert.equal(first.status, 201);
+    const second = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}/media`, "POST", {
+      kind, fileName: `${kind}.png`, contentType: "image/png", dataBase64: png
+    }), environment(api));
+    assert.equal(second.status, 201);
+  }
+  assert.equal(api.uploads.filter(item => item.deleted).length, 3, "logo, ícone e banner antigos são removidos");
+
+  const screenshot = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}/media`, "POST", {
+    kind: "screenshot", fileName: "screen.png", contentType: "image/png", dataBase64: png
+  }), environment(api));
+  assert.equal(screenshot.status, 201);
+  const screenshotPath = (await screenshot.json()).upload.path;
+  const removedScreenshot = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}`, "PATCH", {
+    screenshots: []
+  }), environment(api));
+  assert.equal(removedScreenshot.status, 200);
+  assert.equal(api.uploads.some(item => item.deleted === screenshotPath), true);
+
+  const imported = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}`, "PATCH", {
+    logoUrl: "https://images.example.com/new-logo.png",
+    iconUrl: "https://images.example.com/new-icon.png",
+    bannerUrl: "https://images.example.com/new-banner.png",
+    screenshots: ["https://images.example.com/screen-1.png"]
+  }), environment(api));
+  assert.equal(imported.status, 200);
+  const importedProject = (await imported.json()).project;
+  assert.match(importedProject.logoUrl, /^https:\/\/firebasestorage\.googleapis\.com/);
+  assert.match(importedProject.iconUrl, /^https:\/\/firebasestorage\.googleapis\.com/);
+  assert.match(importedProject.bannerUrl, /^https:\/\/firebasestorage\.googleapis\.com/);
+  assert.match(importedProject.screenshots[0], /^https:\/\/firebasestorage\.googleapis\.com/);
+  assert.equal(api.uploads.some(item => item.importedFrom === "https://images.example.com/new-logo.png"), true);
+  assert.equal(api.uploads.some(item => item.importedFrom === "https://images.example.com/new-icon.png"), true);
+  assert.equal(api.uploads.some(item => item.importedFrom === "https://images.example.com/new-banner.png"), true);
+  assert.equal(api.uploads.some(item => item.importedFrom === "https://images.example.com/screen-1.png"), true);
+
+  const stored = api.store.get(`projects/${PROJECT}`);
+  const fullScreenshots = Array.from({ length: 12 }, (_, index) => `https://firebasestorage.googleapis.com/v0/b/guiasys-licensing.firebasestorage.app/o/${encodeURIComponent(`commerce/projects/${PROJECT}/screenshot/shot-${index}.png`)}?alt=media&token=test`);
+  stored.screenshots = fullScreenshots;
+  stored.screenshotStoragePaths = Array.from({ length: 12 }, (_, index) => `commerce/projects/${PROJECT}/screenshot/shot-${index}.png`);
+  const uploadCountBeforeLimit = api.uploads.filter(item => item.path).length;
+  const limited = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}/media`, "POST", {
+    kind: "screenshot", fileName: "screen.png", contentType: "image/png", dataBase64: png
+  }), environment(api));
+  assert.equal(limited.status, 409);
+  assert.equal(api.uploads.filter(item => item.path).length, uploadCountBeforeLimit);
+
   const duplicate = await handleRequest(request("/api/v1/admin/projects", "POST", {
     name: "Outro programa", slug: "programa-c15", prefix: "OUT"
   }), environment(api));
