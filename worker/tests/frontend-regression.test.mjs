@@ -142,6 +142,50 @@ test("texto publicado referencia API/backend e não chama o runtime principal de
   assert.equal(source.includes("segredos do Worker"), false);
 });
 
+test("novo projeto oferece arquivos locais de logo, ícone, banner e screenshots sem SVG", () => {
+  const formStart = source.indexOf("function projectForm(project = {})");
+  const formEnd = source.indexOf("function projectPayload", formStart);
+  const formSource = source.slice(formStart, formEnd);
+  for (const kind of ["logo", "icon", "banner", "screenshot"]) {
+    assert.match(formSource, new RegExp(`data-media-kind="${kind}"`));
+  }
+  assert.match(formSource, /data-media-kind="screenshot" multiple/);
+  assert.ok((formSource.match(/type="file"/g) || []).length >= 4);
+  assert.equal(formSource.includes("project.id ?"), false, "seletores locais não dependem de um ID prévio");
+  assert.equal(formSource.includes("image/svg"), false);
+  assert.match(source, /if \(!inferred \|\| !PROJECT_MEDIA_MIME_TYPES\[contentType\]/);
+  assert.match(formSource, /Importar logo por URL/);
+  assert.match(formSource, /Importar ícone por URL/);
+  assert.match(formSource, /Importar banner por URL/);
+  assert.match(formSource, /Importar screenshots por URL/);
+});
+
+test("criação persiste o projeto antes de enviar arquivos ao endpoint com o ID retornado", () => {
+  const start = source.indexOf("function openProjectCreate()");
+  const end = source.indexOf("function openProjectEdit", start);
+  const createSource = source.slice(start, end);
+  const createCall = createSource.indexOf('api("/api/v1/admin/projects"');
+  const assignCreated = createSource.indexOf("createdProject = data.project", createCall);
+  const uploadCall = createSource.indexOf("uploadPendingProjectMedia(createdProject.id", assignCreated);
+  assert.ok(createCall >= 0 && assignCreated > createCall && uploadCall > assignCreated);
+  assert.match(source, /api\(`\/api\/v1\/admin\/projects\/\$\{encodeURIComponent\(projectId\)\}\/media`/);
+  assert.doesNotMatch(createSource.slice(createCall, assignCreated), /dataBase64/);
+  assert.match(createSource, /api\(`\/api\/v1\/admin\/projects\/\$\{encodeURIComponent\(createdProject\.id\)\}`\)/);
+});
+
+test("criação limita screenshots totais e preserva projeto para repetir falhas parciais", () => {
+  const start = source.indexOf("function openProjectCreate()");
+  const end = source.indexOf("function openProjectEdit", start);
+  const createSource = source.slice(start, end);
+  assert.match(createSource, /payload\.screenshots\.length \+ pendingMedia\.screenshot\.length/);
+  assert.match(createSource, /totalScreenshots > 12/);
+  assert.match(createSource, /O projeto foi criado e preservado, mas estas mídias falharam/);
+  assert.match(createSource, /error\.retryLabel = "Tentar mídias novamente"/);
+  assert.equal((createSource.match(/api\("\/api\/v1\/admin\/projects"/g) || []).length, 1);
+  assert.match(createSource, /if \(!createdProject\)/);
+  assert.match(source, /pendingMedia\[kind\] = remaining/);
+});
+
 
 test("contrato de integração usa o domínio público e o painel mantém API administrativa same-origin", () => {
   assert.match(source, /const API_BASE = window\.location\.origin;/);

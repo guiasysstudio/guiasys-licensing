@@ -1475,17 +1475,29 @@ function managedProjectImageUrl(project, value, storagePath) {
   ) || hostedStaticImageUrl(value);
 }
 
+function normalizedProjectScreenshotMedia(project) {
+  const screenshots = Array.isArray(project?.screenshots) ? [...project.screenshots] : [];
+  const storedPaths = Array.isArray(project?.screenshotStoragePaths) ? project.screenshotStoragePaths : [];
+  return {
+    screenshots,
+    screenshotStoragePaths: screenshots.map((_, index) => String(storedPaths[index] || "")),
+    unpairedStoragePaths: storedPaths.slice(screenshots.length).map(value => String(value || "")).filter(Boolean)
+  };
+}
+
 function projectStorageReferences(project) {
+  const screenshotMedia = normalizedProjectScreenshotMedia(project);
   return new Set([
     project?.imageStoragePath,
     project?.logoStoragePath,
     project?.iconStoragePath,
     project?.bannerStoragePath,
-    ...(Array.isArray(project?.screenshotStoragePaths) ? project.screenshotStoragePaths : [])
+    ...screenshotMedia.screenshotStoragePaths
   ].map(value => String(value || "")).filter(Boolean));
 }
 
 function projectMediaState(project) {
+  const screenshotMedia = normalizedProjectScreenshotMedia(project);
   return JSON.stringify({
     imageUrl: project?.imageUrl || "",
     imageStoragePath: project?.imageStoragePath || "",
@@ -1495,8 +1507,8 @@ function projectMediaState(project) {
     iconStoragePath: project?.iconStoragePath || "",
     bannerUrl: project?.bannerUrl || "",
     bannerStoragePath: project?.bannerStoragePath || "",
-    screenshots: Array.isArray(project?.screenshots) ? project.screenshots : [],
-    screenshotStoragePaths: Array.isArray(project?.screenshotStoragePaths) ? project.screenshotStoragePaths : []
+    screenshots: screenshotMedia.screenshots,
+    screenshotStoragePaths: screenshotMedia.screenshotStoragePaths
   });
 }
 
@@ -1538,7 +1550,8 @@ async function importProjectImage(env, projectId, kind, sourceUrl) {
 async function prepareProjectMediaChanges(env, projectId, input, current = null) {
   const body = { ...input };
   const createdPaths = [];
-  const removedPaths = [];
+  const currentScreenshotMedia = normalizedProjectScreenshotMedia(current);
+  const removedPaths = [...currentScreenshotMedia.unpairedStoragePaths];
   try {
     for (const [field, pathField, kind] of PROJECT_MEDIA_FIELDS) {
       if (!(field in body)) continue;
@@ -1564,8 +1577,8 @@ async function prepareProjectMediaChanges(env, projectId, input, current = null)
     }
 
     if ("screenshots" in body) {
-      const existingUrls = Array.isArray(current?.screenshots) ? current.screenshots : [];
-      const existingPaths = Array.isArray(current?.screenshotStoragePaths) ? current.screenshotStoragePaths : [];
+      const existingUrls = currentScreenshotMedia.screenshots;
+      const existingPaths = currentScreenshotMedia.screenshotStoragePaths;
       const available = new Map();
       existingUrls.forEach((url, index) => {
         const path = String(existingPaths[index] || "");
@@ -1577,10 +1590,11 @@ async function prepareProjectMediaChanges(env, projectId, input, current = null)
       const nextPaths = [];
       for (const source of body.screenshots) {
         const matches = available.get(source) || [];
-        const matchedPath = matches.shift() || "";
+        const matchedExisting = matches.length > 0;
+        const matchedPath = matchedExisting ? matches.shift() : "";
         if (matches.length) available.set(source, matches);
         else available.delete(source);
-        if (matchedPath && managedProjectImageUrl(current, source, matchedPath)) {
+        if (matchedExisting && managedProjectImageUrl(current, source, matchedPath)) {
           nextUrls.push(source);
           nextPaths.push(matchedPath);
           continue;
@@ -1592,9 +1606,6 @@ async function prepareProjectMediaChanges(env, projectId, input, current = null)
         nextPaths.push(uploaded.path);
       }
       for (const paths of available.values()) removedPaths.push(...paths.filter(Boolean));
-      for (let index = existingUrls.length; index < existingPaths.length; index++) {
-        if (existingPaths[index]) removedPaths.push(existingPaths[index]);
-      }
       body.screenshots = nextUrls;
       body.screenshotStoragePaths = nextPaths;
     }
@@ -1606,8 +1617,9 @@ async function prepareProjectMediaChanges(env, projectId, input, current = null)
 }
 
 function projectSummaryView(project) {
-  const screenshots = (Array.isArray(project.screenshots) ? project.screenshots : [])
-    .map((url, index) => managedProjectImageUrl(project, url, project.screenshotStoragePaths?.[index]))
+  const screenshotMedia = normalizedProjectScreenshotMedia(project);
+  const screenshots = screenshotMedia.screenshots
+    .map((url, index) => managedProjectImageUrl(project, url, screenshotMedia.screenshotStoragePaths[index]))
     .filter(Boolean);
   return {
     id: project.id,
@@ -2916,6 +2928,7 @@ function publicCatalogPlanView(plan) {
 }
 
 function publicCatalogProjectView(project, plans) {
+  const screenshotMedia = normalizedProjectScreenshotMedia(project);
   return {
     projectId: project.id,
     integrationCode: project.integrationCode,
@@ -2930,8 +2943,8 @@ function publicCatalogProjectView(project, plans) {
     additionalInfo: project.additionalInfo || "",
     features: Array.isArray(project.features) ? project.features : [],
     requirements: Array.isArray(project.requirements) ? project.requirements : [],
-    screenshots: (Array.isArray(project.screenshots) ? project.screenshots : [])
-      .map((url, index) => catalogImageUrl(project, url, project.screenshotStoragePaths?.[index]))
+    screenshots: screenshotMedia.screenshots
+      .map((url, index) => catalogImageUrl(project, url, screenshotMedia.screenshotStoragePaths[index]))
       .filter(Boolean),
     imageUrl: catalogImageUrl(project, project.imageUrl, project.imageStoragePath),
     logoUrl: catalogImageUrl(project, project.logoUrl, project.logoStoragePath) || catalogImageUrl(project, project.imageUrl, project.imageStoragePath),
@@ -4610,22 +4623,31 @@ async function uploadProjectMedia(env, projectId, request, admin) {
         throw Object.assign(new Error("Projeto não encontrado."), { status: 404, reason: "project_not_found" });
       }
       const field = { logo: "logoUrl", icon: "iconUrl", banner: "bannerUrl" }[body.kind];
-      const screenshots = Array.isArray(current.screenshots) ? current.screenshots : [];
+      const screenshotMedia = normalizedProjectScreenshotMedia(current);
+      const screenshots = screenshotMedia.screenshots;
       if (!field && screenshots.length >= 12) {
         throw Object.assign(new Error("O limite de 12 screenshots foi atingido."), { status: 409, reason: "screenshot_limit" });
       }
       const previousStoragePath = field ? String(current[`${body.kind}StoragePath`] || "") : "";
-      const next = { ...current, updatedAt: nowIso() };
+      const next = {
+        ...current,
+        screenshots,
+        screenshotStoragePaths: screenshotMedia.screenshotStoragePaths,
+        updatedAt: nowIso()
+      };
       if (field) {
         next[field] = uploaded.url;
         next[`${body.kind}StoragePath`] = uploaded.path;
       } else {
         next.screenshots = [...screenshots, uploaded.url];
-        next.screenshotStoragePaths = [...(Array.isArray(current.screenshotStoragePaths) ? current.screenshotStoragePaths : []), uploaded.path];
+        next.screenshotStoragePaths = [...screenshotMedia.screenshotStoragePaths, uploaded.path];
       }
       delete next.id;
       tx.set(projectPath(projectId), next);
-      return { next, previousStoragePath };
+      return {
+        next,
+        cleanupStoragePaths: [previousStoragePath, ...screenshotMedia.unpairedStoragePaths].filter(Boolean)
+      };
     });
   } catch (error) {
     if (typeof env.__services?.deleteStorageObject === "function") {
@@ -4633,13 +4655,7 @@ async function uploadProjectMedia(env, projectId, request, admin) {
     }
     throw error;
   }
-  if (
-    saved.previousStoragePath &&
-    saved.previousStoragePath !== uploaded.path &&
-    typeof env.__services?.deleteStorageObject === "function"
-  ) {
-    await env.__services.deleteStorageObject(saved.previousStoragePath).catch(() => {});
-  }
+  await deleteProjectStoragePathsIfUnreferenced(env, projectId, saved.cleanupStoragePaths);
   return { ...uploaded, kind: body.kind, project: { id: projectId, ...saved.next } };
 }
 
@@ -4971,6 +4987,9 @@ async function handleAdmin(request, env, origin, url, admin) {
             createdAt: current.createdAt,
             updatedAt: nowIso()
           };
+          const normalizedScreenshots = normalizedProjectScreenshotMedia(next);
+          next.screenshots = normalizedScreenshots.screenshots;
+          next.screenshotStoragePaths = normalizedScreenshots.screenshotStoragePaths;
 
           const nextSlugLookupId = await sha256Hex(next.slug);
           const nextSlugLookupPath = `catalogSlugs/${nextSlugLookupId}`;

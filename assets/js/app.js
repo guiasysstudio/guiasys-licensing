@@ -764,7 +764,7 @@ function openModal({ title, subtitle = "", body, submitLabel = "Salvar", onSubmi
     } catch (error) {
       toast(clientErrorMessage(error), "danger");
       button.disabled = false;
-      button.textContent = submitLabel;
+      button.textContent = error?.retryLabel || submitLabel;
     }
   });
 
@@ -1284,17 +1284,37 @@ function projectForm(project = {}) {
         ${fieldTitle("Importar screenshots por URL", "Uma URL HTTPS por linha, no máximo 12. O backend baixa, valida e salva no Firebase Storage.")}
         <textarea name="screenshots" rows="4">${e((project.screenshots || []).join("\n"))}</textarea>
       </label>
+      <label class="field field-full">
+        ${fieldTitle("Selecionar arquivos de screenshots", "JPG, PNG ou WebP de até 5 MB cada. URLs e arquivos somados aceitam no máximo 12 screenshots.")}
+        <input type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" data-media-kind="screenshot" multiple>
+        <small data-media-selection="screenshot">Nenhum arquivo selecionado.</small>
+      </label>
       <label class="field">
         ${fieldTitle("Importar logo por URL", "A imagem será baixada, validada e salva no Firebase Storage.")}
         <input name="logoUrl" type="url" maxlength="2048" value="${e(project.logoUrl || project.imageUrl || "")}">
       </label>
       <label class="field">
+        ${fieldTitle("Selecionar arquivo de logo", "JPG, PNG ou WebP de até 5 MB. SVG não é aceito.")}
+        <input type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" data-media-kind="logo">
+        <small data-media-selection="logo">Nenhum arquivo selecionado.</small>
+      </label>
+      <label class="field">
         ${fieldTitle("Importar ícone por URL", "A imagem será baixada, validada e salva no Firebase Storage.")}
         <input name="iconUrl" type="url" maxlength="2048" value="${e(project.iconUrl || "")}">
+      </label>
+      <label class="field">
+        ${fieldTitle("Selecionar arquivo de ícone", "JPG, PNG ou WebP de até 5 MB. SVG não é aceito.")}
+        <input type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" data-media-kind="icon">
+        <small data-media-selection="icon">Nenhum arquivo selecionado.</small>
       </label>
       <label class="field field-full">
         ${fieldTitle("Importar banner por URL", "A imagem será baixada, validada e salva no Firebase Storage.")}
         <input name="bannerUrl" type="url" maxlength="2048" value="${e(project.bannerUrl || "")}">
+      </label>
+      <label class="field field-full">
+        ${fieldTitle("Selecionar arquivo de banner", "JPG, PNG ou WebP de até 5 MB. SVG não é aceito.")}
+        <input type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" data-media-kind="banner">
+        <small data-media-selection="banner">Nenhum arquivo selecionado.</small>
       </label>
       <label class="field">
         ${fieldTitle("Título SEO", "Até 70 caracteres.")}
@@ -1304,16 +1324,7 @@ function projectForm(project = {}) {
         ${fieldTitle("Descrição SEO", "Até 180 caracteres.")}
         <input name="seoDescription" maxlength="180" value="${e(project.seoDescription || "")}">
       </label>
-      ${project.id ? `
-      <div class="field field-full">
-        ${fieldTitle("Upload de mídia comercial", "JPG, PNG ou WebP de até 5 MB. O envio atualiza o campo correspondente imediatamente.")}
-        <div class="toolbar-actions">
-          <label class="btn btn-ghost btn-sm">Logo<input type="file" accept=".jpg,.jpeg,.png,.webp" data-media-kind="logo" hidden></label>
-          <label class="btn btn-ghost btn-sm">Ícone<input type="file" accept=".jpg,.jpeg,.png,.webp" data-media-kind="icon" hidden></label>
-          <label class="btn btn-ghost btn-sm">Banner<input type="file" accept=".jpg,.jpeg,.png,.webp" data-media-kind="banner" hidden></label>
-          <label class="btn btn-ghost btn-sm">Screenshot<input type="file" accept=".jpg,.jpeg,.png,.webp" data-media-kind="screenshot" hidden></label>
-        </div>
-      </div>` : ""}
+      <div class="field field-full" data-project-media-status hidden role="status" aria-live="polite"></div>
     </div>
   `;
 }
@@ -1332,52 +1343,211 @@ function projectPayload(values, form = null) {
   };
 }
 
+const PROJECT_MEDIA_MIME_TYPES = Object.freeze({
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp"
+});
+
+function projectMediaContentType(file) {
+  const declared = String(file?.type || "").toLowerCase();
+  const extension = String(file?.name || "").split(".").pop().toLowerCase();
+  const inferred = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp" }[extension] || "";
+  const contentType = declared || inferred;
+  if (!inferred || !PROJECT_MEDIA_MIME_TYPES[contentType] || (declared && declared !== inferred)) {
+    throw new Error(`O arquivo "${file?.name || "selecionado"}" deve ser JPG, PNG ou WebP. SVG não é aceito.`);
+  }
+  return contentType;
+}
+
+function validateProjectMediaFile(file) {
+  if (!file || file.size < 1) throw new Error("Selecione um arquivo de imagem válido.");
+  if (file.size > 5 * 1024 * 1024) throw new Error(`O arquivo "${file.name}" excede o limite de 5 MB.`);
+  projectMediaContentType(file);
+}
+
+function safeProjectMediaFileName(file, contentType) {
+  const extension = PROJECT_MEDIA_MIME_TYPES[contentType];
+  const base = String(file.name || "imagem")
+    .replace(/\.[^.]*$/, "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^[^A-Za-z0-9]+/, "")
+    .slice(0, 140) || "imagem";
+  return `${base}.${extension}`;
+}
+
+async function projectMediaUploadPayload(file, kind) {
+  validateProjectMediaFile(file);
+  const contentType = projectMediaContentType(file);
+  const dataBase64 = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1]);
+    reader.onerror = () => reject(new Error(`Não foi possível ler o arquivo "${file.name}".`));
+    reader.readAsDataURL(file);
+  });
+  return { kind, fileName: safeProjectMediaFileName(file, contentType), contentType, dataBase64 };
+}
+
+async function uploadProjectMediaFile(projectId, kind, file) {
+  const payload = await projectMediaUploadPayload(file, kind);
+  return api(`/api/v1/admin/projects/${encodeURIComponent(projectId)}/media`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+function setProjectMediaSelection(backdrop, kind, files) {
+  const status = backdrop.querySelector(`[data-media-selection="${kind}"]`);
+  if (!status) return;
+  status.textContent = files.length
+    ? `${files.length} arquivo${files.length === 1 ? "" : "s"}: ${files.map(file => file.name).join(", ")}`
+    : "Nenhum arquivo selecionado.";
+}
+
 function bindProjectMediaUploads(backdrop, projectId) {
   backdrop.querySelectorAll("[data-media-kind]").forEach(input => input.addEventListener("change", async () => {
-    const file = input.files?.[0];
-    if (!file) return;
-    if (file.size > 5 * 1024 * 1024) return toast("A mídia deve ter no máximo 5 MB.", "danger");
-    const dataBase64 = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result).split(",")[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
+    const kind = input.dataset.mediaKind;
+    const files = [...(input.files || [])];
+    if (!files.length) return;
     input.disabled = true;
     try {
-      const response = await api(`/api/v1/admin/projects/${encodeURIComponent(projectId)}/media`, {
-        method: "POST",
-        body: JSON.stringify({ kind: input.dataset.mediaKind, fileName: file.name, contentType: file.type, dataBase64 })
-      });
-      const fieldName = { logo: "logoUrl", icon: "iconUrl", banner: "bannerUrl" }[input.dataset.mediaKind];
-      if (fieldName) backdrop.querySelector(`[name="${fieldName}"]`).value = response.upload.url;
-      if (input.dataset.mediaKind === "screenshot") backdrop.querySelector('[name="screenshots"]').value = (response.project.screenshots || []).join("\n");
-      toast("Mídia enviada.");
+      for (const file of files) {
+        const response = await uploadProjectMediaFile(projectId, kind, file);
+        const fieldName = { logo: "logoUrl", icon: "iconUrl", banner: "bannerUrl" }[kind];
+        if (fieldName) backdrop.querySelector(`[name="${fieldName}"]`).value = response.upload.url;
+        if (kind === "screenshot") backdrop.querySelector('[name="screenshots"]').value = (response.project.screenshots || []).join("\n");
+      }
+      toast(files.length === 1 ? "Mídia enviada." : `${files.length} mídias enviadas.`);
+    } catch (error) {
+      toast(clientErrorMessage(error), "danger");
     } finally {
       input.disabled = false;
       input.value = "";
+      setProjectMediaSelection(backdrop, kind, []);
     }
   }));
 }
 
+function bindNewProjectMediaSelection(backdrop, pendingMedia) {
+  backdrop.querySelectorAll("[data-media-kind]").forEach(input => input.addEventListener("change", () => {
+    const kind = input.dataset.mediaKind;
+    const selected = [...(input.files || [])];
+    const files = kind === "screenshot" ? selected : selected.slice(0, 1);
+    try {
+      files.forEach(validateProjectMediaFile);
+      if (kind === "screenshot" && files.length > 12) throw new Error("Selecione no máximo 12 screenshots.");
+      pendingMedia[kind] = files;
+      setProjectMediaSelection(backdrop, kind, files);
+    } catch (error) {
+      input.value = "";
+      toast(clientErrorMessage(error), "danger");
+      setProjectMediaSelection(backdrop, kind, pendingMedia[kind]);
+    }
+  }));
+}
+
+function setProjectMediaStatus(backdrop, message, tone = "") {
+  const status = backdrop.querySelector("[data-project-media-status]");
+  if (!status) return;
+  status.hidden = !message;
+  status.className = `field field-full${tone ? ` notice notice-${tone}` : ""}`;
+  status.textContent = message;
+}
+
+function upsertProjectState(project) {
+  const index = state.projects.findIndex(item => item.id === project.id);
+  if (index >= 0) state.projects[index] = project;
+  else state.projects.push(project);
+  state.projects.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+  invalidate(project.id);
+  renderProjectSwitcher();
+}
+
+async function uploadPendingProjectMedia(projectId, pendingMedia, backdrop) {
+  const failures = [];
+  let latestProject = null;
+  for (const kind of ["logo", "icon", "banner", "screenshot"]) {
+    const remaining = [];
+    for (const file of pendingMedia[kind]) {
+      try {
+        const response = await uploadProjectMediaFile(projectId, kind, file);
+        latestProject = response.project;
+      } catch (error) {
+        remaining.push(file);
+        failures.push({ kind, file, error });
+      }
+    }
+    pendingMedia[kind] = remaining;
+    setProjectMediaSelection(backdrop, kind, remaining);
+    const input = backdrop.querySelector(`[data-media-kind="${kind}"]`);
+    if (input) input.value = "";
+  }
+  return { failures, latestProject };
+}
+
 function openProjectCreate() {
+  const pendingMedia = { logo: [], icon: [], banner: [], screenshot: [] };
+  let createdProject = null;
   openModal({
     title: "Novo projeto",
     subtitle: "Um ambiente independente será criado para este produto.",
     body: projectForm(),
     submitLabel: "Criar projeto",
     wide: true,
+    onOpen: backdrop => bindNewProjectMediaSelection(backdrop, pendingMedia),
     onSubmit: async (values, form) => {
-      const data = await api("/api/v1/admin/projects", {
-        method: "POST",
-        body: JSON.stringify(projectPayload(values, form))
-      });
-      invalidate();
-      state.projects.push(data.project);
-      state.projects.sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
-      renderProjectSwitcher();
-      toast("Projeto criado com sucesso.");
-      state.selectedProjectId = data.project.id;
+      const backdrop = form.closest(".modal-backdrop");
+      if (!createdProject) {
+        const payload = projectPayload(values, form);
+        for (const kind of ["logo", "icon", "banner"]) {
+          if (pendingMedia[kind].length && payload[`${kind}Url`]) {
+            throw new Error(`Escolha apenas uma fonte para ${kind}: URL ou arquivo local.`);
+          }
+        }
+        const totalScreenshots = payload.screenshots.length + pendingMedia.screenshot.length;
+        if (totalScreenshots > 12) throw new Error("URLs e arquivos locais somados aceitam no máximo 12 screenshots.");
+        Object.values(pendingMedia).flat().forEach(validateProjectMediaFile);
+
+        const data = await api("/api/v1/admin/projects", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
+        createdProject = data.project;
+        upsertProjectState(createdProject);
+        form.querySelectorAll('input:not([type="file"]), textarea, select').forEach(control => { control.disabled = true; });
+        setProjectMediaStatus(backdrop, "Projeto criado. Enviando os arquivos locais selecionados…");
+      }
+
+      const { failures, latestProject } = await uploadPendingProjectMedia(createdProject.id, pendingMedia, backdrop);
+      if (latestProject) {
+        createdProject = latestProject;
+        upsertProjectState(createdProject);
+      }
+      if (failures.length) {
+        const failedNames = failures.map(item => `${item.file.name} (${clientErrorMessage(item.error)})`).join("; ");
+        const message = `O projeto foi criado e preservado, mas estas mídias falharam: ${failedNames}. Corrija a causa e tente novamente.`;
+        setProjectMediaStatus(backdrop, message, "danger");
+        const error = new Error(message);
+        error.retryLabel = "Tentar mídias novamente";
+        throw error;
+      }
+
+      let refreshed;
+      try {
+        refreshed = await api(`/api/v1/admin/projects/${encodeURIComponent(createdProject.id)}`);
+      } catch (cause) {
+        const message = `O projeto e as mídias foram salvos, mas não foi possível recarregar os dados: ${clientErrorMessage(cause)}. Tente finalizar novamente.`;
+        setProjectMediaStatus(backdrop, message, "danger");
+        const error = new Error(message);
+        error.retryLabel = "Recarregar projeto";
+        throw error;
+      }
+      createdProject = refreshed.project;
+      upsertProjectState(createdProject);
+      toast("Projeto e mídias criados com sucesso.");
+      state.selectedProjectId = createdProject.id;
       state.route = "project-dashboard";
       renderProjectSwitcher();
       renderNavigation();

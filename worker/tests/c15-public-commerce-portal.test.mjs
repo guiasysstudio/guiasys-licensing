@@ -373,6 +373,151 @@ test("admin autorizado envia mídia comercial e slug duplicado é recusado", asy
   assert.equal((await duplicate.json()).error, "project_slug_exists");
 });
 
+test("upload de screenshot preenche lacunas de projeto legado sem deslocar paths", async () => {
+  const legacyWithoutPaths = projectData();
+  legacyWithoutPaths[`projects/${PROJECT}`].screenshots = [
+    "https://legacy.example.com/one.png",
+    "https://legacy.example.com/two.png"
+  ];
+  const api = services(legacyWithoutPaths);
+  api.setIdentity("master-c15", "master.c15@example.com", "Master C15");
+  const png = Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0,0,0,0]).toString("base64");
+  const response = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}/media`, "POST", {
+    kind: "screenshot", fileName: "new-screen.png", contentType: "image/png", dataBase64: png
+  }), environment(api));
+  assert.equal(response.status, 201);
+  const uploadedPath = (await response.json()).upload.path;
+  const stored = api.store.get(`projects/${PROJECT}`);
+  assert.equal(stored.screenshots.length, 3);
+  assert.equal(stored.screenshotStoragePaths.length, 3);
+  assert.deepEqual(stored.screenshotStoragePaths, ["", "", uploadedPath]);
+});
+
+test("upload preserva associação por índice quando screenshotStoragePaths legado é menor", async () => {
+  const firstPath = `commerce/projects/${PROJECT}/screenshot/first.png`;
+  const legacyShortPaths = projectData();
+  legacyShortPaths[`projects/${PROJECT}`].screenshots = [
+    `https://firebasestorage.googleapis.com/v0/b/guiasys-licensing.firebasestorage.app/o/${encodeURIComponent(firstPath)}?alt=media&token=test`,
+    "https://legacy.example.com/two.png",
+    "https://legacy.example.com/three.png"
+  ];
+  legacyShortPaths[`projects/${PROJECT}`].screenshotStoragePaths = [firstPath];
+  const api = services(legacyShortPaths);
+  api.setIdentity("master-c15", "master.c15@example.com", "Master C15");
+  const png = Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0,0,0,0]).toString("base64");
+  const response = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}/media`, "POST", {
+    kind: "screenshot", fileName: "new-screen.png", contentType: "image/png", dataBase64: png
+  }), environment(api));
+  const uploadedPath = (await response.json()).upload.path;
+  const stored = api.store.get(`projects/${PROJECT}`);
+  assert.deepEqual(stored.screenshotStoragePaths, [firstPath, "", "", uploadedPath]);
+  assert.equal(stored.screenshots.length, stored.screenshotStoragePaths.length);
+});
+
+test("remoções, reordenação e novo upload mantêm screenshots alinhados e limpam somente órfãos", async () => {
+  const middlePath = `commerce/projects/${PROJECT}/screenshot/middle.png`;
+  const lastPath = `commerce/projects/${PROJECT}/screenshot/last.png`;
+  const middleUrl = `https://firebasestorage.googleapis.com/v0/b/guiasys-licensing.firebasestorage.app/o/${encodeURIComponent(middlePath)}?alt=media&token=test`;
+  const lastUrl = `https://firebasestorage.googleapis.com/v0/b/guiasys-licensing.firebasestorage.app/o/${encodeURIComponent(lastPath)}?alt=media&token=test`;
+  const legacyUrl = "https://legacy.example.com/legacy.png";
+  const initial = projectData();
+  initial[`projects/${PROJECT}`].screenshots = [legacyUrl, middleUrl, lastUrl];
+  initial[`projects/${PROJECT}`].screenshotStoragePaths = ["", middlePath, lastPath];
+  const api = services(initial);
+  api.setIdentity("master-c15", "master.c15@example.com", "Master C15");
+  const originalDelete = api.deleteStorageObject.bind(api);
+  api.deleteStorageObject = async path => {
+    const persisted = api.store.get(`projects/${PROJECT}`);
+    assert.equal((persisted.screenshotStoragePaths || []).includes(path), false, "a limpeza ocorre somente depois da persistência");
+    await originalDelete(path);
+  };
+
+  const withoutMiddle = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}`, "PATCH", {
+    screenshots: [legacyUrl, lastUrl]
+  }), environment(api));
+  assert.equal(withoutMiddle.status, 200);
+  let stored = api.store.get(`projects/${PROJECT}`);
+  const importedLegacyPath = stored.screenshotStoragePaths[0];
+  assert.equal(stored.screenshots.length, stored.screenshotStoragePaths.length);
+  assert.equal(stored.screenshotStoragePaths[1], lastPath);
+  assert.equal(api.uploads.some(item => item.deleted === middlePath), true, "screenshot Firebase removido do meio é limpo");
+  assert.equal(api.uploads.some(item => item.deleted === lastPath), false, "screenshot ainda usado não é limpo");
+
+  const withoutLegacy = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}`, "PATCH", {
+    screenshots: [lastUrl]
+  }), environment(api));
+  assert.equal(withoutLegacy.status, 200);
+  stored = api.store.get(`projects/${PROJECT}`);
+  assert.deepEqual(stored.screenshotStoragePaths, [lastPath]);
+  assert.equal(api.uploads.some(item => item.deleted === importedLegacyPath), true, "screenshot legado importado é limpo quando removido");
+
+  const png = Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0,0,0,0]).toString("base64");
+  const firstUpload = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}/media`, "POST", {
+    kind: "screenshot", fileName: "after-removal.png", contentType: "image/png", dataBase64: png
+  }), environment(api));
+  const firstUploadBody = await firstUpload.json();
+  stored = api.store.get(`projects/${PROJECT}`);
+  assert.deepEqual(stored.screenshotStoragePaths, [lastPath, firstUploadBody.upload.path]);
+
+  const reordered = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}`, "PATCH", {
+    screenshots: [firstUploadBody.upload.url, lastUrl]
+  }), environment(api));
+  assert.equal(reordered.status, 200);
+  const secondUpload = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}/media`, "POST", {
+    kind: "screenshot", fileName: "after-edit.png", contentType: "image/png", dataBase64: png
+  }), environment(api));
+  const secondUploadBody = await secondUpload.json();
+  stored = api.store.get(`projects/${PROJECT}`);
+  assert.deepEqual(stored.screenshotStoragePaths, [firstUploadBody.upload.path, lastPath, secondUploadBody.upload.path]);
+  assert.equal(stored.screenshots.length, stored.screenshotStoragePaths.length);
+});
+
+test("path compartilhado por screenshots não é excluído enquanto continuar referenciado", async () => {
+  const sharedPath = `commerce/projects/${PROJECT}/screenshot/shared.png`;
+  const sharedUrl = `https://firebasestorage.googleapis.com/v0/b/guiasys-licensing.firebasestorage.app/o/${encodeURIComponent(sharedPath)}?alt=media&token=test`;
+  const initial = projectData();
+  initial[`projects/${PROJECT}`].screenshots = [sharedUrl, sharedUrl];
+  initial[`projects/${PROJECT}`].screenshotStoragePaths = [sharedPath, sharedPath];
+  const api = services(initial);
+  api.setIdentity("master-c15", "master.c15@example.com", "Master C15");
+  const response = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}`, "PATCH", {
+    screenshots: [sharedUrl]
+  }), environment(api));
+  assert.equal(response.status, 200);
+  const stored = api.store.get(`projects/${PROJECT}`);
+  assert.deepEqual(stored.screenshotStoragePaths, [sharedPath]);
+  assert.equal(api.uploads.some(item => item.deleted === sharedPath), false);
+});
+
+test("novo projeto é persistido antes de receber logo, ícone, banner e screenshot locais", async () => {
+  const api = services(projectData());
+  api.setIdentity("master-c15", "master.c15@example.com", "Master C15");
+  const createdResponse = await handleRequest(request("/api/v1/admin/projects", "POST", {
+    name: "Projeto com mídia local", slug: "projeto-com-midia-local", prefix: "PML",
+    screenshots: ["https://images.example.com/imported-before-files.png"]
+  }), environment(api));
+  assert.equal(createdResponse.status, 201);
+  const created = (await createdResponse.json()).project;
+  assert.ok(api.store.has(`projects/${created.id}`));
+  assert.notEqual(api.store.get(`projects/${created.id}`).screenshots[0], "https://images.example.com/imported-before-files.png");
+
+  const png = Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0,0,0,0]).toString("base64");
+  for (const kind of ["logo", "icon", "banner", "screenshot"]) {
+    const response = await handleRequest(request(`/api/v1/admin/projects/${created.id}/media`, "POST", {
+      kind, fileName: `${kind}.png`, contentType: "image/png", dataBase64: png
+    }), environment(api));
+    assert.equal(response.status, 201);
+    assert.match((await response.json()).upload.path, new RegExp(`^commerce/projects/${created.id}/${kind}/`));
+  }
+  const stored = api.store.get(`projects/${created.id}`);
+  assert.match(stored.logoStoragePath, new RegExp(`^commerce/projects/${created.id}/logo/`));
+  assert.match(stored.iconStoragePath, new RegExp(`^commerce/projects/${created.id}/icon/`));
+  assert.match(stored.bannerStoragePath, new RegExp(`^commerce/projects/${created.id}/banner/`));
+  assert.equal(stored.screenshots.length, 2);
+  assert.equal(stored.screenshots.length, stored.screenshotStoragePaths.length);
+  assert.equal(stored.screenshots.some(url => url.startsWith("https://images.example.com/")), false);
+});
+
 test("portal SPA contém rotas, carrinho sem navegação automática, PIX manual e assets oficiais", async () => {
   const [html, js, css, firebase, firestoreRules, storageRules, symbol, lockup, wordmark] = await Promise.all([
     readFile(new URL("../../public/index.html", import.meta.url), "utf8"),
