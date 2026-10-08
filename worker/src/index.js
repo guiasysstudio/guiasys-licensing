@@ -1751,7 +1751,7 @@ async function createLicense(env, projectId, body, admin) {
       id: "",
       name: String(body.planName || "Personalizada"),
       lifetime: Boolean(body.lifetime),
-      durationDays: body.durationDays || 30,
+      durationDays: body.durationDays ?? 30,
       deviceLimit: body.maxDevices || 1,
       startMode: body.startMode || "first_activation"
     };
@@ -2226,8 +2226,13 @@ async function publicValidate(env, body, origin = "") {
       return { expired: true };
     }
 
-    if (["revoked", "suspended", "pending"].includes(effectiveStatus)) {
-      throw Object.assign(new Error(`Licença ${effectiveStatus}.`), {
+    const unavailableStatusMessages = {
+      revoked: "Licença revogada.",
+      suspended: "Licença suspensa.",
+      pending: "Licença pendente."
+    };
+    if (effectiveStatus in unavailableStatusMessages) {
+      throw Object.assign(new Error(unavailableStatusMessages[effectiveStatus]), {
         status: 403,
         reason: effectiveStatus
       });

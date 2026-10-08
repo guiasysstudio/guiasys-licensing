@@ -68,6 +68,40 @@ test("valida IDs recebidos dentro do payload", () => {
   }), 400, "invalid_identifier");
 });
 
+test("valida duração de licença de acordo com lifetime", () => {
+  assert.deepEqual(
+    validateLicenseCreatePayload({
+      customerId: "cus_0123456789abcdefabcd",
+      lifetime: true,
+      durationDays: 0
+    }),
+    {
+      customerId: "cus_0123456789abcdefabcd",
+      lifetime: true,
+      durationDays: 0
+    }
+  );
+
+  assertApiError(() => validateLicenseCreatePayload({
+    customerId: "cus_0123456789abcdefabcd",
+    lifetime: false,
+    durationDays: 0
+  }));
+
+  assert.deepEqual(
+    validateLicenseCreatePayload({
+      customerId: "cus_0123456789abcdefabcd",
+      lifetime: false,
+      durationDays: 1
+    }),
+    {
+      customerId: "cus_0123456789abcdefabcd",
+      lifetime: false,
+      durationDays: 1
+    }
+  );
+});
+
 
 test("emissão aceita metadados de idempotência com limites estritos", () => {
   const payload = validateLicenseCreatePayload({

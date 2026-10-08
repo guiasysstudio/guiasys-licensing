@@ -225,10 +225,71 @@ test("validação preserva suspensão mesmo depois do expiresAt", async () => {
   assert.equal(response.status, 403);
   const body = await response.json();
   assert.equal(body.error, "suspended");
+  assert.equal(body.message, "Licença suspensa.");
   assert.equal(
     services.store.get(`projects/${PROJECT_ID}/licenses/${LICENSE_ID}`).status,
     "suspended"
   );
+});
+
+test("validação pública traduz os estados revoked e pending", async () => {
+  const licenseLookup = sha256(LICENSE_KEY);
+
+  for (const [status, message] of [
+    ["revoked", "Licença revogada."],
+    ["pending", "Licença pendente."]
+  ]) {
+    const services = memoryServices({
+      [`projects/${PROJECT_ID}`]: {
+        name: "Projeto Teste",
+        prefix: "GSS",
+        status: "active",
+        integrationCode: "GSLI-ABCD-EFGH-JKLM",
+        allowedOrigins: []
+      },
+      [`projects/${PROJECT_ID}/licenseKeys/${licenseLookup}`]: {
+        licenseId: LICENSE_ID
+      },
+      [`projects/${PROJECT_ID}/licenses/${LICENSE_ID}`]: {
+        key: LICENSE_KEY,
+        customerId: "cus_0123456789abcdefabcd",
+        customerName: "Cliente",
+        customerEmail: "cliente@example.com",
+        planName: "Mensal",
+        durationDays: 30,
+        lifetime: false,
+        maxDevices: 1,
+        startMode: "first_activation",
+        status,
+        activatedAt: null,
+        expiresAt: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      }
+    });
+
+    const response = await handleRequest(
+      new Request("https://painel.licencas.guiasys.online/api/v1/license/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: PROJECT_ID,
+          licenseKey: LICENSE_KEY,
+          deviceId: `DEVICE-C15-${status.toUpperCase()}`
+        })
+      }),
+      {
+        FIREBASE_PROJECT_ID: "guiasys-licensing",
+        ADMIN_FIREBASE_UID: "uid-master-test",
+        __services: services
+      }
+    );
+
+    assert.equal(response.status, 403);
+    const body = await response.json();
+    assert.equal(body.error, status);
+    assert.equal(body.message, message);
+  }
 });
 
 test("plano vitalício não pode virar temporário sem duração válida", async () => {
@@ -462,6 +523,46 @@ test("plano temporário rejeita duração zero na criação", async () => {
   assert.equal(createdPlans.length, 0);
 });
 
+test("emissão personalizada temporária não converte duração zero em fallback", async () => {
+  const customerId = "cus_0123456789abcdefabcd";
+  const services = memoryServices({
+    [`projects/${PROJECT_ID}`]: {
+      name: "Projeto Teste",
+      prefix: "GSS",
+      status: "active"
+    },
+    [`projects/${PROJECT_ID}/customers/${customerId}`]: {
+      name: "Cliente",
+      email: "cliente@example.com",
+      status: "active"
+    }
+  });
+  const env = authenticatedEnv(services);
+
+  const response = await handleRequest(
+    jsonRequest(
+      `/api/v1/admin/projects/${PROJECT_ID}/licenses`,
+      "POST",
+      {
+        customerId,
+        planName: "Temporária inválida",
+        lifetime: false,
+        durationDays: 0,
+        maxDevices: 1,
+        startMode: "first_activation"
+      }
+    ),
+    env
+  );
+
+  assert.equal(response.status, 400);
+  assert.equal((await response.json()).error, "invalid_request");
+  assert.equal(
+    [...services.store.keys()].filter(path => path.startsWith(`projects/${PROJECT_ID}/licenses/`)).length,
+    0
+  );
+});
+
 
 test("origem web não autorizada é recusada antes de qualquer migração do projeto", async () => {
   const services = memoryServices({
@@ -522,6 +623,103 @@ async function signingFixture() {
     updatedAt: createdAt
   };
 }
+
+test("plano vitalício emite licença pendente e ativa sem expiração", async () => {
+  const signing = await signingFixture();
+  const customerId = "cus_0123456789abcdefabcd";
+  const project = {
+    name: "Projeto Teste",
+    slug: "projeto-teste",
+    prefix: "GSS",
+    status: "active",
+    integrationCode: "GSLI-ABCD-EFGH-JKLM",
+    publicCatalog: false,
+    allowedOrigins: [],
+    offlineDays: 7,
+    validationHours: 24,
+    signingKeyId: signing.keyId,
+    signingAlgorithm: "ES256",
+    signingPublicJwk: signing.publicJwk,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z"
+  };
+  const services = memoryServices({
+    [`projects/${PROJECT_ID}`]: project,
+    [`projects/${PROJECT_ID}/internal/signing`]: signing,
+    [`projects/${PROJECT_ID}/plans/${PLAN_ID}`]: {
+      name: "Plano Auditoria Vitalício",
+      durationDays: 0,
+      lifetime: true,
+      deviceLimit: 3,
+      startMode: "first_activation",
+      active: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    },
+    [`projects/${PROJECT_ID}/customers/${customerId}`]: {
+      name: "Cliente Vitalício",
+      email: "vitalicio@example.com",
+      status: "active"
+    }
+  });
+  const env = authenticatedEnv(services);
+
+  const issueResponse = await handleRequest(
+    jsonRequest(
+      `/api/v1/admin/projects/${PROJECT_ID}/licenses`,
+      "POST",
+      {
+        customerId,
+        planId: PLAN_ID,
+        planName: "Plano Auditoria Vitalício",
+        lifetime: true,
+        durationDays: 0,
+        maxDevices: 3,
+        startMode: "first_activation"
+      }
+    ),
+    env
+  );
+
+  assert.equal(issueResponse.status, 201);
+  const issued = (await issueResponse.json()).license;
+  assert.equal(issued.status, "pending");
+  assert.equal(issued.lifetime, true);
+  assert.equal(issued.durationDays, 0);
+  assert.equal(issued.expiresAt, null);
+  assert.equal(issued.activatedAt, null);
+  assert.equal(issued.maxDevices, 3);
+
+  const activateResponse = await handleRequest(
+    new Request("https://painel.licencas.guiasys.online/api/v1/license/activate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId: PROJECT_ID,
+        licenseKey: issued.key,
+        deviceId: "DEVICE-C15-LIFETIME",
+        requestId: "req-c15-lifetime-activate"
+      })
+    }),
+    env
+  );
+
+  assert.equal(activateResponse.status, 200);
+  const activated = (await activateResponse.json()).license;
+  assert.equal(activated.status, "active");
+  assert.equal(activated.lifetime, true);
+  assert.equal(activated.durationDays, 0);
+  assert.equal(activated.totalTermDays, 0);
+  assert.equal(activated.expiresAt, null);
+  assert.ok(activated.activatedAt);
+  assert.equal(activated.maxDevices, 3);
+
+  const stored = services.store.get(`projects/${PROJECT_ID}/licenses/${issued.id}`);
+  assert.equal(stored.status, "active");
+  assert.equal(stored.lifetime, true);
+  assert.equal(stored.durationDays, 0);
+  assert.equal(stored.expiresAt, null);
+});
 
 test("fluxo público ativa, valida idempotência, aplica limite, desativa e verifica entitlement", async () => {
   const signing = await signingFixture();

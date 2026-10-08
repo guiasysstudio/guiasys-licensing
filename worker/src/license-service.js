@@ -21,7 +21,17 @@ export async function issueLicenseInTransaction({
   actor = "system"
 }) {
   const lifetime = Boolean(plan.lifetime);
-  const durationDays = lifetime ? 0 : Math.max(1, Number(plan.durationDays || 30));
+  const requestedDurationDays = Number(plan.durationDays);
+  if (
+    !lifetime &&
+    (!Number.isInteger(requestedDurationDays) || requestedDurationDays < 1 || requestedDurationDays > 36500)
+  ) {
+    throw Object.assign(new Error("Licenças temporárias precisam ter duração entre 1 e 36500 dias."), {
+      status: 400,
+      reason: "invalid_license_duration"
+    });
+  }
+  const durationDays = lifetime ? 0 : requestedDurationDays;
   const maxDevices = Math.max(1, Number(plan.deviceLimit || 1));
   const startMode = ["first_activation", "immediate"].includes(plan.startMode)
     ? plan.startMode

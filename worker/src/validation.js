@@ -464,8 +464,19 @@ export function validateLicenseCreatePayload(body) {
   if (planId) result.planId = assertEntityId("plans", planId);
 
   assignIfDefined(result, "planName", readString(body, "planName", { max: 120 }));
-  assignIfDefined(result, "durationDays", readNumber(body, "durationDays", { integer: true, min: 1, max: 36500 }));
-  assignIfDefined(result, "lifetime", readBoolean(body, "lifetime"));
+  const lifetime = readBoolean(body, "lifetime");
+  assignIfDefined(result, "lifetime", lifetime);
+
+  if (lifetime === true) {
+    readNumber(body, "durationDays", { integer: true, min: 0, max: 36500 });
+    result.durationDays = 0;
+  } else {
+    assignIfDefined(result, "durationDays", readNumber(body, "durationDays", {
+      integer: true,
+      min: 1,
+      max: 36500
+    }));
+  }
   assignIfDefined(result, "maxDevices", readNumber(body, "maxDevices", { integer: true, min: 1, max: 1000 }));
   assignIfDefined(result, "startMode", readEnum(body, "startMode", ["first_activation", "immediate"]));
   assignIfDefined(result, "notes", readString(body, "notes", { max: 2000 }));
