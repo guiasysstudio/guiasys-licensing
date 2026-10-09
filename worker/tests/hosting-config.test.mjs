@@ -144,6 +144,7 @@ test("CSP público permite somente assets locais, API same-origin e Firebase Sto
   assert.match(csp, /style-src 'self'/);
   assert.match(csp, /img-src 'self' data: https:\/\/firebasestorage\.googleapis\.com/);
   assert.equal(/img-src[^;]*https:(?:;|\s)/.test(csp), false);
+  assert.equal(csp.includes("googleusercontent.com"), false);
   assert.match(csp, /connect-src 'self'/);
   assert.match(csp, /object-src 'none'/);
   assert.equal(csp.includes("unsafe-inline"), false);

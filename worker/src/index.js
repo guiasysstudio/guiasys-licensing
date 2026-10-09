@@ -568,7 +568,9 @@ async function requireFirebaseUser(request, env) {
       uid: user.sub,
       email: user.email || account?.email || null,
       name: user.name || account?.displayName || null,
-      picture: null,
+      picture: String(user.firebase?.sign_in_provider || "") === "google.com"
+        ? user.picture || account?.photoUrl || null
+        : null,
       emailVerified: Boolean(account?.emailVerified ?? user.email_verified),
       authTime: Number(user.auth_time),
       issuedAt: Number(user.iat),
@@ -3077,12 +3079,19 @@ async function nextOrderNumberInTransaction(tx) {
   return `GS-${String(value).padStart(6, "0")}`;
 }
 
-function customerAccountView(account) {
-  const photoUrl = firebaseStorageMediaUrl(
-    account.photoUrl,
-    account.photoStoragePath,
-    `profiles/${account.firebaseUid}/`
+function managedCustomerPhoto(account, urlField = "photoUrl", pathField = "photoStoragePath") {
+  return firebaseStorageMediaUrl(
+    account?.[urlField],
+    account?.[pathField],
+    `profiles/${account?.firebaseUid}/`
   );
+}
+
+function customerAccountView(account) {
+  const photoUrl = managedCustomerPhoto(account);
+  const photoSource = photoUrl && ["custom", "google"].includes(account.photoSource)
+    ? account.photoSource
+    : "";
   return {
     accountId: account.id || account.accountId,
     email: account.email || "",
@@ -3098,6 +3107,7 @@ function customerAccountView(account) {
     city: account.city || "",
     state: account.state || "",
     photoUrl,
+    photoSource,
     profileComplete: customerProfileComplete(account),
     status: account.status || "active",
     createdAt: account.createdAt,
@@ -3110,10 +3120,123 @@ function customerOrderView(order) {
   return safe;
 }
 
+async function importGoogleCustomerPhotoIfNeeded(env, account, user) {
+  if (
+    user.signInProvider !== "google.com" ||
+    !user.picture ||
+    typeof env.__services?.uploadStorageObject !== "function"
+  ) {
+    return account;
+  }
+
+  const accountPath = `customerAccounts/${account.id}`;
+  const sourceHash = await sha256Hex(user.picture);
+  const claim = await atomicClient(env).runTransaction(async tx => {
+    const current = await tx.get(accountPath);
+    if (!current || current.firebaseUid !== user.uid) {
+      throw Object.assign(new Error("Conta de cliente não encontrada."), { status: 404, reason: "account_not_found" });
+    }
+    if (managedCustomerPhoto(current, "googlePhotoUrl", "googlePhotoStoragePath")) {
+      return { claimed: false, account: current };
+    }
+    if (current.googlePhotoImportSourceHash === sourceHash) {
+      return { claimed: false, account: current };
+    }
+    const now = nowIso();
+    const next = {
+      ...current,
+      googlePhotoImportSourceHash: sourceHash,
+      googlePhotoImportStatus: "pending",
+      googlePhotoImportAttemptedAt: now,
+      updatedAt: now
+    };
+    delete next.id;
+    tx.set(accountPath, next);
+    return { claimed: true, account: next };
+  });
+  if (!claim.claimed) return { id: account.id, ...claim.account };
+
+  let uploaded = null;
+  try {
+    const downloader = typeof env.__services?.downloadRemoteImage === "function"
+      ? env.__services.downloadRemoteImage
+      : downloadRemoteImage;
+    const image = await downloader(user.picture, {
+      maxBytes: 2 * 1024 * 1024,
+      timeoutMs: 8_000,
+      maxRedirects: 3
+    });
+    const path = `profiles/${assertSafePathSegment(user.uid, "uid")}/google-${crypto.randomUUID()}.${image.extension}`;
+    uploaded = await env.__services.uploadStorageObject(path, {
+      bytes: image.bytes,
+      contentType: image.contentType
+    });
+
+    const persisted = await atomicClient(env).runTransaction(async tx => {
+      const current = await tx.get(accountPath);
+      if (!current || current.firebaseUid !== user.uid) {
+        throw Object.assign(new Error("Conta de cliente não encontrada."), { status: 404, reason: "account_not_found" });
+      }
+      const existingGooglePhoto = managedCustomerPhoto(current, "googlePhotoUrl", "googlePhotoStoragePath");
+      if (existingGooglePhoto || current.googlePhotoImportSourceHash !== sourceHash) {
+        return { stored: false, account: current };
+      }
+      const customActive = current.photoSource === "custom" && Boolean(managedCustomerPhoto(current));
+      const next = {
+        ...current,
+        googlePhotoUrl: uploaded.url,
+        googlePhotoStoragePath: uploaded.path,
+        googlePhotoImportStatus: "imported",
+        ...(customActive ? {} : {
+          photoUrl: uploaded.url,
+          photoStoragePath: uploaded.path,
+          photoSource: "google"
+        }),
+        updatedAt: nowIso()
+      };
+      delete next.id;
+      tx.set(accountPath, next);
+      return { stored: true, account: next };
+    });
+    if (!persisted.stored && typeof env.__services?.deleteStorageObject === "function") {
+      await env.__services.deleteStorageObject(uploaded.path).catch(() => {});
+    }
+    return { id: account.id, ...persisted.account };
+  } catch (error) {
+    if (uploaded?.path && typeof env.__services?.deleteStorageObject === "function") {
+      await env.__services.deleteStorageObject(uploaded.path).catch(() => {});
+    }
+    let fallback = claim.account;
+    try {
+      fallback = await atomicClient(env).runTransaction(async tx => {
+        const current = await tx.get(accountPath);
+        if (!current || current.googlePhotoImportSourceHash !== sourceHash || managedCustomerPhoto(current, "googlePhotoUrl", "googlePhotoStoragePath")) {
+          return current || fallback;
+        }
+        const next = {
+          ...current,
+          googlePhotoImportStatus: "failed",
+          updatedAt: nowIso()
+        };
+        delete next.id;
+        tx.set(accountPath, next);
+        return next;
+      });
+    } catch {
+      // A foto Google e opcional; a autenticacao e a conta continuam disponiveis.
+    }
+    env.__services?.log?.("warn", "customer.google_photo_import_failed", {
+      accountId: account.id,
+      reason: error?.reason || error?.message || "unknown_error"
+    });
+    return { id: account.id, ...fallback };
+  }
+}
+
 async function ensureCustomerAccount(env, user) {
   if (!user.email) throw Object.assign(new Error("A conta precisa possuir um e-mail."), { status: 403, reason: "email_required" });
   const accountId = `acct_${(await sha256Hex(user.uid)).slice(0, 20)}`;
-  return await atomicClient(env).runTransaction(async tx => {
+  const account = await atomicClient(env).runTransaction(async tx => {
     const path = `customerAccounts/${accountId}`;
     const current = await tx.get(path);
     if (current && current.firebaseUid !== user.uid) {
@@ -3124,24 +3247,31 @@ async function ensureCustomerAccount(env, user) {
     }
     const normalizedEmail = String(user.email).toLowerCase();
     const displayName = current?.displayName || user.name || "";
-    const managedPhotoUrl = firebaseStorageMediaUrl(
-      current?.photoUrl,
-      current?.photoStoragePath,
-      `profiles/${user.uid}/`
+    const normalizedCurrent = { ...current, firebaseUid: user.uid };
+    const managedPhotoUrl = managedCustomerPhoto(normalizedCurrent);
+    let googlePhotoUrl = managedCustomerPhoto(
+      normalizedCurrent,
+      "googlePhotoUrl",
+      "googlePhotoStoragePath"
     );
-    if (
-      current &&
-      current.firebaseUid === user.uid &&
-      current.email === normalizedEmail &&
-      current.emailVerified === Boolean(user.emailVerified) &&
-      current.displayName === displayName &&
-      String(current.photoUrl || "") === managedPhotoUrl
-    ) {
-      return { id: accountId, ...current };
+    let googlePhotoStoragePath = googlePhotoUrl ? String(current?.googlePhotoStoragePath || "") : "";
+    let photoSource = ["custom", "google"].includes(current?.photoSource)
+      ? current.photoSource
+      : managedPhotoUrl ? "custom" : "";
+    if (photoSource === "google" && !googlePhotoUrl && managedPhotoUrl) {
+      googlePhotoUrl = managedPhotoUrl;
+      googlePhotoStoragePath = String(current?.photoStoragePath || "");
     }
+    const customPhotoActive = photoSource === "custom" && Boolean(managedPhotoUrl);
+    const googlePhotoActive = user.signInProvider === "google.com" && Boolean(googlePhotoUrl);
+    photoSource = customPhotoActive ? "custom" : googlePhotoActive ? "google" : "";
+    const activePhotoUrl = customPhotoActive ? managedPhotoUrl : googlePhotoActive ? googlePhotoUrl : "";
+    const activePhotoStoragePath = customPhotoActive
+      ? String(current?.photoStoragePath || "")
+      : googlePhotoActive ? googlePhotoStoragePath : "";
 
     const now = nowIso();
-    const account = {
+    const next = {
       ...(current || {}),
       accountId,
       firebaseUid: user.uid,
@@ -3157,15 +3287,27 @@ async function ensureCustomerAccount(env, user) {
       neighborhood: current?.neighborhood || "",
       city: current?.city || "",
       state: current?.state || "",
-      photoUrl: managedPhotoUrl,
-      photoStoragePath: managedPhotoUrl ? (current?.photoStoragePath || "") : "",
+      photoUrl: activePhotoUrl,
+      photoStoragePath: activePhotoStoragePath,
+      photoSource,
+      googlePhotoUrl,
+      googlePhotoStoragePath,
+      googlePhotoImportSourceHash: current?.googlePhotoImportSourceHash || "",
+      googlePhotoImportStatus: current?.googlePhotoImportStatus || "",
+      googlePhotoImportAttemptedAt: current?.googlePhotoImportAttemptedAt || "",
+      signInProvider: user.signInProvider,
       status: current?.status || "active",
       createdAt: current?.createdAt || now,
       updatedAt: now
     };
-    current ? tx.set(path, account) : tx.create(path, account);
-    return { id: accountId, ...account };
+    delete next.id;
+    const stableKeys = Object.keys(next).filter(key => !["createdAt", "updatedAt"].includes(key));
+    const unchanged = current && stableKeys.every(key => current[key] === next[key]);
+    if (unchanged) return { id: accountId, ...current };
+    current ? tx.set(path, next) : tx.create(path, next);
+    return { id: accountId, ...next };
   });
+  return await importGoogleCustomerPhotoIfNeeded(env, account, user);
 }
 
 export async function lookupBrazilianPostalCode(value, fetchImpl = fetch) {
@@ -3258,10 +3400,19 @@ async function uploadCustomerPhoto(env, account, request) {
       if (!current || current.firebaseUid !== account.firebaseUid) {
         throw Object.assign(new Error("Conta de cliente não encontrada."), { status: 404, reason: "account_not_found" });
       }
-      const next = { ...current, photoUrl: uploaded.url, photoStoragePath: uploaded.path, updatedAt: nowIso() };
+      const previousStoragePath = current.photoSource === "custom"
+        ? String(current.photoStoragePath || "")
+        : "";
+      const next = {
+        ...current,
+        photoUrl: uploaded.url,
+        photoStoragePath: uploaded.path,
+        photoSource: "custom",
+        updatedAt: nowIso()
+      };
       delete next.id;
       tx.set(`customerAccounts/${account.id}`, next);
-      return { next, previousStoragePath: String(current.photoStoragePath || "") };
+      return { next, previousStoragePath };
     });
   } catch (error) {
     if (typeof env.__services?.deleteStorageObject === "function") {
@@ -3281,7 +3432,19 @@ async function removeCustomerPhoto(env, account) {
     if (!current || current.firebaseUid !== account.firebaseUid) {
       throw Object.assign(new Error("Conta de cliente não encontrada."), { status: 404, reason: "account_not_found" });
     }
-    const next = { ...current, photoUrl: "", photoStoragePath: "", updatedAt: nowIso() };
+    if (current.photoSource !== "custom") {
+      return { next: current, previousStoragePath: "" };
+    }
+    const googlePhotoUrl = current.signInProvider === "google.com"
+      ? managedCustomerPhoto(current, "googlePhotoUrl", "googlePhotoStoragePath")
+      : "";
+    const next = {
+      ...current,
+      photoUrl: googlePhotoUrl,
+      photoStoragePath: googlePhotoUrl ? String(current.googlePhotoStoragePath || "") : "",
+      photoSource: googlePhotoUrl ? "google" : "",
+      updatedAt: nowIso()
+    };
     delete next.id;
     tx.set(`customerAccounts/${account.id}`, next);
     return { next, previousStoragePath: String(current.photoStoragePath || "") };
@@ -4365,7 +4528,7 @@ async function handleCustomer(request, env, origin, url, user) {
   }
   if (parts.length === 2 && parts[0] === "me" && parts[1] === "photo" && request.method === "POST") {
     const saved = await uploadCustomerPhoto(env, account, request);
-    return json({ ok: true, account: customerAccountView(saved.account), upload: saved.upload }, 200, origin);
+    return json({ ok: true, account: customerAccountView(saved.account) }, 200, origin);
   }
   if (parts.length === 2 && parts[0] === "me" && parts[1] === "photo" && request.method === "DELETE") {
     const saved = await removeCustomerPhoto(env, account);

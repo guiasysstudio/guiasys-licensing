@@ -41,13 +41,25 @@ function projectData() {
 
 function services(initial = {}) {
   const store = new Map(Object.entries(initial).map(([path, value]) => [path, clone(value)]));
-  let identity = { uid: "customer-c15-a", email: "a.c15@example.com", name: "Cliente C15" };
+  let identity = {
+    uid: "customer-c15-a",
+    email: "a.c15@example.com",
+    name: "Cliente C15",
+    provider: "password",
+    picture: "https://lh3.googleusercontent.com/external-avatar"
+  };
   const uploads = [];
+  const logs = [];
+  let failNextPhotoPersistence = false;
   const read = path => store.has(path) ? { id: docId(path), ...clone(store.get(path)) } : null;
   return {
     store,
     uploads,
-    setIdentity(uid, email, name = email) { identity = { uid, email, name }; },
+    logs,
+    failNextPhotoPersistence() { failNextPhotoPersistence = true; },
+    setIdentity(uid, email, name = email, provider = "password", picture = "https://lh3.googleusercontent.com/external-avatar") {
+      identity = { uid, email, name, provider, picture };
+    },
     runtime: "firebase-functions-v2",
     async verifyIdToken() {
       const now = Math.floor(Date.now() / 1000);
@@ -55,12 +67,12 @@ function services(initial = {}) {
         aud: "guiasys-licensing", iss: "https://securetoken.google.com/guiasys-licensing",
         sub: identity.uid, exp: now + 3600, iat: now - 5, auth_time: now - 5,
         email: identity.email, email_verified: true, name: identity.name,
-        picture: "https://lh3.googleusercontent.com/external-avatar",
-        firebase: { sign_in_provider: "password" }
+        picture: identity.picture,
+        firebase: { sign_in_provider: identity.provider }
       };
     },
     async getAccountState() {
-      return { localId: identity.uid, email: identity.email, displayName: identity.name, photoUrl: "https://lh3.googleusercontent.com/external-avatar", emailVerified: true, disabled: false, validSince: "0" };
+      return { localId: identity.uid, email: identity.email, displayName: identity.name, photoUrl: identity.picture, emailVerified: true, disabled: false, validSince: "0" };
     },
     async getDoc(path) { return read(path); },
     async setDoc(path, value) { store.set(path, clone(value)); return read(path); },
@@ -104,12 +116,18 @@ function services(initial = {}) {
             delete(path) { writes.push({ path, remove: true }); }
           };
           const result = await operation(tx);
+          if (failNextPhotoPersistence && writes.some(write =>
+            write.value?.photoSource === "custom" && /\/avatar-/.test(write.value?.photoStoragePath || "")
+          )) {
+            failNextPhotoPersistence = false;
+            throw Object.assign(new Error("falha de persistência simulada"), { status: 502, reason: "upstream_error" });
+          }
           for (const write of writes) write.remove ? store.delete(write.path) : store.set(write.path, write.value);
           return result;
         }
       };
     },
-    log() {}
+    log(level, event, details) { logs.push({ level, event, details }); }
   };
 }
 
@@ -264,41 +282,136 @@ test("quantidade dois gera duas licenças rastreáveis e replay não duplica", a
   assert.equal([...api.store.keys()].filter(path => path.startsWith(`projects/${PROJECT}/licenses/`)).length, 2);
 });
 
-test("upload valida MIME, extensão, assinatura e exige autenticação", async () => {
+test("upload aceita nomes comuns e continua validando path, MIME, extensão e assinatura", async () => {
   const png = Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0,0,0,0]).toString("base64");
   assert.equal(validateMediaPayload({ fileName: "avatar.png", contentType: "image/png", dataBase64: png }).contentType, "image/png");
+  for (const fileName of ["Logo GuiaPlay.png", "Foto João.png", "André - Perfil.png"]) {
+    assert.equal(validateMediaPayload({ fileName, contentType: "image/png", dataBase64: png }).fileName, fileName);
+  }
+  const jpeg = Buffer.from([0xff,0xd8,0xff,0xe0,0,0,0,0]).toString("base64");
+  assert.equal(validateMediaPayload({ fileName: "Minha foto (1).jpg", contentType: "image/jpeg", dataBase64: jpeg }).fileName, "Minha foto (1).jpg");
+  for (const fileName of ["../avatar.png", "pasta/avatar.png", "pasta\\avatar.png", "avatar\u0000.png"]) {
+    assert.throws(() => validateMediaPayload({ fileName, contentType: "image/png", dataBase64: png }));
+  }
   assert.throws(() => validateMediaPayload({ fileName: "avatar.jpg", contentType: "image/png", dataBase64: png }), error => error.reason === "invalid_media_type");
   const api = services(projectData());
   const denied = await handleRequest(new Request("https://licencas.guiasys.online/api/v1/customer/me/photo", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fileName: "avatar.png", contentType: "image/png", dataBase64: png })
+    body: JSON.stringify({ fileName: "Logo GuiaPlay.png", contentType: "image/png", dataBase64: png })
   }), environment(api));
   assert.equal(denied.status, 401);
   const uploaded = await handleRequest(request("/api/v1/customer/me/photo", "POST", {
-    fileName: "avatar.png", contentType: "image/png", dataBase64: png
+    fileName: "Logo GuiaPlay.png", contentType: "image/png", dataBase64: png
   }), environment(api));
   assert.equal(uploaded.status, 200);
   assert.match(api.uploads.find(item => item.path)?.path, /^profiles\/customer-c15-a\/avatar-/);
-  assert.match((await uploaded.json()).account.photoUrl, /^https:\/\/firebasestorage\.googleapis\.com/);
+  const uploadedPayload = await uploaded.json();
+  assert.equal("upload" in uploadedPayload, false, "API não expõe storagePath fora da account view");
+  const uploadedAccount = uploadedPayload.account;
+  assert.match(uploadedAccount.photoUrl, /^https:\/\/firebasestorage\.googleapis\.com/);
+  assert.equal(uploadedAccount.photoSource, "custom");
   const replacement = await handleRequest(request("/api/v1/customer/me/photo", "POST", {
-    fileName: "avatar.png", contentType: "image/png", dataBase64: png
+    fileName: "Foto João.png", contentType: "image/png", dataBase64: png
   }), environment(api));
   assert.equal(replacement.status, 200);
   assert.equal(api.uploads.filter(item => item.deleted).length, 1, "a troca remove a foto anterior depois de persistir");
+  const firstCustomPath = api.uploads.find(item => item.path?.includes("/avatar-"))?.path;
+  const replacementUploadIndex = api.uploads.findLastIndex(item => item.path?.includes("/avatar-"));
+  const firstDeleteIndex = api.uploads.findIndex(item => item.deleted === firstCustomPath);
+  assert.ok(replacementUploadIndex >= 0 && firstDeleteIndex > replacementUploadIndex, "custom A só é removida após upload e persistência de B");
   const removed = await handleRequest(request("/api/v1/customer/me/photo", "DELETE"), environment(api));
   assert.equal(removed.status, 200);
-  assert.equal((await removed.json()).account.photoUrl, "");
+  const removedAccount = (await removed.json()).account;
+  assert.equal(removedAccount.photoUrl, "");
+  assert.equal(removedAccount.photoSource, "");
   assert.equal(api.uploads.filter(item => item.deleted).length, 2);
 });
 
-test("avatar externo do Google não é persistido nem exposto", async () => {
+test("falha ao persistir custom B remove B e mantém custom A ativa", async () => {
   const api = services(projectData());
+  const png = Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0,0,0,0]).toString("base64");
+  const first = await handleRequest(request("/api/v1/customer/me/photo", "POST", {
+    fileName: "custom A.png", contentType: "image/png", dataBase64: png
+  }), environment(api));
+  const accountA = (await first.json()).account;
+  const pathA = api.uploads.find(item => item.path?.includes("/avatar-"))?.path;
+  api.failNextPhotoPersistence();
+  const failed = await handleRequest(request("/api/v1/customer/me/photo", "POST", {
+    fileName: "custom B.png", contentType: "image/png", dataBase64: png
+  }), environment(api));
+  assert.equal(failed.status, 502);
+  const persisted = [...api.store.values()].find(value => value?.firebaseUid === "customer-c15-a");
+  assert.equal(persisted.photoUrl, accountA.photoUrl);
+  assert.equal(persisted.photoStoragePath, pathA);
+  assert.equal(persisted.photoSource, "custom");
+  const customPaths = api.uploads.filter(item => item.path?.includes("/avatar-")).map(item => item.path);
+  assert.equal(customPaths.length, 2);
+  assert.equal(api.uploads.some(item => item.deleted === customPaths[1]), true);
+  assert.equal(api.uploads.some(item => item.deleted === pathA), false);
+});
+
+test("avatar Google não é exposto diretamente e é importado uma vez para Firebase Storage", async () => {
+  const api = services(projectData());
+  api.setIdentity("customer-c15-a", "a.c15@example.com", "Cliente C15", "google.com");
   const response = await handleRequest(request("/api/v1/customer/me"), environment(api));
   assert.equal(response.status, 200);
-  assert.equal((await response.json()).account.photoUrl, "");
+  const account = (await response.json()).account;
+  assert.match(account.photoUrl, /^https:\/\/firebasestorage\.googleapis\.com/);
+  assert.equal(account.photoSource, "google");
+  assert.equal(JSON.stringify(account).includes("googleusercontent.com"), false);
+  for (const privateField of ["firebaseUid", "photoStoragePath", "googlePhotoUrl", "googlePhotoStoragePath", "googlePhotoImportSourceHash"]) {
+    assert.equal(privateField in account, false, `API não expõe ${privateField}`);
+  }
   const stored = [...api.store.values()].find(value => value?.firebaseUid === "customer-c15-a");
-  assert.equal(stored.photoUrl, "");
-  assert.equal(stored.photoStoragePath, "");
+  assert.match(stored.googlePhotoStoragePath, /^profiles\/customer-c15-a\/google-/);
+  assert.equal(stored.photoStoragePath, stored.googlePhotoStoragePath);
+  assert.equal(api.uploads.filter(item => item.importedFrom).length, 1);
+  const repeated = await handleRequest(request("/api/v1/customer/me"), environment(api));
+  assert.equal(repeated.status, 200);
+  assert.equal(api.uploads.filter(item => item.importedFrom).length, 1, "GET repetido reutiliza a cópia gerenciada");
+});
+
+test("Google custom preserva fallback e remover restaura a cópia gerenciada", async () => {
+  const api = services(projectData());
+  api.setIdentity("customer-c15-a", "a.c15@example.com", "Cliente C15", "google.com");
+  const first = await handleRequest(request("/api/v1/customer/me"), environment(api));
+  const googleAccount = (await first.json()).account;
+  const googlePath = api.uploads.find(item => item.path?.includes("/google-"))?.path;
+  const png = Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0,0,0,0]).toString("base64");
+  const customResponse = await handleRequest(request("/api/v1/customer/me/photo", "POST", {
+    fileName: "Foto João.png", contentType: "image/png", dataBase64: png
+  }), environment(api));
+  const customAccount = (await customResponse.json()).account;
+  assert.equal(customAccount.photoSource, "custom");
+  assert.notEqual(customAccount.photoUrl, googleAccount.photoUrl);
+  assert.equal(api.uploads.some(item => item.deleted === googlePath), false, "upload custom preserva o fallback Google");
+
+  const removed = await handleRequest(request("/api/v1/customer/me/photo", "DELETE"), environment(api));
+  const restored = (await removed.json()).account;
+  assert.equal(restored.photoSource, "google");
+  assert.equal(restored.photoUrl, googleAccount.photoUrl);
+  assert.equal(api.uploads.some(item => item.deleted === googlePath), false);
+  assert.equal(JSON.stringify(restored).includes("googleusercontent.com"), false);
+});
+
+test("falha ao importar foto Google não bloqueia login e não repete download em cada GET", async () => {
+  const api = services(projectData());
+  api.setIdentity("customer-c15-a", "a.c15@example.com", "Cliente C15", "google.com");
+  let attempts = 0;
+  api.downloadRemoteImage = async () => {
+    attempts++;
+    throw Object.assign(new Error("origem indisponível"), { reason: "image_download_failed" });
+  };
+  const first = await handleRequest(request("/api/v1/customer/me"), environment(api));
+  assert.equal(first.status, 200);
+  const firstAccount = (await first.json()).account;
+  assert.equal(firstAccount.photoUrl, "");
+  assert.equal(firstAccount.photoSource, "");
+  const repeated = await handleRequest(request("/api/v1/customer/me"), environment(api));
+  assert.equal(repeated.status, 200);
+  assert.equal((await repeated.json()).account.photoUrl, "");
+  assert.equal(attempts, 1);
+  assert.equal(api.logs.some(item => item.level === "warn" && item.event === "customer.google_photo_import_failed"), true);
 });
 
 test("admin autorizado envia mídia comercial e slug duplicado é recusado", async () => {
@@ -625,6 +738,20 @@ test("portal SPA contém rotas, carrinho sem navegação automática, PIX manual
   assert.match(js, /sendPasswordResetEmail/);
   assert.match(js, /signInWithPopup\(auth, googleProvider\)/);
   assert.match(js, /Criar conta com Google/);
+  assert.match(js, /function profileInitial\(/);
+  assert.match(js, /toLocaleUpperCase\("pt-BR"\)/);
+  assert.match(js, /button\("Trocar foto"/);
+  assert.match(js, /button\("Remover foto"/);
+  assert.match(js, /state\.account\.photoSource === "custom"/);
+  assert.match(js, /state\.account\.photoSource === "google"/);
+  assert.match(js, /Foto padrão da conta Google/);
+  assert.match(js, /file\.hidden = true/);
+  assert.match(js, /\(\) => file\.click\(\)/);
+  assert.match(js, /Enviando foto…/);
+  assert.match(js, /state\.account = response\.account;\s*updateHeader\(\);/);
+  assert.equal(js.includes("googleusercontent.com"), false);
+  assert.match(css, /\.profile-photo-card\{/);
+  assert.match(css, /\.profile-photo-input\{display:none\}/);
   assert.match(html, /account-dropdown/);
   assert.match(js, /project\.additionalInfo/);
   assert.match(js, /featuredItems\.slice\(0, 6\)/);
@@ -651,4 +778,16 @@ test("portal SPA contém rotas, carrinho sem navegação automática, PIX manual
   assert.match(firestoreRules, /allow read, write: if false/);
   assert.match(storageRules, /allow read, write: if false/);
   assert.equal(/PAGBANK_TOKEN/.test(js), false);
+});
+
+test("fallback de avatar usa uma inicial maiúscula de nome, e-mail ou A", async () => {
+  const js = await readFile(new URL("../../public/assets/catalog.js", import.meta.url), "utf8");
+  const start = js.indexOf("function profileInitial(");
+  const end = js.indexOf("function safeNextPath", start);
+  assert.ok(start >= 0 && end > start);
+  const profileInitial = Function("state", `${js.slice(start, end)}; return profileInitial;`)({ account: null, user: null });
+  assert.equal(profileInitial({ displayName: "Andrew Lindolfo" }, null), "A");
+  assert.equal(profileInitial({ displayName: " joão " }, null), "J");
+  assert.equal(profileInitial({ displayName: "", email: "maria@email.com" }, null), "M");
+  assert.equal(profileInitial({}, {}), "A");
 });

@@ -401,7 +401,19 @@ export function validateMediaPayload(body, { maxBytes = 5 * 1024 * 1024, allowKi
   const allowed = new Set(["fileName", "contentType", "dataBase64", ...(allowKind ? ["kind"] : [])]);
   allowFields(body, allowed);
   const contentType = readEnum(body, "contentType", ["image/jpeg", "image/png", "image/webp"]);
-  const fileName = readString(body, "fileName", { required: true, max: 160, pattern: /^[A-Za-z0-9][A-Za-z0-9._-]*$/ });
+  const fileName = readString(body, "fileName", {
+    required: true,
+    max: 160,
+    normalize: value => value.normalize("NFC")
+  });
+  if (
+    /[\\/]/u.test(fileName) ||
+    /\p{Cc}/u.test(fileName) ||
+    fileName === "." ||
+    fileName === ".."
+  ) {
+    fail("O campo fileName possui formato inválido.");
+  }
   const dataBase64 = readString(body, "dataBase64", { required: true, max: Math.ceil(maxBytes * 4 / 3) + 16 });
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(dataBase64)) fail("Conteúdo base64 inválido.");
   const byteLength = Math.floor(dataBase64.length * 3 / 4) - (dataBase64.endsWith("==") ? 2 : dataBase64.endsWith("=") ? 1 : 0);

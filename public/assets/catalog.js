@@ -60,6 +60,11 @@ function safeHttpsUrl(value) {
     return url.searchParams.get("alt") === "media" && url.searchParams.get("token") ? url.href : "";
   } catch { return ""; }
 }
+function profileInitial(account = state.account, user = state.user) {
+  const source = String(account?.displayName || account?.email || user?.displayName || user?.email || "A").trim();
+  const first = Array.from(source)[0] || "A";
+  return Array.from(first.toLocaleUpperCase("pt-BR"))[0] || "A";
+}
 function safeNextPath(value, fallback = "/conta/compras") {
   const raw = String(value || "").trim();
   if (!raw.startsWith("/") || raw.startsWith("//") || raw.includes("\\") || /[\u0000-\u001f]/.test(raw)) return fallback;
@@ -223,9 +228,13 @@ function updateHeader() {
   avatar.src = avatarUrl || "";
   avatar.alt = avatarUrl ? "Foto do perfil" : "";
   const avatarFallback = $("#account-avatar-fallback");
-  const avatarName = state.account?.displayName || state.user?.displayName || state.user?.email || "A";
-  avatarFallback.textContent = String(avatarName).trim().charAt(0).toUpperCase() || "A";
+  avatarFallback.textContent = profileInitial();
   avatarFallback.hidden = Boolean(avatarUrl);
+  avatar.onerror = () => {
+    avatar.hidden = true;
+    avatar.removeAttribute("src");
+    avatarFallback.hidden = false;
+  };
   $("#account-dropdown").hidden = !state.user || $("#account-menu-button").getAttribute("aria-expanded") !== "true";
   document.querySelectorAll(".site-nav a[data-link]").forEach(node => {
     const current = node.pathname === location.pathname || (node.pathname === "/programas" && location.pathname.startsWith("/programas/"));
@@ -818,27 +827,94 @@ async function renderProfile() {
     } catch (error) { message.className = "form-message full error"; message.textContent = errorMessage(error); }
     finally { submit.disabled = false; }
   });
-  const photo = el("label", "full", "Foto do perfil (JPG, PNG ou WebP, até 2 MB)");
-  const file = el("input"); file.type = "file"; file.accept = ".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp";
+  const photo = el("section", "profile-photo-card full");
+  const photoPreview = el("div", "profile-photo-preview");
+  const photoUrl = safeHttpsUrl(state.account.photoUrl);
+  const photoFallback = el("span", "profile-photo-fallback", profileInitial());
+  photoPreview.append(photoFallback);
+  if (photoUrl) {
+    const currentPhoto = el("img", "profile-photo-image");
+    currentPhoto.src = photoUrl;
+    currentPhoto.alt = "Foto do perfil atual";
+    currentPhoto.referrerPolicy = "no-referrer";
+    currentPhoto.addEventListener("error", () => {
+      currentPhoto.remove();
+      photoFallback.hidden = false;
+    });
+    photoFallback.hidden = true;
+    photoPreview.prepend(currentPhoto);
+  }
+  const photoDetails = el("div", "profile-photo-details");
+  photoDetails.append(el("h3", "", "Foto do perfil"));
+  if (state.account.photoSource === "google") {
+    photoDetails.append(el("p", "profile-photo-note", "Foto padrão da conta Google"));
+  } else {
+    photoDetails.append(el("p", "profile-photo-note", "JPG, PNG ou WebP, até 2 MB."));
+  }
+  const photoActions = el("div", "inline-actions");
+  const photoStatus = el("p", "profile-photo-status");
+  photoStatus.setAttribute("aria-live", "polite");
+  const file = el("input", "profile-photo-input");
+  file.type = "file";
+  file.accept = ".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp";
+  file.hidden = true;
+  const changePhoto = button("Trocar foto", "button-secondary", () => file.click());
+  photoActions.append(changePhoto);
+  let removePhoto = null;
+  if (state.account.photoSource === "custom") {
+    removePhoto = button("Remover foto", "button-ghost", async () => {
+      changePhoto.disabled = true;
+      removePhoto.disabled = true;
+      photoStatus.className = "profile-photo-status";
+      photoStatus.textContent = "Removendo foto…";
+      try {
+        const response = await api("/api/v1/customer/me/photo", { method: "DELETE" });
+        state.account = response.account;
+        updateHeader();
+        showToast("Foto removida.");
+        await renderProfile();
+      } catch (error) {
+        photoStatus.className = "profile-photo-status error";
+        photoStatus.textContent = errorMessage(error);
+        changePhoto.disabled = false;
+        removePhoto.disabled = false;
+      }
+    });
+    photoActions.append(removePhoto);
+  }
   file.addEventListener("change", async () => {
     const selected = file.files?.[0]; if (!selected) return;
-    if (selected.size > 2 * 1024 * 1024) return showToast("A foto deve ter no máximo 2 MB.");
-    const dataBase64 = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.onerror = reject; reader.readAsDataURL(selected); });
+    if (selected.size > 2 * 1024 * 1024) {
+      file.value = "";
+      showToast("A foto deve ter no máximo 2 MB.");
+      return;
+    }
+    if (!["image/jpeg", "image/png", "image/webp"].includes(selected.type)) {
+      file.value = "";
+      showToast("Escolha uma foto JPG, PNG ou WebP.");
+      return;
+    }
+    changePhoto.disabled = true;
+    if (removePhoto) removePhoto.disabled = true;
+    photoStatus.className = "profile-photo-status";
+    photoStatus.textContent = "Enviando foto…";
     try {
+      const dataBase64 = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.onerror = reject; reader.readAsDataURL(selected); });
       const response = await api("/api/v1/customer/me/photo", { method: "POST", body: JSON.stringify({ fileName: selected.name, contentType: selected.type, dataBase64 }) });
-      state.account = response.account; updateHeader(); showToast("Foto atualizada.");
-    } catch (error) { showToast(errorMessage(error)); }
-  });
-  photo.append(file); form.append(photo);
-  if (state.account.photoUrl) form.append(button("Remover foto", "button-ghost", async () => {
-    try {
-      const response = await api("/api/v1/customer/me/photo", { method: "DELETE" });
       state.account = response.account;
       updateHeader();
-      showToast("Foto removida.");
-      renderProfile();
-    } catch (error) { showToast(errorMessage(error)); }
-  }));
+      showToast("Foto atualizada.");
+      await renderProfile();
+    } catch (error) {
+      photoStatus.className = "profile-photo-status error";
+      photoStatus.textContent = errorMessage(error);
+      changePhoto.disabled = false;
+      if (removePhoto) removePhoto.disabled = false;
+    } finally { file.value = ""; }
+  });
+  photoDetails.append(photoActions, photoStatus, file);
+  photo.append(photoPreview, photoDetails);
+  form.prepend(photo);
   content.append(form);
   accountLayout("/conta/perfil", content);
 }
