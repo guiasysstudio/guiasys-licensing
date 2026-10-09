@@ -373,6 +373,53 @@ test("admin autorizado envia mídia comercial e slug duplicado é recusado", asy
   assert.equal((await duplicate.json()).error, "project_slug_exists");
 });
 
+test("salvar após upload direto preserva URL e path gerenciados sem duplicar objetos", async () => {
+  const api = services(projectData());
+  api.setIdentity("master-c15", "master.c15@example.com", "Master C15");
+  const png = Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0,0,0,0]).toString("base64");
+
+  const logoResponse = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}/media`, "POST", {
+    kind: "logo", fileName: "logo.png", contentType: "image/png", dataBase64: png
+  }), environment(api));
+  assert.equal(logoResponse.status, 201);
+  const logoUpload = (await logoResponse.json()).upload;
+  const uploadsAfterLogo = api.uploads.filter(item => item.path).length;
+  const importsAfterLogo = api.uploads.filter(item => item.importedFrom).length;
+  const deletesAfterLogo = api.uploads.filter(item => item.deleted).length;
+
+  const logoPatch = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}`, "PATCH", {
+    logoUrl: logoUpload.url
+  }), environment(api));
+  assert.equal(logoPatch.status, 200);
+  let stored = api.store.get(`projects/${PROJECT}`);
+  assert.equal(stored.logoUrl, logoUpload.url);
+  assert.equal(stored.logoStoragePath, logoUpload.path);
+  assert.equal(api.uploads.filter(item => item.path).length, uploadsAfterLogo);
+  assert.equal(api.uploads.filter(item => item.importedFrom).length, importsAfterLogo);
+  assert.equal(api.uploads.filter(item => item.deleted).length, deletesAfterLogo);
+
+  const screenshotResponse = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}/media`, "POST", {
+    kind: "screenshot", fileName: "screen.png", contentType: "image/png", dataBase64: png
+  }), environment(api));
+  assert.equal(screenshotResponse.status, 201);
+  const screenshotBody = await screenshotResponse.json();
+  const screenshotUpload = screenshotBody.upload;
+  const uploadsAfterScreenshot = api.uploads.filter(item => item.path).length;
+  const importsAfterScreenshot = api.uploads.filter(item => item.importedFrom).length;
+  const deletesAfterScreenshot = api.uploads.filter(item => item.deleted).length;
+
+  const screenshotPatch = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}`, "PATCH", {
+    screenshots: screenshotBody.project.screenshots
+  }), environment(api));
+  assert.equal(screenshotPatch.status, 200);
+  stored = api.store.get(`projects/${PROJECT}`);
+  assert.deepEqual(stored.screenshots, [screenshotUpload.url]);
+  assert.deepEqual(stored.screenshotStoragePaths, [screenshotUpload.path]);
+  assert.equal(api.uploads.filter(item => item.path).length, uploadsAfterScreenshot);
+  assert.equal(api.uploads.filter(item => item.importedFrom).length, importsAfterScreenshot);
+  assert.equal(api.uploads.filter(item => item.deleted).length, deletesAfterScreenshot);
+});
+
 test("upload de screenshot preenche lacunas de projeto legado sem deslocar paths", async () => {
   const legacyWithoutPaths = projectData();
   legacyWithoutPaths[`projects/${PROJECT}`].screenshots = [

@@ -186,6 +186,23 @@ test("criação limita screenshots totais e preserva projeto para repetir falhas
   assert.match(source, /pendingMedia\[kind\] = remaining/);
 });
 
+test("tela Configurações vincula os quatro uploads ao projeto renderizado", () => {
+  const start = source.indexOf("async function projectSettingsView()");
+  const end = source.indexOf("async function platformSettingsView", start);
+  const settingsSource = source.slice(start, end);
+  const formMarkup = settingsSource.indexOf('<form id="project-settings-form">');
+  const projectFields = settingsSource.indexOf("projectForm(project)", formMarkup);
+  const formLookup = settingsSource.indexOf('document.querySelector("#project-settings-form")', projectFields);
+  const mediaBinding = settingsSource.indexOf("bindProjectMediaUploads(settingsForm, project.id)", formLookup);
+  const submitBinding = settingsSource.indexOf('settingsForm.addEventListener("submit"', mediaBinding);
+
+  assert.ok(formMarkup >= 0 && projectFields > formMarkup);
+  assert.ok(formLookup > projectFields && mediaBinding > formLookup && submitBinding > mediaBinding);
+  for (const kind of ["logo", "icon", "banner", "screenshot"]) {
+    assert.match(source.slice(source.indexOf("function projectForm(project = {})"), source.indexOf("function projectPayload")), new RegExp(`data-media-kind="${kind}"`));
+  }
+});
+
 
 test("contrato de integração usa o domínio público e o painel mantém API administrativa same-origin", () => {
   assert.match(source, /const API_BASE = window\.location\.origin;/);

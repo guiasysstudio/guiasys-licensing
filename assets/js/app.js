@@ -3307,7 +3307,10 @@ async function projectSettingsView() {
     </article>
   `;
 
-  document.querySelector("#project-settings-form").addEventListener("submit", async event => {
+  const settingsForm = document.querySelector("#project-settings-form");
+  bindProjectMediaUploads(settingsForm, project.id);
+
+  settingsForm.addEventListener("submit", async event => {
     event.preventDefault();
     const form = event.currentTarget;
     const values = Object.fromEntries(new FormData(form).entries());
