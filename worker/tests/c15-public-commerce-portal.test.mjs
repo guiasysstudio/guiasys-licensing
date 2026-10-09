@@ -373,6 +373,27 @@ test("admin autorizado envia mídia comercial e slug duplicado é recusado", asy
   assert.equal((await duplicate.json()).error, "project_slug_exists");
 });
 
+test("falha ao obter URL oficial não persiste referência de mídia no Firestore", async () => {
+  const api = services(projectData());
+  api.setIdentity("master-c15", "master.c15@example.com", "Master C15");
+  const before = clone(api.store.get(`projects/${PROJECT}`));
+  api.uploadStorageObject = async () => {
+    throw Object.assign(new Error("Falha ao gravar a mídia no Storage."), {
+      status: 502,
+      reason: "upstream_error"
+    });
+  };
+
+  const png = Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0,0,0,0]).toString("base64");
+  const response = await handleRequest(request(`/api/v1/admin/projects/${PROJECT}/media`, "POST", {
+    kind: "logo", fileName: "logo.png", contentType: "image/png", dataBase64: png
+  }), environment(api));
+
+  assert.equal(response.status, 502);
+  assert.equal((await response.json()).error, "upstream_error");
+  assert.deepEqual(api.store.get(`projects/${PROJECT}`), before);
+});
+
 test("salvar após upload direto preserva URL e path gerenciados sem duplicar objetos", async () => {
   const api = services(projectData());
   api.setIdentity("master-c15", "master.c15@example.com", "Master C15");

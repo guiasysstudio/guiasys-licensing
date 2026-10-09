@@ -56,6 +56,10 @@ test("runtime Firebase usa Admin SDK e credenciais nativas", () => {
   assert.match(runtime, /verifyIdToken\(idToken, true\)/);
   assert.match(runtime, /db\.runTransaction/);
   assert.match(runtime, /nativeTx\.create/);
+  assert.match(runtime, /import \{ getDownloadURL, getStorage \} from "firebase-admin\/storage"/);
+  assert.match(runtime, /const url = await getDownloadURL\(file\)/);
+  assert.doesNotMatch(runtime, /url:\s*`https:\/\/firebasestorage\.googleapis\.com/);
+  assert.match(runtime, /await file\.delete\(\{ ignoreNotFound: true \}\)/);
   assert.equal(runtime.includes("FIREBASE_SERVICE_ACCOUNT_JSON"), false);
   assert.equal(entry.includes("FIREBASE_SERVICE_ACCOUNT_JSON"), false);
 });

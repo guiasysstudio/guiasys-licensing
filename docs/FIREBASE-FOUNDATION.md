@@ -17,8 +17,10 @@ Projeto Firebase: `guiasys-licensing`.
 Toda mídia dinâmica (logo, ícone, banner, screenshot e foto de perfil) é gravada pela
 Function no Firebase Storage por meio do Admin SDK. O navegador envia o arquivo ou uma
 URL HTTPS usada somente como fonte de importação; a Function valida download, tipo,
-assinatura e tamanho, grava o objeto e persiste no Firestore apenas a URL oficial com
-download token e o `storagePath` correspondente.
+assinatura e tamanho, grava o objeto e solicita a URL oficial com `getDownloadURL(file)`.
+Somente depois dessa confirmação persiste no Firestore a URL com download token e o
+`storagePath` correspondente. Se a obtenção da URL falhar após a gravação, a Function
+tenta excluir imediatamente o objeto para evitar mídia órfã.
 
 Os namespaces usados são:
 
@@ -27,9 +29,11 @@ Os namespaces usados são:
 
 `storage.rules` permanece com `allow read, write: if false`. Não há upload direto do
 navegador: gravação e exclusão são operações privilegiadas do Admin SDK, enquanto a
-leitura pública de uma mídia usa somente a URL oficial emitida com
-`firebaseStorageDownloadTokens`. Assets estáticos em `public/assets/**` continuam sendo
-servidos pelo Firebase Hosting.
+leitura pública de uma mídia usa somente a URL compartilhável emitida pela API oficial
+do Admin SDK a partir de `firebaseStorageDownloadTokens`. O bucket é selecionado
+explicitamente de `app.options.storageBucket`/`FIREBASE_CONFIG` e o runtime rejeita
+divergência entre a configuração e o bucket retornado pelo SDK. Assets estáticos em
+`public/assets/**` continuam sendo servidos pelo Firebase Hosting.
 
 ## Functions
 

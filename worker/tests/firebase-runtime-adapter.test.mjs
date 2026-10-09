@@ -131,12 +131,27 @@ function createMocks() {
   };
 
   const storageObjects = new Map();
+  let downloadUrlError = null;
   const storage = {
-    bucket() {
+    bucket(name) {
+      calls.push(["storage.bucket", name]);
       return {
         name: "guiasys-licensing.firebasestorage.app",
         file(path) {
           return {
+            name: path,
+            bucket: { name: "guiasys-licensing.firebasestorage.app" },
+            storage: {
+              makeAuthenticatedRequest(options, callback) {
+                calls.push(["storage.getDownloadURL", path, options]);
+                if (downloadUrlError) {
+                  callback(downloadUrlError);
+                  return;
+                }
+                const token = storageObjects.get(path)?.options?.metadata?.metadata?.firebaseStorageDownloadTokens;
+                callback(null, { downloadTokens: token });
+              }
+            },
             async save(bytes, options) {
               calls.push(["storage.save", path, bytes, options]);
               storageObjects.set(path, { bytes, options });
@@ -158,7 +173,15 @@ function createMocks() {
     firestore,
     storage,
     storageObjects,
-    app: { options: { projectId: "guiasys-licensing" } }
+    failDownloadUrl(error = new Error("download url failed")) {
+      downloadUrlError = error;
+    },
+    app: {
+      options: {
+        projectId: "guiasys-licensing",
+        storageBucket: "guiasys-licensing.firebasestorage.app"
+      }
+    }
   };
 }
 
@@ -220,7 +243,7 @@ test("CRUD usa Firestore Admin mantendo shape dos documentos", async () => {
   assert.equal(await runtime.getDoc(projectPath), null);
 });
 
-test("runtime real grava e remove nomes de objetos com extensão no Firebase Storage", async () => {
+test("runtime grava, obtém URL oficial e remove objetos do Firebase Storage", async () => {
   const mocks = createMocks();
   const runtime = createFirebaseRuntime(mocks);
   const paths = [
@@ -242,9 +265,58 @@ test("runtime real grava e remove nomes de objetos com extensão no Firebase Sto
     assert.equal(saved.options.validation, "crc32c");
     assert.equal(saved.options.metadata.cacheControl, "public, max-age=31536000, immutable");
     assert.ok(saved.options.metadata.metadata.firebaseStorageDownloadTokens);
+    const downloadCall = mocks.calls.find(call => call[0] === "storage.getDownloadURL" && call[1] === path);
+    assert.equal(downloadCall?.[2]?.method, "GET");
+    assert.equal(downloadCall?.[2]?.uri.endsWith(`/o/${encodeURIComponent(path)}`), true);
     await runtime.deleteStorageObject(path);
     assert.equal(mocks.storageObjects.has(path), false);
   }
+  assert.deepEqual(mocks.calls.find(call => call[0] === "storage.bucket"), [
+    "storage.bucket",
+    "guiasys-licensing.firebasestorage.app"
+  ]);
+});
+
+test("runtime limpa objeto quando getDownloadURL falha após file.save", async () => {
+  const mocks = createMocks();
+  const runtime = createFirebaseRuntime(mocks);
+  const path = "commerce/projects/prj_0123456789abcdefabcd/logo/orphan.png";
+  mocks.failDownloadUrl();
+
+  await assert.rejects(
+    () => runtime.uploadStorageObject(path, {
+      bytes: Uint8Array.from([1, 2, 3]),
+      contentType: "image/png"
+    }),
+    error => error?.status === 502 && error?.reason === "upstream_error" && error?.message === "Falha ao gravar a mídia no Storage."
+  );
+
+  assert.equal(mocks.calls.some(call => call[0] === "storage.save" && call[1] === path), true);
+  assert.equal(mocks.calls.some(call => call[0] === "storage.getDownloadURL" && call[1] === path), true);
+  assert.deepEqual(
+    mocks.calls.find(call => call[0] === "storage.delete" && call[1] === path),
+    ["storage.delete", path, { ignoreNotFound: true }]
+  );
+  assert.equal(mocks.storageObjects.has(path), false);
+});
+
+test("runtime rejeita bucket retornado diferente da configuração Firebase", async () => {
+  const mocks = createMocks();
+  mocks.storage.bucket = name => ({
+    name: `${name}.unexpected`,
+    file() {
+      throw new Error("bucket inesperado não deve ser usado");
+    }
+  });
+  const runtime = createFirebaseRuntime(mocks);
+
+  await assert.rejects(
+    () => runtime.uploadStorageObject("profiles/customer-uid/avatar.png", {
+      bytes: Uint8Array.from([1]),
+      contentType: "image/png"
+    }),
+    error => error?.status === 502 && error?.reason === "upstream_error" && /bucket diferente/.test(error?.cause?.message || "")
+  );
 });
 
 test("runtime Storage rejeita traversal antes de acessar o bucket", async () => {

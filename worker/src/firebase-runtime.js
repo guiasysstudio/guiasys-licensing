@@ -1,7 +1,7 @@
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
-import { getStorage } from "firebase-admin/storage";
+import { getDownloadURL, getStorage } from "firebase-admin/storage";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -23,6 +23,40 @@ function projectIdFromEnvironment(app) {
   }
 
   throw new Error("Não foi possível determinar o projectId do Firebase.");
+}
+
+function firebaseConfigFromEnvironment() {
+  try {
+    return JSON.parse(process.env.FIREBASE_CONFIG || "{}");
+  } catch {
+    throw new Error("FIREBASE_CONFIG inválido no runtime Firebase.");
+  }
+}
+
+function normalizeStorageBucket(value) {
+  const name = String(value || "").trim();
+  if (!/^[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$/.test(name) || name.includes("..")) {
+    throw new Error("Bucket do Firebase Storage ausente ou inválido.");
+  }
+  return name;
+}
+
+function storageBucketFromEnvironment(app) {
+  const appBucket = app?.options?.storageBucket
+    ? normalizeStorageBucket(app.options.storageBucket)
+    : "";
+  const configBucketValue = firebaseConfigFromEnvironment()?.storageBucket;
+  const configBucket = configBucketValue ? normalizeStorageBucket(configBucketValue) : "";
+
+  if (appBucket && configBucket && appBucket !== configBucket) {
+    throw new Error("Bucket do Firebase Storage diverge entre app.options e FIREBASE_CONFIG.");
+  }
+
+  const configuredBucket = appBucket || configBucket;
+  if (!configuredBucket) {
+    throw new Error("Bucket do Firebase Storage ausente ou inválido.");
+  }
+  return configuredBucket;
 }
 
 function normalizeValue(value) {
@@ -99,9 +133,13 @@ export function createFirebaseRuntime({
   const firebaseApp = app || getApps()[0] || initializeApp();
   const authClient = auth || getAuth(firebaseApp);
   const db = firestore || getFirestore(firebaseApp);
+  const configuredStorageBucket = storageBucketFromEnvironment(firebaseApp);
   let storageBucket = null;
   const bucket = () => {
-    storageBucket ||= (storage || getStorage(firebaseApp)).bucket();
+    storageBucket ||= (storage || getStorage(firebaseApp)).bucket(configuredStorageBucket);
+    if (storageBucket.name !== configuredStorageBucket) {
+      throw new Error("Firebase Storage retornou um bucket diferente do configurado.");
+    }
     return storageBucket;
   };
   const projectId = projectIdFromEnvironment(firebaseApp);
@@ -139,9 +177,11 @@ export function createFirebaseRuntime({
   async function uploadStorageObject(path, { bytes, contentType }) {
     const safePath = assertStorageObjectPath(path);
     const token = randomUUID();
+    let file = null;
+    let saved = false;
     try {
       const activeBucket = bucket();
-      const file = activeBucket.file(safePath);
+      file = activeBucket.file(safePath);
       await file.save(Buffer.from(bytes), {
         resumable: false,
         validation: "crc32c",
@@ -151,15 +191,25 @@ export function createFirebaseRuntime({
           metadata: { firebaseStorageDownloadTokens: token }
         }
       });
+      saved = true;
+      const url = await getDownloadURL(file);
       return {
         path: safePath,
-        url: `https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(activeBucket.name)}/o/${encodeURIComponent(safePath)}?alt=media&token=${encodeURIComponent(token)}`
+        url
       };
     } catch (error) {
+      let cause = error;
+      if (saved && file) {
+        try {
+          await file.delete({ ignoreNotFound: true });
+        } catch (cleanupError) {
+          cause = new AggregateError([error, cleanupError], "Falha ao obter URL e limpar objeto do Storage.");
+        }
+      }
       throw Object.assign(new Error("Falha ao gravar a mídia no Storage."), {
         status: 502,
         reason: "upstream_error",
-        cause: error
+        cause
       });
     }
   }

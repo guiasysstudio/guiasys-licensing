@@ -217,6 +217,14 @@ if (!/firebase-admin\/auth/.test(firebaseRuntime) || !/firebase-admin\/firestore
   fail("Runtime deve usar Firebase Admin SDK para Auth e Firestore.");
 }
 
+if (!/getDownloadURL/.test(firebaseRuntime) || !/firebase-admin\/storage/.test(firebaseRuntime)) {
+  fail("Runtime deve obter URLs de mídia pela API oficial do Firebase Admin SDK.");
+}
+
+if (/url:\s*`https:\/\/firebasestorage\.googleapis\.com/.test(firebaseRuntime)) {
+  fail("Runtime não pode fabricar manualmente URLs de download do Firebase Storage.");
+}
+
 if (/FIREBASE_SERVICE_ACCOUNT_JSON/.test(firebaseEntry) || /FIREBASE_SERVICE_ACCOUNT_JSON/.test(firebaseRuntime)) {
   fail("Runtime Firebase não deve depender de FIREBASE_SERVICE_ACCOUNT_JSON.");
 }
