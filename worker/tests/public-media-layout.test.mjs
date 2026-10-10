@@ -42,7 +42,8 @@ test("mídias comerciais públicas usam contain, centralização e limites de ca
   const screenshot = declarations(".screenshots img");
 
   assert.equal(productContainer.overflow, "hidden");
-  assert.equal(productContainer.background, "var(--surface-2)");
+  assert.equal(productContainer.background, "var(--media-surface)");
+  assert.equal(productContainer["box-sizing"], "border-box");
   assert.equal(productContainer.height, "160px");
   assert.equal(productContainer.padding, "18px");
   assert.equal(productImage["object-fit"], "contain");
@@ -62,7 +63,9 @@ test("mídias comerciais públicas usam contain, centralização e limites de ca
   assert.equal(banner["object-position"], "center");
   assert.equal(banner["max-width"], "100%");
   assert.equal(banner.overflow, "hidden");
-  assert.equal(banner.background, "var(--surface-2)");
+  assert.equal(banner.background, "var(--media-surface)");
+  assert.equal(banner["box-sizing"], "border-box");
+  assert.equal(banner.padding, "clamp(14px,2vw,24px)");
 
   assert.equal(gallery["min-width"], "0");
   assert.equal(gallery["grid-template-columns"], "repeat(auto-fit,minmax(min(240px,100%),1fr))");
@@ -72,13 +75,28 @@ test("mídias comerciais públicas usam contain, centralização e limites de ca
   assert.equal(screenshot["min-width"], "0");
   assert.equal(screenshot["max-width"], "100%");
   assert.equal(screenshot.overflow, "hidden");
-  assert.equal(screenshot.background, "var(--surface-2)");
+  assert.equal(screenshot.background, "var(--media-surface)");
+  assert.equal(screenshot["box-sizing"], "border-box");
+  assert.equal(screenshot.padding, "clamp(12px,1.8vw,20px)");
 
   for (const selector of [".product-media img", ".product-icon", ".detail-logo", ".detail-banner", ".screenshots img"]) {
     assert.notEqual(declarations(selector)["object-fit"].replace("!important", ""), "cover", `${selector} não pode recortar mídia comercial`);
   }
   assert.match(css, /@media\(max-width:820px\)/);
   assert.match(css, /@media\(max-width:560px\)/);
+});
+
+test("padding interno preserva uma área útil responsiva sem estourar as mídias", () => {
+  for (const [boxWidth, boxHeight, padding] of [[320, 200, 24], [280, 158, 20], [240, 150, 14]]) {
+    const innerWidth = boxWidth - padding * 2;
+    const innerHeight = boxHeight - padding * 2;
+    assert.ok(innerWidth > 0 && innerHeight > 0);
+
+    const result = containedSize(1920, 1080, innerWidth, innerHeight);
+    assert.ok(result.width + padding * 2 <= boxWidth);
+    assert.ok(result.height + padding * 2 <= boxHeight);
+    assert.ok(result.offsetX >= 0 && result.offsetY >= 0);
+  }
 });
 
 test("contain preserva proporção e mantém formatos extremos dentro do quadro", () => {

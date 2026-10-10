@@ -4,12 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Programas e licenças oficiais da GuiaSys Studio.">
+  <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#0C171F">
   <meta property="og:type" content="website">
   <meta property="og:title" content="GuiaSys Licensing — Programas e licenças oficiais">
   <meta property="og:description" content="Programas e licenças oficiais da GuiaSys Studio.">
   <title>GuiaSys Licensing — Programas e licenças oficiais</title>
   <link rel="icon" type="image/svg+xml" href="/assets/brand/guiasys-licensing-symbol.svg">
+  <script src="/assets/theme-init.js"></script>
   <link rel="stylesheet" href="/assets/catalog.css">
   <script type="module" src="/assets/catalog.js"></script>
 </head>
@@ -30,6 +32,15 @@
       <a href="/#sobre" data-link>Sobre</a>
       <a href="/#suporte" data-link>Suporte</a>
       <a href="/carrinho" data-link>Carrinho <span id="cart-count" class="count-badge">0</span></a>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Ativar modo claro" title="Ativar modo claro" aria-pressed="false">
+        <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <circle cx="12" cy="12" r="3.5"></circle>
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"></path>
+        </svg>
+        <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M20.4 15.2A8.5 8.5 0 0 1 8.8 3.6a8.5 8.5 0 1 0 11.6 11.6Z"></path>
+        </svg>
+      </button>
       <div class="account-menu">
         <button id="account-menu-button" class="account-menu-button" type="button" aria-expanded="false" aria-controls="account-dropdown">
           <img id="account-avatar" alt="" hidden><span id="account-avatar-fallback" class="avatar-fallback" aria-hidden="true">A</span><span id="account-label">Entrar</span>

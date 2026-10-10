@@ -37,6 +37,7 @@ const expected = [
   "assets/brand/guiasys-licensing-wordmark.svg",
   "assets/catalog.css",
   "assets/catalog.js",
+  "assets/theme-init.js",
   "index.html"
 ];
 
@@ -46,13 +47,14 @@ if (JSON.stringify(files) !== JSON.stringify(expected)) {
 
 const index = await readFile(path.join(dist, "index.html"), "utf8");
 const app = await readFile(path.join(dist, "assets/catalog.js"), "utf8");
+const theme = await readFile(path.join(dist, "assets/theme-init.js"), "utf8");
 if (!/GuiaSys Licensing/.test(index) || !/id="app"/.test(index)) {
   fail("index público deve identificar a loja e o shell SPA GuiaSys Licensing.");
 }
 if (!/fetch\("\/api\/v1\/catalog"/.test(app)) {
   fail("frontend público deve consumir GET /api/v1/catalog pelo mesmo origin.");
 }
-if (/innerHTML|insertAdjacentHTML|document\.write/.test(app)) {
+if (/innerHTML|insertAdjacentHTML|document\.write/.test(app + theme)) {
   fail("renderização do catálogo deve evitar APIs de HTML inseguras.");
 }
 if (!/customer-storefront/.test(app) || /entitlement-verifier/.test(index + app)) {
