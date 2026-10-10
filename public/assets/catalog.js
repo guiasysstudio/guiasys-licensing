@@ -342,7 +342,8 @@ async function renderHome() {
   setDocument("Início");
   await loadCatalog();
   app.replaceChildren();
-  const hero = el("section", "hero section");
+  const heroShell = el("section", "hero-shell");
+  const hero = el("div", "hero section");
   const copy = el("div", "hero-copy");
   copy.append(
     el("p", "eyebrow", "Software GuiaSys · licenças oficiais"),
@@ -362,6 +363,7 @@ async function renderHome() {
   logo.addEventListener("error", () => { logo.hidden = true; fallback.hidden = false; }, { once: true });
   visual.append(logo, fallback);
   hero.append(copy, visual);
+  heroShell.append(hero);
   const featured = el("section", "section");
   const heading = el("div", "section-heading");
   heading.append(titleBlock("Destaques", "Programas em destaque"), el("p", "", "Programas publicados e mantidos pela equipe GuiaSys."));
@@ -379,7 +381,7 @@ async function renderHome() {
     const card = el("article", "value-card"); card.append(el("h3", "", title), el("p", "", text)); values.append(card);
   }
   inside.append(values); institutional.append(inside);
-  app.append(hero, featured, institutional);
+  app.append(heroShell, featured, institutional);
 }
 async function renderPrograms() {
   setDocument("Programas", "Conheça os programas e planos oficiais publicados pela GuiaSys.");

@@ -18,61 +18,65 @@
 <body>
   <a class="skip-link" href="#app">Ir para o conteúdo</a>
   <header class="site-header">
-    <a class="brand" href="/" data-link aria-label="GuiaSys Licensing — início">
-      <picture>
-        <source media="(max-width: 560px)" srcset="/assets/brand/guiasys-licensing-symbol.svg">
-        <img src="/assets/brand/guiasys-licensing-lockup.svg" alt="GuiaSys Licensing" data-brand-image>
-      </picture>
-      <span class="brand-fallback" data-brand-fallback hidden>GuiaSys Licensing</span>
-    </a>
-    <button class="menu-button" type="button" aria-expanded="false" aria-controls="site-nav">Menu</button>
-    <nav id="site-nav" class="site-nav" aria-label="Navegação principal">
-      <a href="/" data-link>Início</a>
-      <a href="/programas" data-link>Programas</a>
-      <a href="/#sobre" data-link>Sobre</a>
-      <a href="/#suporte" data-link>Suporte</a>
-      <a href="/carrinho" data-link>Carrinho <span id="cart-count" class="count-badge">0</span></a>
-      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Ativar modo claro" title="Ativar modo claro" aria-pressed="false">
-        <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <circle cx="12" cy="12" r="3.5"></circle>
-          <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"></path>
-        </svg>
-        <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M20.4 15.2A8.5 8.5 0 0 1 8.8 3.6a8.5 8.5 0 1 0 11.6 11.6Z"></path>
-        </svg>
-      </button>
-      <div class="account-menu">
-        <button id="account-menu-button" class="account-menu-button" type="button" aria-expanded="false" aria-controls="account-dropdown">
-          <img id="account-avatar" alt="" hidden><span id="account-avatar-fallback" class="avatar-fallback" aria-hidden="true">A</span><span id="account-label">Entrar</span>
+    <div class="site-header-inner">
+      <a class="brand" href="/" data-link aria-label="GuiaSys Licensing — início">
+        <picture>
+          <source media="(max-width: 560px)" srcset="/assets/brand/guiasys-licensing-symbol.svg">
+          <img src="/assets/brand/guiasys-licensing-lockup.svg" alt="GuiaSys Licensing" data-brand-image>
+        </picture>
+        <span class="brand-fallback" data-brand-fallback hidden>GuiaSys Licensing</span>
+      </a>
+      <button class="menu-button" type="button" aria-expanded="false" aria-controls="site-nav">Menu</button>
+      <nav id="site-nav" class="site-nav" aria-label="Navegação principal">
+        <a href="/" data-link>Início</a>
+        <a href="/programas" data-link>Programas</a>
+        <a href="/#sobre" data-link>Sobre</a>
+        <a href="/#suporte" data-link>Suporte</a>
+        <a href="/carrinho" data-link>Carrinho <span id="cart-count" class="count-badge">0</span></a>
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Ativar modo claro" title="Ativar modo claro" aria-pressed="false">
+          <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <circle cx="12" cy="12" r="3.5"></circle>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"></path>
+          </svg>
+          <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M20.4 15.2A8.5 8.5 0 0 1 8.8 3.6a8.5 8.5 0 1 0 11.6 11.6Z"></path>
+          </svg>
         </button>
-        <div id="account-dropdown" class="account-dropdown" hidden>
-          <a href="/conta/perfil" data-link>Meu perfil</a>
-          <a href="/conta/favoritos" data-link>Favoritos</a>
-          <a href="/conta/compras" data-link>Minhas compras</a>
-          <button id="logout-button" class="text-button" type="button">Sair</button>
+        <div class="account-menu">
+          <button id="account-menu-button" class="account-menu-button" type="button" aria-expanded="false" aria-controls="account-dropdown">
+            <img id="account-avatar" alt="" hidden><span id="account-avatar-fallback" class="avatar-fallback" aria-hidden="true">A</span><span id="account-label">Entrar</span>
+          </button>
+          <div id="account-dropdown" class="account-dropdown" hidden>
+            <a href="/conta/perfil" data-link>Meu perfil</a>
+            <a href="/conta/favoritos" data-link>Favoritos</a>
+            <a href="/conta/compras" data-link>Minhas compras</a>
+            <button id="logout-button" class="text-button" type="button">Sair</button>
+          </div>
         </div>
-      </div>
-    </nav>
+      </nav>
+    </div>
   </header>
   <main id="app" tabindex="-1" aria-live="polite">
     <section class="loading-state"><span class="spinner" aria-hidden="true"></span><p>Carregando…</p></section>
   </main>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
   <footer class="site-footer" id="suporte">
-    <div>
-      <a class="footer-brand" href="/" data-link aria-label="GuiaSys Licensing — início">
-        <img src="/assets/brand/guiasys-licensing-lockup.svg" alt="GuiaSys Licensing">
-      </a>
-      <p>Licenças oficiais para os programas da GuiaSys Studio.</p>
+    <div class="site-footer-inner">
+      <div>
+        <a class="footer-brand" href="/" data-link aria-label="GuiaSys Licensing — início">
+          <img src="/assets/brand/guiasys-licensing-lockup.svg" alt="GuiaSys Licensing">
+        </a>
+        <p>Licenças oficiais para os programas da GuiaSys Studio.</p>
+      </div>
+      <nav aria-label="Links institucionais">
+        <a href="/programas" data-link>Programas</a>
+        <a href="/conta/perfil" data-link>Minha conta</a>
+        <a href="/termos" data-link>Termos de uso</a>
+        <a href="/privacidade" data-link>Privacidade</a>
+        <a href="mailto:suporte@guiasys.online">suporte@guiasys.online</a>
+      </nav>
+      <p>© <span id="current-year"></span> GuiaSys Studio · Catálogo oficial GSL-v1</p>
     </div>
-    <nav aria-label="Links institucionais">
-      <a href="/programas" data-link>Programas</a>
-      <a href="/conta/perfil" data-link>Minha conta</a>
-      <a href="/termos" data-link>Termos de uso</a>
-      <a href="/privacidade" data-link>Privacidade</a>
-      <a href="mailto:suporte@guiasys.online">suporte@guiasys.online</a>
-    </nav>
-    <p>© <span id="current-year"></span> GuiaSys Studio · Catálogo oficial GSL-v1</p>
   </footer>
 </body>
 </html>

@@ -68,7 +68,7 @@ test("mídias comerciais públicas usam contain, centralização e limites de ca
   assert.equal(banner.padding, "clamp(14px,2vw,24px)");
 
   assert.equal(gallery["min-width"], "0");
-  assert.equal(gallery["grid-template-columns"], "repeat(auto-fit,minmax(min(240px,100%),1fr))");
+  assert.equal(gallery["grid-template-columns"], "repeat(auto-fit,minmax(min(320px,100%),1fr))");
   assert.equal(gallery.overflow, "hidden");
   assert.equal(screenshot["object-fit"], "contain");
   assert.equal(screenshot["object-position"], "center");
