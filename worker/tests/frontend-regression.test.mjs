@@ -48,6 +48,59 @@ test("runtime usa cache com TTL, geração e deduplicação de requests", () => 
   assert.equal(source.includes("state.cache.has("), false);
 });
 
+test("invalidação por projeto impede inflight antigo de reaparecer no cache", async () => {
+  const start = source.indexOf("function cacheRead(");
+  const end = source.indexOf("function resetAdministrativeState", start);
+  assert.ok(start >= 0 && end > start);
+
+  const state = {
+    cache: new Map(),
+    inflight: new Map(),
+    cacheRequests: new Map(),
+    cacheGeneration: 0
+  };
+  const runtime = Function(
+    "state",
+    "CACHE_TTL_MS",
+    `${source.slice(start, end)}; return { cachedLoad, invalidate };`
+  )(state, 30_000);
+
+  let resolveOld;
+  const oldLoad = runtime.cachedLoad(
+    "prj_a145:customers",
+    () => new Promise(resolve => { resolveOld = resolve; }),
+    { force: true }
+  );
+  await Promise.resolve();
+  assert.equal(state.inflight.has("prj_a145:customers"), true);
+
+  runtime.invalidate("prj_a145");
+  assert.equal(state.inflight.has("prj_a145:customers"), false);
+  const fresh = await runtime.cachedLoad("prj_a145:customers", async () => ["novo"], { force: true });
+  assert.deepEqual(fresh, ["novo"]);
+
+  resolveOld(["antigo"]);
+  assert.deepEqual(await oldLoad, ["antigo"]);
+  assert.deepEqual(state.cache.get("prj_a145:customers").value, ["novo"]);
+});
+
+test("todas as mutações de cliente fazem refetch confirmado e render sem reload", () => {
+  const start = source.indexOf("async function customersView()");
+  const end = source.indexOf("function bindLicensePlanBehavior", start);
+  const customerSource = source.slice(start, end);
+
+  assert.match(source, /async function refreshCustomersAfterMutation\(projectId = state\.selectedProjectId\)/);
+  assert.match(source, /await loadEntity\("customers", true\);\s*await renderContent\(\);/);
+  assert.match(customerSource, /const customers = await loadEntity\("customers"\)/);
+  assert.equal((customerSource.match(/await refreshCustomersAfterMutation\(projectId\)/g) || []).length, 3);
+  assert.equal(customerSource.includes("location.reload"), false);
+  assert.equal(customerSource.includes("setTimeout"), false);
+  assert.match(source, /active: \["Ativa", "success"\]/);
+  assert.match(source, /inactive: \["Inativo", "muted"\]/);
+  assert.match(customerSource, /nextStatus === "active" \? "Cliente reativado\." : "Cliente desativado\."/);
+  assert.match(customerSource, /customer\.status === "inactive" \? "Ativar" : "Desativar"/);
+});
+
 test("todas as chamadas HTTP do painel passam pelo timeout centralizado", () => {
   assert.match(source, /async function fetchWithClientTimeout\(/);
   assert.equal((source.match(/\bfetch\(/g) || []).length, 1);

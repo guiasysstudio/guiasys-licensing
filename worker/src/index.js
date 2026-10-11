@@ -1401,6 +1401,24 @@ async function transactionFindLicenseByKey(tx, projectId, licenseKey) {
   return await tx.get(`${entityPath(projectId, "licenses")}/${licenseId}`);
 }
 
+async function assertLicenseCustomerActive(tx, projectId, license) {
+  if (!license?.customerId) return null;
+
+  const customerId = assertEntityId("customers", license.customerId);
+  const customer = await tx.get(`${entityPath(projectId, "customers")}/${customerId}`);
+  if (customer?.status === "inactive") {
+    throw Object.assign(
+      new Error("Cliente inativo. Esta licença está temporariamente indisponível."),
+      {
+        status: 403,
+        reason: "customer_inactive"
+      }
+    );
+  }
+
+  return customer;
+}
+
 async function projectExists(env, projectId) {
   return Boolean(await getDoc(env, projectPath(projectId)));
 }
@@ -2267,6 +2285,7 @@ async function publicActivate(env, body, origin = "") {
     }
 
     assertLicenseCanActivate({ ...license, status: effectiveStatus }, now);
+    await assertLicenseCustomerActive(tx, projectId, license);
 
     const devicePath = `projects/${projectId}/devices/${deviceHash}`;
     const trialPath = `projects/${projectId}/trials/${deviceHash}`;
@@ -2479,6 +2498,8 @@ async function publicValidate(env, body, origin = "") {
         reason: "device_not_authorized"
       });
     }
+
+    await assertLicenseCustomerActive(tx, projectId, license);
 
     const validation = validationMutation(device, body.requestId, now);
 

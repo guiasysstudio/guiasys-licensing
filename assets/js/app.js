@@ -395,13 +395,19 @@ async function cachedLoad(key, loader, { force = false, ttlMs = CACHE_TTL_MS } =
 function invalidate(projectId = "") {
   state.cacheGeneration++;
 
-  for (const key of [...state.cache.keys()]) {
+  const invalidatedKeys = new Set([
+    ...state.cache.keys(),
+    ...state.inflight.keys(),
+    ...state.cacheRequests.keys()
+  ]);
+
+  for (const key of invalidatedKeys) {
     if (!projectId || key.startsWith(`${projectId}:`) || key === "projects") {
       state.cache.delete(key);
+      state.inflight.delete(key);
+      state.cacheRequests.set(key, (state.cacheRequests.get(key) || 0) + 1);
     }
   }
-
-  if (!projectId) state.inflight.clear();
 }
 
 function resetAdministrativeState() {
@@ -1007,6 +1013,14 @@ async function loadEntity(entity, force = false) {
     },
     { force, ttlMs: CACHE_TTL_MS }
   );
+}
+
+async function refreshCustomersAfterMutation(projectId = state.selectedProjectId) {
+  invalidate(projectId);
+  if (!projectId || projectId !== state.selectedProjectId) return;
+
+  await loadEntity("customers", true);
+  await renderContent();
 }
 
 function logText(log) {
@@ -1815,7 +1829,7 @@ function customerForm(customer = {}) {
 }
 
 async function customersView() {
-  const customers = await loadEntity("customers", true);
+  const customers = await loadEntity("customers");
   el.content.innerHTML = `
     ${pageHeader("Clientes", "Clientes cadastrados somente dentro deste projeto.",
       '<button class="btn btn-primary" id="new-customer" type="button">+ Novo cliente</button>')}
@@ -1858,13 +1872,13 @@ async function customersView() {
     runButtonAction(button, async () => {
       const customer = customers.find(c => c.id === button.dataset.id);
       const nextStatus = customer.status === "inactive" ? "active" : "inactive";
-      await api(`/api/v1/admin/projects/${state.selectedProjectId}/customers/${customer.id}`, {
+      const projectId = state.selectedProjectId;
+      await api(`/api/v1/admin/projects/${projectId}/customers/${customer.id}`, {
         method: "PATCH",
         body: JSON.stringify({ status: nextStatus })
       });
-      invalidate(state.selectedProjectId);
+      await refreshCustomersAfterMutation(projectId);
       toast(nextStatus === "active" ? "Cliente reativado." : "Cliente desativado.");
-      await renderContent();
     });
   });
 
@@ -1872,10 +1886,10 @@ async function customersView() {
     runButtonAction(button, async () => {
       const customer = customers.find(c => c.id === button.dataset.id);
       if (!await confirmAction("Excluir cliente", `Excluir "${customer.name}" deste projeto?`, "Excluir")) return;
-      await api(`/api/v1/admin/projects/${state.selectedProjectId}/customers/${customer.id}`, { method: "DELETE" });
-      invalidate(state.selectedProjectId);
+      const projectId = state.selectedProjectId;
+      await api(`/api/v1/admin/projects/${projectId}/customers/${customer.id}`, { method: "DELETE" });
+      await refreshCustomersAfterMutation(projectId);
       toast("Cliente excluído.");
-      await renderContent();
     });
   });
 }
@@ -1888,13 +1902,13 @@ function openCustomer(customer = null) {
     submitLabel: customer ? "Salvar alterações" : "Cadastrar cliente",
     wide: true,
     onSubmit: async values => {
+      const projectId = state.selectedProjectId;
       const path = customer
-        ? `/api/v1/admin/projects/${state.selectedProjectId}/customers/${customer.id}`
-        : `/api/v1/admin/projects/${state.selectedProjectId}/customers`;
+        ? `/api/v1/admin/projects/${projectId}/customers/${customer.id}`
+        : `/api/v1/admin/projects/${projectId}/customers`;
       await api(path, { method: customer ? "PATCH" : "POST", body: JSON.stringify(values) });
-      invalidate(state.selectedProjectId);
+      await refreshCustomersAfterMutation(projectId);
       toast(customer ? "Cliente atualizado." : "Cliente cadastrado.");
-      await renderContent();
     }
   });
 }
