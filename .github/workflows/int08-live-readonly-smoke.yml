@@ -23,6 +23,8 @@ jobs:
     steps:
       - name: Checkout candidate code
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - name: Setup Node 22
         uses: actions/setup-node@v7
         with:
