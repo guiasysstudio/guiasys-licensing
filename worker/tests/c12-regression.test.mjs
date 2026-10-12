@@ -898,6 +898,24 @@ test("fluxo público ativa, valida idempotência, aplica limite, desativa e veri
   assert.equal(replayBody.license.validationCount, 1);
   assert.equal(replayBody.license.revalidationReplay, true);
 
+  // INT-06: A -> B -> A deve ser replay para a mesma licença/dispositivo.
+  const validateB = await handleRequest(
+    publicRequest("/api/v1/license/validate", {
+      deviceId, requestId: "req-c12-validate-b"
+    }), env
+  );
+  assert.equal(validateB.status, 200);
+  assert.equal((await validateB.json()).license.validationCount, 2);
+  const replayAAfterB = await handleRequest(
+    publicRequest("/api/v1/license/validate", {
+      deviceId, requestId: "req-c12-validate"
+    }), env
+  );
+  assert.equal(replayAAfterB.status, 200);
+  const replayAAfterBBody = await replayAAfterB.json();
+  assert.equal(replayAAfterBBody.license.revalidationReplay, true);
+  assert.equal(replayAAfterBBody.license.validationCount, 2);
+
   const deactivate = await handleRequest(
     publicRequest("/api/v1/license/deactivate", {
       deviceId,
@@ -1065,6 +1083,20 @@ test("fluxo de trial preserva período, revalida de forma idempotente e converte
   const replayed = await validateReplay.json();
   assert.equal(replayed.trial.validationCount, 1);
   assert.equal(replayed.trial.revalidationReplay, true);
+
+  // INT-06: mesmos IDs em ordem A-B-A não geram uma terceira revalidação.
+  const trialB = await handleRequest(
+    trialRequest("/api/v1/trial/validate", "req-c12-trial-validate-b"), env
+  );
+  assert.equal(trialB.status, 200);
+  assert.equal((await trialB.json()).trial.validationCount, 2);
+  const trialAAgain = await handleRequest(
+    trialRequest("/api/v1/trial/validate", "req-c12-trial-validate"), env
+  );
+  assert.equal(trialAAgain.status, 200);
+  const trialReplayBody = await trialAAgain.json();
+  assert.equal(trialReplayBody.trial.revalidationReplay, true);
+  assert.equal(trialReplayBody.trial.validationCount, 2);
 
   const paidActivation = await handleRequest(
     new Request("https://painel.licencas.guiasys.online/api/v1/license/activate", {
