@@ -99,6 +99,7 @@ function createRuntime({ initialAdmin, selectedProjectId = PROJECT_A, route = "p
     document: { hidden: false },
     sessionStorage,
     SELECTED_PROJECT_STORAGE_KEY: "gsl:selected-project",
+    SELECTED_ROUTE_STORAGE_KEY: "gsl:selected-route",
     AUTHORIZATION_SYNC_THROTTLE_MS: 30_000,
     verifyAdministrator: async user => {
       counters.verify++;
@@ -158,7 +159,9 @@ function createRuntime({ initialAdmin, selectedProjectId = PROJECT_A, route = "p
        syncAuthorization,
        authorizationFingerprint,
        restoreSelectedProject,
+       restoreSelectedRoute,
        setSelectedProject,
+       setRoute,
        routeAllowed,
        defaultProjectRoute,
        defaultGlobalRoute,

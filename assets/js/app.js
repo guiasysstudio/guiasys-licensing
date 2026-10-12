@@ -45,6 +45,7 @@ const API_TIMEOUT_MS = 12_000;
 const AUTHORIZATION_SYNC_THROTTLE_MS = 30_000;
 const AUTHORIZATION_SYNC_INTERVAL_MS = 60_000;
 const SELECTED_PROJECT_STORAGE_KEY = "gsl:selected-project";
+const SELECTED_ROUTE_STORAGE_KEY = "gsl:selected-route";
 
 const state = {
   user: null,
@@ -163,7 +164,13 @@ function routeAllowed(route) {
   const project = projectItems.find(item => item[0] === route);
   if (project) return hasPermission(project[3]);
 
-  return true;
+  return false;
+}
+
+function routeKind(route) {
+  if (globalItems.some(item => item[0] === route)) return "global";
+  if (projectItems.some(item => item[0] === route)) return "project";
+  return "";
 }
 
 function defaultProjectRoute() {
@@ -353,12 +360,53 @@ function restoreSelectedProject() {
     projectId = sessionStorage.getItem(SELECTED_PROJECT_STORAGE_KEY) || "";
   } catch {}
 
-  if (projectId && state.projects.some(project => project.id === projectId && project.status !== "archived")) {
+  if (projectId && state.projects.some(project => (
+    project.id === projectId &&
+    project.status !== "archived" &&
+    administratorCanAccessProject(state.administrator, project.id)
+  ))) {
     setSelectedProject(projectId);
     return;
   }
 
   setSelectedProject("");
+}
+
+function setRoute(route, { persist = true } = {}) {
+  const nextRoute = routeKind(route)
+    ? route
+    : (state.selectedProjectId ? defaultProjectRoute() : defaultGlobalRoute());
+
+  state.route = nextRoute;
+  try {
+    if (persist) sessionStorage.setItem(SELECTED_ROUTE_STORAGE_KEY, nextRoute);
+    else sessionStorage.removeItem(SELECTED_ROUTE_STORAGE_KEY);
+  } catch {}
+  return nextRoute;
+}
+
+function restoreSelectedRoute() {
+  let route = "";
+  try {
+    route = sessionStorage.getItem(SELECTED_ROUTE_STORAGE_KEY) || "";
+  } catch {}
+
+  const kind = routeKind(route);
+  const project = selectedProject();
+  const projectRouteIsValid = kind !== "project" || Boolean(
+    state.selectedProjectId &&
+    project &&
+    project.status !== "archived" &&
+    administratorCanAccessProject(state.administrator, project.id)
+  );
+
+  if (!kind || !routeAllowed(route) || !projectRouteIsValid) {
+    return setRoute(state.selectedProjectId && project
+      ? defaultProjectRoute()
+      : defaultGlobalRoute());
+  }
+
+  return setRoute(route);
 }
 
 function administratorCanAccessProject(administrator, projectId) {
@@ -458,6 +506,7 @@ function resetAdministrativeState() {
   state.renderRequested++;
   state.projects = [];
   setSelectedProject("");
+  setRoute("dashboard", { persist: false });
   lastAuthorizationSyncAt = 0;
 }
 
@@ -570,7 +619,7 @@ async function syncAuthorization(force = false) {
       }
 
       if (!routeAllowed(state.route) || !projectStillAuthorized) {
-        state.route = state.selectedProjectId ? defaultProjectRoute() : defaultGlobalRoute();
+        setRoute(state.selectedProjectId ? defaultProjectRoute() : defaultGlobalRoute());
       }
 
       renderUser();
@@ -584,12 +633,13 @@ async function syncAuthorization(force = false) {
       }
 
       await Promise.all([loadProjects(true), safetyRender]);
+      if (state.user !== user) return;
 
       if (state.selectedProjectId && !selectedProject()) {
         setSelectedProject("");
-        state.route = defaultGlobalRoute();
+        setRoute(defaultGlobalRoute());
       } else if (!routeAllowed(state.route)) {
-        state.route = state.selectedProjectId ? defaultProjectRoute() : defaultGlobalRoute();
+        setRoute(state.selectedProjectId ? defaultProjectRoute() : defaultGlobalRoute());
       }
 
       renderProjectSwitcher();
@@ -597,6 +647,7 @@ async function syncAuthorization(force = false) {
       await renderContent();
       toast("Permissões administrativas atualizadas.", "success");
     } catch (error) {
+      if (state.user !== user) return;
       console.error(error);
       if ([401, 403].includes(Number(error?.status))) {
         await endAdministrativeSession("Seu acesso administrativo foi alterado. Entre novamente se ainda possuir autorização.");
@@ -937,7 +988,7 @@ function renderNavigation() {
 
   document.querySelectorAll("[data-route]").forEach(button => {
     button.addEventListener("click", async () => {
-      state.route = button.dataset.route;
+      setRoute(button.dataset.route);
       renderNavigation();
       await renderContent();
       setSidebarOpen(false);
@@ -1022,6 +1073,7 @@ function table(headers, rows, emptyText = "Nenhum registro encontrado.", caption
 }
 
 async function loadProjects(force = false) {
+  const user = state.user;
   const projects = await cachedLoad(
     "projects",
     async () => {
@@ -1031,6 +1083,7 @@ async function loadProjects(force = false) {
     { force, ttlMs: CACHE_TTL_MS }
   );
 
+  if (state.user !== user) return state.projects;
   state.projects = projects;
   renderProjectSwitcher();
   return projects;
@@ -1238,7 +1291,7 @@ async function projectsView() {
     if (project?.status !== "archived") {
       card.querySelector(".open-project").onclick = async () => {
         setSelectedProject(id);
-        state.route = defaultProjectRoute();
+        setRoute(defaultProjectRoute());
         renderProjectSwitcher();
         renderNavigation();
         await renderContent();
@@ -1631,7 +1684,7 @@ function openProjectCreate() {
       upsertProjectState(createdProject);
       toast("Projeto e mídias criados com sucesso.");
       setSelectedProject(createdProject.id);
-      state.route = "project-dashboard";
+      setRoute("project-dashboard");
       renderProjectSwitcher();
       renderNavigation();
       await renderContent();
@@ -3414,7 +3467,7 @@ async function projectSettingsView() {
       invalidate(project.id);
       await loadProjects(true);
       setSelectedProject("");
-      state.route = "projects";
+      setRoute("projects");
       renderProjectSwitcher();
       renderNavigation();
       toast("Projeto arquivado.");
@@ -3731,7 +3784,7 @@ async function platformSettingsView() {
 
 function commerceTable(rows, columns, emptyMessage) {
   if (!rows.length) return `<article class="card card-section"><p>${e(emptyMessage)}</p></article>`;
-  return `<article class="card table-card"><div class="table-scroll"><table><thead><tr>${columns.map(column => `<th>${e(column.label)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${columns.map(column => `<td>${column.render ? column.render(row) : e(row[column.key] ?? "—")}</td>`).join("")}</tr>`).join("")}</tbody></table></div></article>`;
+  return `<article class="card table-card"><div class="table-scroll" tabindex="0" role="region" aria-label="Tabela com rolagem horizontal"><table><thead><tr>${columns.map(column => `<th>${e(column.label)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${columns.map(column => `<td>${column.render ? column.render(row) : e(row[column.key] ?? "—")}</td>`).join("")}</tr>`).join("")}</tbody></table></div></article>`;
 }
 
 function customerNotification(order) {
@@ -3762,7 +3815,7 @@ async function openOrderDetails(orderId) {
   const orderItems = Array.isArray(order.items) ? order.items : [];
   const itemsHtml = orderItems.length ? `
     <div class="table-toolbar" style="margin-top:22px"><h3>Itens do pedido</h3><span class="badge">${orderItems.reduce((sum, current) => sum + Number(current.quantity || 0), 0)} licença(s)</span></div>
-    <div class="table-scroll"><table><thead><tr><th>Item</th><th>Produto</th><th>Plano</th><th>Qtd.</th><th>Unitário</th><th>Total</th><th>Termos</th></tr></thead><tbody>
+    <div class="table-scroll" tabindex="0" role="region" aria-label="Itens do pedido"><table><thead><tr><th>Item</th><th>Produto</th><th>Plano</th><th>Qtd.</th><th>Unitário</th><th>Total</th><th>Termos</th></tr></thead><tbody>
       ${orderItems.map(current => `<tr>
         <td><code>${e(current.orderItemId || "—")}</code></td>
         <td>${e(current.projectNameSnapshot || "—")}</td>
@@ -3802,7 +3855,7 @@ async function openOrderDetails(orderId) {
       ${itemsHtml}
       ${fulfilled ? '<button class="btn btn-primary" id="notify-order-customer" type="button">AVISAR CLIENTE PELO WHATSAPP</button>' : ""}
       <div class="table-toolbar" style="margin-top:22px"><h3>Auditoria</h3><span class="badge">${audit.length} evento(s)</span></div>
-      ${audit.length ? `<div class="table-scroll"><table><thead><tr><th>Evento</th><th>Ator</th><th>Data</th></tr></thead><tbody>${audit.map(log => `<tr><td><code>${e(log.action)}</code></td><td>${e(log.actor || log.details?.actorUid || "—")}</td><td>${e(formatDate(log.createdAt, true))}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted-box">Nenhum evento de auditoria encontrado.</p>'}
+      ${audit.length ? `<div class="table-scroll" tabindex="0" role="region" aria-label="Auditoria do pedido"><table><thead><tr><th>Evento</th><th>Ator</th><th>Data</th></tr></thead><tbody>${audit.map(log => `<tr><td><code>${e(log.action)}</code></td><td>${e(log.actor || log.details?.actorUid || "—")}</td><td>${e(formatDate(log.createdAt, true))}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted-box">Nenhum evento de auditoria encontrado.</p>'}
     `,
     onOpen: backdrop => {
       const notify = backdrop.querySelector("#notify-order-customer");
@@ -3857,7 +3910,7 @@ async function ordersView() {
       <button class="btn btn-ghost btn-sm" data-filter="paid" type="button">Pagos <span class="badge">${groups.paid}</span></button>
       <button class="btn btn-ghost btn-sm" data-filter="cancelled" type="button">Cancelados <span class="badge">${groups.cancelled}</span></button>
     </div>
-    <article class="card table-card" style="margin-top:18px"><div class="table-scroll"><table><thead><tr><th>Pedido</th><th>Cliente</th><th>Produto</th><th>Plano</th><th>Valor</th><th>Data</th><th>Status</th><th>TXID</th><th></th></tr></thead><tbody>${rows.join("") || '<tr><td colspan="9">Nenhum pedido registrado.</td></tr>'}</tbody></table></div></article>
+    <article class="card table-card" style="margin-top:18px"><div class="table-scroll" tabindex="0" role="region" aria-label="Pedidos"><table><thead><tr><th>Pedido</th><th>Cliente</th><th>Produto</th><th>Plano</th><th>Valor</th><th>Data</th><th>Status</th><th>TXID</th><th></th></tr></thead><tbody>${rows.join("") || '<tr><td colspan="9">Nenhum pedido registrado.</td></tr>'}</tbody></table></div></article>
   `;
   document.querySelectorAll(".order-details").forEach(button => button.addEventListener("click", () => runButtonAction(button, () => openOrderDetails(button.dataset.id))));
   document.querySelectorAll("#order-filters [data-filter]").forEach(button => button.addEventListener("click", () => {
@@ -3888,18 +3941,18 @@ async function performRender(renderId) {
 
   try {
     if (!routeAllowed(state.route)) {
-      state.route = state.selectedProjectId ? defaultProjectRoute() : "projects";
+      setRoute(state.selectedProjectId ? defaultProjectRoute() : "projects");
       renderNavigation();
     }
 
     if (!state.selectedProjectId && projectItems.some(([route]) => route === state.route)) {
-      state.route = hasPermission("viewDashboard") ? "dashboard" : "projects";
+      setRoute(hasPermission("viewDashboard") ? "dashboard" : "projects");
       renderNavigation();
     }
 
     if (state.selectedProjectId && !selectedProject()) {
       setSelectedProject("");
-      state.route = defaultGlobalRoute();
+      setRoute(defaultGlobalRoute());
       renderProjectSwitcher();
       renderNavigation();
     }
@@ -3990,9 +4043,12 @@ showScreen("boot");
   state.user = user;
 
   try {
-    state.administrator = await verifyAdministrator(user, true);
+    const administrator = await verifyAdministrator(user, true);
+    if (state.user !== user) return;
+    state.administrator = administrator;
     lastAuthorizationSyncAt = Date.now();
   } catch (error) {
+    if (state.user !== user) return;
     pendingLoginMessage = [401, 403].includes(Number(error?.status))
       ? "Esta conta não está autorizada para acessar o painel administrativo."
       : "Não foi possível validar sua sessão administrativa. Verifique a API e tente novamente.";
@@ -4004,16 +4060,15 @@ showScreen("boot");
 
   try {
     await loadProjects();
+    if (state.user !== user) return;
     restoreSelectedProject();
-
-    if (!routeAllowed(state.route)) {
-      state.route = defaultGlobalRoute();
-    }
+    restoreSelectedRoute();
 
     renderNavigation();
     showScreen("shell");
     await Promise.all([checkApi(), renderContent()]);
   } catch (error) {
+    if (state.user !== user) return;
     console.error(error);
     showScreen("shell");
     renderNavigation();
@@ -4077,9 +4132,9 @@ el.logoutButton.addEventListener("click", async () => {
 
 el.projectSwitcher.addEventListener("change", async () => {
   setSelectedProject(el.projectSwitcher.value);
-  state.route = state.selectedProjectId
+  setRoute(state.selectedProjectId
     ? defaultProjectRoute()
-    : defaultGlobalRoute();
+    : defaultGlobalRoute());
   renderNavigation();
   setSidebarOpen(false);
   await renderContent();

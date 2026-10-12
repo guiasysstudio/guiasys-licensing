@@ -529,6 +529,8 @@ button:disabled {
 }
 
 .content {
+  width: 100%;
+  min-width: 0;
   padding: 34px;
   max-width: 1580px;
   margin: 0 auto;
@@ -1026,6 +1028,34 @@ button:disabled {
   scrollbar-gutter: stable;
 }
 
+.table-card {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.table-scroll {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-scroll:focus-visible {
+  outline-offset: -3px;
+}
+
+.table-scroll > table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+}
+
 .data-table-wrap:focus-visible {
   outline-offset: 4px;
 }
@@ -1243,9 +1273,13 @@ button:disabled {
 
 .modal-card {
   width: min(560px, 100%);
+  max-width: 100%;
+  min-width: 0;
   max-height: calc(100vh - 48px);
   max-height: calc(100dvh - 48px);
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: #0d192b;
   border: 1px solid var(--line-strong);
   border-radius: 18px;
@@ -1254,9 +1288,20 @@ button:disabled {
 
 .modal-wide {
   width: min(820px, 100%);
+  max-width: 100%;
+}
+
+.modal-form {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .modal-header {
+  flex: 0 0 auto;
   padding: 22px 24px 18px;
   display: flex;
   align-items: flex-start;
@@ -1282,10 +1327,16 @@ button:disabled {
 }
 
 .modal-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
   padding: 24px;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .modal-footer {
+  flex: 0 0 auto;
   padding: 16px 24px 20px;
   display: flex;
   justify-content: flex-end;
