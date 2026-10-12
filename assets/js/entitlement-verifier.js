@@ -6,6 +6,8 @@ function base64UrlBytes(value) {
   const padding = "=".repeat((4 - (text.length % 4)) % 4);
   const base64 = (text + padding).replace(/-/g, "+").replace(/_/g, "/");
   const binary = atob(base64);
+  const canonical = btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  if (canonical !== text) throw new TypeError("Noncanonical base64url segment.");
   return Uint8Array.from(binary, char => char.charCodeAt(0));
 }
 
