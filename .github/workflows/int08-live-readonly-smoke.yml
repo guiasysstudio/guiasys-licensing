@@ -9,6 +9,7 @@ on:
       - "assets/js/entitlement-verifier.js"
       - "assets/js/integration-contract-support.js"
       - "scripts/int08-firebase-preflight.mjs"
+      - "scripts/int08-live-diff.mjs"
       - ".github/workflows/int08-live-readonly-smoke.yml"
   workflow_dispatch:
 
@@ -28,3 +29,5 @@ jobs:
           node-version: "22"
       - name: Read-only production health and asset fingerprints
         run: node scripts/int08-firebase-preflight.mjs --pre
+      - name: Compare published admin and storefront assets without source dumps
+        run: node scripts/int08-live-diff.mjs
