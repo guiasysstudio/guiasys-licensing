@@ -43,9 +43,28 @@ try {
       error = String(e.message || e);
     }
     const localBytes = await readFile(local);
+    // GitHub / Windows checkouts may use different CRLF conventions, so
+    // compare normalized line endings before assuming source divergence.
+    const normalizedLocal = Buffer.from(localBytes.toString("utf8").replace(/\r\n/g, "\n"));
+    const normalizedRemote = deployedBytes === null
+      ? null : Buffer.from(deployedBytes.toString("utf8").replace(/\r\n/g, "\n"));
+    let normalizedNumstat = null;
     if (deployedBytes !== null) {
       const copied = path.join(temp, "remote-" + i + path.extname(local));
-      await writeFile(copied, deployedBytes);
+      const nLocal = path.join(temp, "normalized-local-" + i + path.extname(local));
+      const nRemote = path.join(temp, "normalized-remote-" + i + path.extname(local));
+      await Promise.all([
+        writeFile(copied, deployedBytes),
+        writeFile(nLocal, normalizedLocal),
+        writeFile(nRemote, normalizedRemote)
+      ]);
+      try {
+        normalizedNumstat = execFileSync("git",
+          ["diff", "--no-index", "--numstat", "--", nLocal, nRemote],
+          { encoding: "utf8" }).trim().split("\t").slice(0, 2).join(" additions/deletions ");
+      } catch (e) {
+        normalizedNumstat = String(e.stdout || "").trim().split("\t").slice(0, 2).join(" additions/deletions ");
+      }
       try {
         numstat = execFileSync("git", ["diff", "--no-index", "--numstat", "--", local, copied],
           { encoding: "utf8" }).trim().split("\t").slice(0, 2).join(" additions/deletions ");
@@ -59,6 +78,11 @@ try {
       sha256Local: sha(localBytes),
       sha256Deployed: deployedBytes === null ? null : sha(deployedBytes),
       exactlyEqual: deployedBytes?.equals(localBytes) ?? false,
+      normalizedEqual: normalizedRemote?.equals(normalizedLocal) ?? false,
+      localCrLfCount: localBytes.toString("utf8").split("\r\n").length - 1,
+      deployedCrLfCount: deployedBytes === null ? null
+        : deployedBytes.toString("utf8").split("\r\n").length - 1,
+      normalizedGitNumstat: normalizedNumstat,
       gitNumstat: numstat, error
     });
   }
