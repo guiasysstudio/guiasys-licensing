@@ -1,5 +1,8 @@
 function base64UrlBytes(value) {
   const text = String(value || "");
+  if (!text || !/^[A-Za-z0-9_-]+$/.test(text) || text.length % 4 === 1) {
+    throw new TypeError("Invalid base64url JWS segment.");
+  }
   const padding = "=".repeat((4 - (text.length % 4)) % 4);
   const base64 = (text + padding).replace(/-/g, "+").replace(/_/g, "/");
   const binary = atob(base64);
