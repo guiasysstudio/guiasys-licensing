@@ -42,6 +42,9 @@ provider.setCustomParameters({ prompt: "select_account" });
 const CACHE_TTL_MS = 30_000;
 const DASHBOARD_CACHE_TTL_MS = 15_000;
 const API_TIMEOUT_MS = 12_000;
+const AUTHORIZATION_SYNC_THROTTLE_MS = 30_000;
+const AUTHORIZATION_SYNC_INTERVAL_MS = 60_000;
+const SELECTED_PROJECT_STORAGE_KEY = "gsl:selected-project";
 
 const state = {
   user: null,
@@ -165,6 +168,11 @@ function routeAllowed(route) {
 
 function defaultProjectRoute() {
   const first = projectItems.find(item => hasPermission(item[3]));
+  return first?.[0] || "projects";
+}
+
+function defaultGlobalRoute() {
+  const first = globalItems.find(item => hasPermission(item[3]));
   return first?.[0] || "projects";
 }
 
@@ -331,6 +339,37 @@ function selectedProject() {
   return state.projects.find(project => project.id === state.selectedProjectId) || null;
 }
 
+function setSelectedProject(projectId = "") {
+  state.selectedProjectId = projectId;
+  try {
+    if (projectId) sessionStorage.setItem(SELECTED_PROJECT_STORAGE_KEY, projectId);
+    else sessionStorage.removeItem(SELECTED_PROJECT_STORAGE_KEY);
+  } catch {}
+}
+
+function restoreSelectedProject() {
+  let projectId = "";
+  try {
+    projectId = sessionStorage.getItem(SELECTED_PROJECT_STORAGE_KEY) || "";
+  } catch {}
+
+  if (projectId && state.projects.some(project => project.id === projectId && project.status !== "archived")) {
+    setSelectedProject(projectId);
+    return;
+  }
+
+  setSelectedProject("");
+}
+
+function administratorCanAccessProject(administrator, projectId) {
+  if (!projectId) return true;
+  return Boolean(
+    administrator?.master ||
+    administrator?.allProjects ||
+    administrator?.projectIds?.includes(projectId)
+  );
+}
+
 function showScreen(name) {
   el.boot.classList.toggle("hidden", name !== "boot");
   el.login.classList.toggle("hidden", name !== "login");
@@ -418,27 +457,33 @@ function resetAdministrativeState() {
   state.cacheGeneration++;
   state.renderRequested++;
   state.projects = [];
-  state.selectedProjectId = "";
+  setSelectedProject("");
   lastAuthorizationSyncAt = 0;
 }
 
 async function endAdministrativeSession(message) {
   pendingLoginMessage = message || "Sua sessão administrativa foi encerrada.";
+  state.user = null;
   resetAdministrativeState();
+  showScreen("login");
+  setLoginMessage(pendingLoginMessage);
   if (auth.currentUser) {
     await signOut(auth);
-  } else {
-    showScreen("login");
-    setLoginMessage(pendingLoginMessage);
   }
 }
 
 function authorizationFingerprint(admin) {
+  const permissions = Object.fromEntries(
+    Object.entries(admin?.permissions || {})
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([permission, allowed]) => [permission, Boolean(allowed)])
+  );
+
   return JSON.stringify({
     master: Boolean(admin?.master),
     allProjects: Boolean(admin?.allProjects),
     projectIds: [...(admin?.projectIds || [])].sort(),
-    permissions: admin?.permissions || {}
+    permissions
   });
 }
 
@@ -497,48 +542,72 @@ async function runButtonAction(button, task) {
 
 async function syncAuthorization(force = false) {
   if (!state.user || document.hidden) return;
-  if (!force && Date.now() - lastAuthorizationSyncAt < 30_000) return;
   if (authorizationSyncPromise) return await authorizationSyncPromise;
+  if (!force && Date.now() - lastAuthorizationSyncAt < AUTHORIZATION_SYNC_THROTTLE_MS) return;
 
-  authorizationSyncPromise = (async () => {
-    const before = authorizationFingerprint(state.administrator);
-    const administrator = await verifyAdministrator(state.user, false);
-    const after = authorizationFingerprint(administrator);
-    state.administrator = administrator;
-    lastAuthorizationSyncAt = Date.now();
+  const user = state.user;
+  let pending;
+  pending = (async () => {
+    try {
+      const before = authorizationFingerprint(state.administrator);
+      const administrator = await verifyAdministrator(user, false);
+      if (state.user !== user) return;
 
-    if (before !== after) {
+      const after = authorizationFingerprint(administrator);
+      state.administrator = administrator;
+      lastAuthorizationSyncAt = Date.now();
+
+      if (before === after) return;
+
+      const routeStillAllowed = routeAllowed(state.route);
+      const projectStillAuthorized = administratorCanAccessProject(administrator, state.selectedProjectId);
+
       invalidate();
-      await loadProjects(true);
+      state.projects = state.projects.filter(project => administratorCanAccessProject(administrator, project.id));
 
-      if (!routeAllowed(state.route)) {
-        state.route = state.selectedProjectId ? defaultProjectRoute() : "projects";
+      if (!projectStillAuthorized) {
+        setSelectedProject("");
       }
 
-      if (state.selectedProjectId && !selectedProject()) {
-        state.selectedProjectId = "";
-        state.route = hasPermission("viewDashboard") ? "dashboard" : "projects";
+      if (!routeAllowed(state.route) || !projectStillAuthorized) {
+        state.route = state.selectedProjectId ? defaultProjectRoute() : defaultGlobalRoute();
       }
 
       renderUser();
       renderProjectSwitcher();
       renderNavigation();
+
+      let safetyRender = Promise.resolve();
+      if (!routeStillAllowed || !projectStillAuthorized) {
+        el.content.innerHTML = loadingView();
+        safetyRender = renderContent();
+      }
+
+      await Promise.all([loadProjects(true), safetyRender]);
+
+      if (state.selectedProjectId && !selectedProject()) {
+        setSelectedProject("");
+        state.route = defaultGlobalRoute();
+      } else if (!routeAllowed(state.route)) {
+        state.route = state.selectedProjectId ? defaultProjectRoute() : defaultGlobalRoute();
+      }
+
+      renderProjectSwitcher();
+      renderNavigation();
       await renderContent();
       toast("Permissões administrativas atualizadas.", "success");
+    } catch (error) {
+      console.error(error);
+      if ([401, 403].includes(Number(error?.status))) {
+        await endAdministrativeSession("Seu acesso administrativo foi alterado. Entre novamente se ainda possuir autorização.");
+      }
+    } finally {
+      if (authorizationSyncPromise === pending) authorizationSyncPromise = null;
     }
   })();
 
-  try {
-    await authorizationSyncPromise;
-  } catch (error) {
-    console.error(error);
-    if ([401, 403].includes(Number(error?.status))) {
-      await endAdministrativeSession("Seu acesso administrativo foi alterado. Entre novamente se ainda possuir autorização.");
-      return;
-    }
-  } finally {
-    authorizationSyncPromise = null;
-  }
+  authorizationSyncPromise = pending;
+  return await pending;
 }
 
 async function api(path, options = {}, retry = true) {
@@ -1168,7 +1237,7 @@ async function projectsView() {
 
     if (project?.status !== "archived") {
       card.querySelector(".open-project").onclick = async () => {
-        state.selectedProjectId = id;
+        setSelectedProject(id);
         state.route = defaultProjectRoute();
         renderProjectSwitcher();
         renderNavigation();
@@ -1190,7 +1259,7 @@ async function projectsView() {
         invalidate(id);
         await loadProjects(true);
         if (state.selectedProjectId === id) {
-          state.selectedProjectId = "";
+          setSelectedProject("");
         }
         toast("Projeto arquivado.");
         await renderContent();
@@ -1561,7 +1630,7 @@ function openProjectCreate() {
       createdProject = refreshed.project;
       upsertProjectState(createdProject);
       toast("Projeto e mídias criados com sucesso.");
-      state.selectedProjectId = createdProject.id;
+      setSelectedProject(createdProject.id);
       state.route = "project-dashboard";
       renderProjectSwitcher();
       renderNavigation();
@@ -3344,7 +3413,7 @@ async function projectSettingsView() {
       await api(`/api/v1/admin/projects/${project.id}`, { method: "DELETE" });
       invalidate(project.id);
       await loadProjects(true);
-      state.selectedProjectId = "";
+      setSelectedProject("");
       state.route = "projects";
       renderProjectSwitcher();
       renderNavigation();
@@ -3829,8 +3898,8 @@ async function performRender(renderId) {
     }
 
     if (state.selectedProjectId && !selectedProject()) {
-      state.selectedProjectId = "";
-      state.route = "dashboard";
+      setSelectedProject("");
+      state.route = defaultGlobalRoute();
       renderProjectSwitcher();
       renderNavigation();
     }
@@ -3935,9 +4004,10 @@ showScreen("boot");
 
   try {
     await loadProjects();
+    restoreSelectedProject();
 
     if (!routeAllowed(state.route)) {
-      state.route = hasPermission("viewDashboard") ? "dashboard" : "projects";
+      state.route = defaultGlobalRoute();
     }
 
     renderNavigation();
@@ -4006,10 +4076,10 @@ el.logoutButton.addEventListener("click", async () => {
 });
 
 el.projectSwitcher.addEventListener("change", async () => {
-  state.selectedProjectId = el.projectSwitcher.value;
+  setSelectedProject(el.projectSwitcher.value);
   state.route = state.selectedProjectId
     ? defaultProjectRoute()
-    : (hasPermission("viewDashboard") ? "dashboard" : "projects");
+    : defaultGlobalRoute();
   renderNavigation();
   setSidebarOpen(false);
   await renderContent();
@@ -4044,16 +4114,16 @@ window.addEventListener("resize", () => {
 });
 
 window.addEventListener("focus", () => {
-  syncAuthorization(false);
+  syncAuthorization(true);
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) syncAuthorization(false);
+  if (!document.hidden) syncAuthorization(true);
 });
 
 window.setInterval(() => {
   syncAuthorization(false);
-}, 60_000);
+}, AUTHORIZATION_SYNC_INTERVAL_MS);
 
 onAuthStateChanged(auth, async user => {
   if (user) {
