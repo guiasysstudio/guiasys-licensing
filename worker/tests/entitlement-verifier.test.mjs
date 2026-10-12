@@ -34,6 +34,7 @@ async function fixture(overrides = {}) {
     integrationCode: "GSL-TEST-001",
     deviceHash,
     status: "active",
+    lifetime: false,
     licenseId: "lic_0123456789abcdefabcd",
     expiresAt: "2026-12-01T00:00:00.000Z",
     serverTime: "2026-10-04T23:00:00.000Z",
