@@ -46,6 +46,26 @@ function branchSha(ref) {
   try { return execFileSync("git", ["rev-parse", ref], { encoding: "utf8" }).trim(); }
   catch { return null; }
 }
+function historyMatches(file, deployedSha256) {
+  if (!deployedSha256) return { scanned: 0, matchingCommits: [] };
+  let commits = [];
+  try {
+    commits = execFileSync("git", ["log", "--all", "--format=%H", "--", file], {
+      encoding: "utf8", maxBuffer: 2 * 1024 * 1024
+    }).trim().split("\n").filter(Boolean);
+  } catch {
+    return { scanned: 0, matchingCommits: [], error: "git log not available" };
+  }
+  const matchingCommits = [];
+  for (const commit of commits) {
+    const bytes = atRef(commit, file);
+    if (bytes && hash(bytes) === deployedSha256) {
+      matchingCommits.push(commit);
+      if (matchingCommits.length >= 8) break;
+    }
+  }
+  return { scanned: commits.length, matchingCommits };
+}
 const report = { inspectedAt: new Date().toISOString(), matched: [], files: [] };
 for (const item of files) {
   let status = null, deployedHash = null, error = null;
@@ -69,8 +89,9 @@ for (const item of files) {
       sha256, matchesProduction: sha256 === deployedHash };
   });
   const matchingRefs = versions.filter(v => v.matchesProduction).map(v => v.ref);
+  const history = historyMatches(item.path, deployedHash);
   report.files.push({ endpoint: item.endpoint, path: item.path, status,
-    deployedSha256: deployedHash, matchingRefs, versions, error });
+    deployedSha256: deployedHash, matchingRefs, history, versions, error });
   if (matchingRefs.length) report.matched.push({ path: item.path, matchingRefs });
 }
 console.log(JSON.stringify(report, null, 2));
