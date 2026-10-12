@@ -12,6 +12,7 @@ import { assertCents, moneyToCents, transitionOrderStatus, transitionPaymentStat
 import { issueLicenseInTransaction } from "./license-service.js";
 import { fetchWithTimeout } from "./network.js";
 import { rateLimitIngressPeer } from "./rate-limit-identity.js";
+import { authenticatedRateLimitSubject, publicRateLimitSubject } from "./rate-limit-subject.js";
 import { downloadRemoteImage } from "./remote-image.js";
 import { PagBankProvider } from "./payments/payment-provider.js";
 import {
@@ -947,10 +948,13 @@ async function sha256Hex(value) {
   return Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function enforceRateLimit(env, request, bucket, limit, windowSeconds) {
-  // Conservative last-hop bucket. Shared CDN/proxy identities are not yet
-  // independently validated: production use is blocked pending INT-08.2.
-  const clientId = rateLimitIngressPeer(request.headers);
+async function enforceRateLimit(env, request, bucket, limit, windowSeconds, subject = null) {
+  // The only address-derived key is a coarse ingress ceiling, never a
+  // guaranteed user IP behind Firebase Hosting/CDN. Fine quotas use a
+  // separately selected resource or a verified Firebase Auth UID.
+  const clientId = subject === null
+    ? `ingress:${rateLimitIngressPeer(request.headers)}`
+    : `subject:${subject}`;
   const id = await sha256Hex(`${clientId}|${bucket}`);
   const path = `rateLimits/${id}`;
   const clientHash = await sha256Hex(clientId);
@@ -982,6 +986,19 @@ async function enforceRateLimit(env, request, bucket, limit, windowSeconds) {
       updatedAt: new Date(now).toISOString()
     });
   });
+}
+
+// A shared CDN peer can represent thousands of callers. Its limit is only
+// a high emergency backstop, not a per-user quota or identity proof.
+async function enforceIngressCeiling(env, request, route, perMinute = 2400) {
+  await enforceRateLimit(env, request, `${route}-ingress-ceiling`, perMinute, 60);
+}
+
+async function enforcePublicSubjectLimit(env, request, body, kind, bucket, limit, seconds) {
+  const subject = publicRateLimitSubject(body, kind);
+  // Invalid payloads continue to endpoint validation; coarse ingress budget
+  // has already been spent, so missing device selectors cannot evade it.
+  if (subject) await enforceRateLimit(env, request, bucket, limit, seconds, subject);
 }
 
 // Expose only public verification parameters, even for legacy JWKs with private/null fields.
@@ -4710,7 +4727,7 @@ async function handleCustomer(request, env, origin, url, user) {
     return json({ ok: true, account: customerAccountView(saved) }, 200, origin);
   }
   if (parts.length === 2 && parts[0] === "address" && parts[1] === "cep" && request.method === "POST") {
-    await enforceRateLimit(env, request, "cep-lookup", 30, 60);
+    await enforceRateLimit(env, request, "cep-lookup", 30, 60, authenticatedRateLimitSubject(user));
     const body = await readJson(request);
     const allowed = new Set(["postalCode"]);
     if (Object.keys(body).some(key => !allowed.has(key))) {
@@ -5871,7 +5888,7 @@ async function routeRequest(request, env) {
       }
 
       if (request.method === "GET" && url.pathname === "/api/v1/catalog") {
-        await enforceRateLimit(env, request, "catalog", 120, 60);
+        await enforceIngressCeiling(env, request, "catalog", 6000);
         return json({ ok: true, catalog: await publicCatalog(env) }, 200, origin, true);
       }
 
@@ -5879,35 +5896,37 @@ async function routeRequest(request, env) {
         if (request.method !== "GET") {
           return errorResponse(origin, 405, "method_not_allowed", "Use o método GET para esta rota.", { expectedMethod: "GET" }, true);
         }
-        await enforceRateLimit(env, request, "catalog-detail", 120, 60);
+        await enforceIngressCeiling(env, request, "catalog-detail", 6000);
         const parts = decodeAdminPathSegments(url.pathname.replace(/^\/api\/v1\/catalog\/?/, ""));
         if (parts.length !== 1) return errorResponse(origin, 404, "not_found", "Programa não encontrado.", null, true);
         return json({ ok: true, project: await publicCatalogProject(env, parts[0]) }, 200, origin, true);
       }
 
       if (request.method === "GET" && url.pathname === "/api/v1/payment-config") {
-        await enforceRateLimit(env, request, "payment-config", 120, 60);
+        await enforceIngressCeiling(env, request, "payment-config", 3600);
         const settings = await getPaymentSettings(env);
         assertManualPixOperational(env, settings);
         return json({ ok: true, payment: publicPaymentSettings(settings) }, 200, origin, true);
       }
 
       if (request.method === "POST" && url.pathname === "/api/v1/project/config") {
-        await enforceRateLimit(env, request, "project-config", 120, 60);
+        await enforceIngressCeiling(env, request, "project-config", 3600);
         const body = await readJson(request);
         return json({ ok: true, project: await publicProjectConfig(env, body, origin) }, 200, origin, true);
       }
 
       if (request.method === "POST" && url.pathname === "/api/v1/trial/start") {
-        await enforceRateLimit(env, request, "trial-start-burst", 10, 600);
-        await enforceRateLimit(env, request, "trial-start-hourly", 30, 3600);
+        await enforceIngressCeiling(env, request, "trial-start", 1200);
         const body = await readJson(request);
+        await enforcePublicSubjectLimit(env, request, body, "trial", "trial-start-burst", 10, 600);
+        await enforcePublicSubjectLimit(env, request, body, "trial", "trial-start-hourly", 30, 3600);
         return json({ ok: true, trial: await publicTrialStart(env, body, origin) }, 200, origin, true);
       }
 
       if (request.method === "POST" && url.pathname === "/api/v1/trial/validate") {
-        await enforceRateLimit(env, request, "trial-validate", 120, 300);
+        await enforceIngressCeiling(env, request, "trial-validate", 2400);
         const body = await readJson(request);
+        await enforcePublicSubjectLimit(env, request, body, "trial", "trial-validate", 120, 300);
         return json({ ok: true, trial: await publicTrialValidate(env, body, origin) }, 200, origin, true);
       }
 
@@ -5926,27 +5945,32 @@ async function routeRequest(request, env) {
       }
 
       if (url.pathname.startsWith("/api/v1/customer/")) {
-        await enforceRateLimit(env, request, "customer-api", 180, 60);
+        await enforceIngressCeiling(env, request, "customer-api", 3600);
         const auth = await requireFirebaseUser(request, env);
         if (!auth.ok) return errorResponse(origin, auth.status, auth.error, auth.message);
+        await enforceRateLimit(env, request, "customer-api", 180, 60,
+          authenticatedRateLimitSubject(auth.user));
         return await handleCustomer(request, env, origin, url, auth.user);
       }
 
       if (request.method === "POST" && url.pathname === "/api/v1/license/activate") {
-        await enforceRateLimit(env, request, "license-activate", 30, 600);
+        await enforceIngressCeiling(env, request, "license-activate", 1200);
         const body = await readJson(request);
+        await enforcePublicSubjectLimit(env, request, body, "license", "license-activate", 30, 600);
         return json({ ok: true, license: await publicActivate(env, body, origin) }, 200, origin, true);
       }
 
       if (request.method === "POST" && url.pathname === "/api/v1/license/validate") {
-        await enforceRateLimit(env, request, "license-validate", 180, 300);
+        await enforceIngressCeiling(env, request, "license-validate", 3600);
         const body = await readJson(request);
+        await enforcePublicSubjectLimit(env, request, body, "license", "license-validate", 180, 300);
         return json({ ok: true, license: await publicValidate(env, body, origin) }, 200, origin, true);
       }
 
       if (request.method === "POST" && url.pathname === "/api/v1/license/deactivate") {
-        await enforceRateLimit(env, request, "license-deactivate", 30, 600);
+        await enforceIngressCeiling(env, request, "license-deactivate", 1200);
         const body = await readJson(request);
+        await enforcePublicSubjectLimit(env, request, body, "license", "license-deactivate", 30, 600);
         return json({ ok: true, result: await publicDeactivate(env, body, origin) }, 200, origin, true);
       }
 
