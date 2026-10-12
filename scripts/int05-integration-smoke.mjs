@@ -1,18 +1,28 @@
-// INT-05: smoke sem operações de licença, para após deploy autorizado.
-// Não ativa, valida, renova, inicia trial ou desativa licenças.
-// ATENÇÃO: /project/config pode preencher dados ausentes em projetos legados.
-// Execute com o integrationCode de um projeto ativo e já integrado.
-const apiBase = String(process.env.GUIASYS_INTEGRATION_API_BASE ||
-  "https://licencas.guiasys.online").replace(/\/$/, "");
-const adminBase = String(process.env.GUIASYS_INTEGRATION_ADMIN_BASE ||
-  "https://painel.licencas.guiasys.online").replace(/\/$/, "");
+// INT-08.3: STAGING ONLY. POST /project/config can lazily write
+// integration metadata for legacy projects. Never run against production,
+// including its Firebase Hosting preview channels.
+const apiBase = String(process.env.GUIASYS_INTEGRATION_API_BASE || "").replace(/\/$/, "");
+const adminBase = String(process.env.GUIASYS_INTEGRATION_ADMIN_BASE || "").replace(/\/$/, "");
 const integrationCode = String(process.env.GUIASYS_INTEGRATION_CODE || "").trim();
 
 function ensure(condition, message) {
   if (!condition) throw new Error("INT-05 smoke: " + message);
 }
 ensure(/^https:\/\//.test(apiBase) && /^https:\/\//.test(adminBase),
-  "Ambos os endereços devem usar HTTPS.");
+  "Informe explicitamente os dois endereços do ambiente isolado usando HTTPS.");
+ensure(process.env.GUIASYS_INTEGRATION_STAGE_ACK === "ISOLATED_TEST_PROJECT",
+  "Confirme explicitamente GUIASYS_INTEGRATION_STAGE_ACK=ISOLATED_TEST_PROJECT.");
+for (const base of [apiBase, adminBase]) {
+  const hostname = new URL(base).hostname.toLowerCase();
+  // Preview Hosting channels in the production Firebase project share the
+  // production backend; do NOT treat them as an isolated staging project.
+  ensure(
+    !/^(?:painel\.)?licencas\.guiasys\.online$/.test(hostname) &&
+    !/^guiasys-licensing(?:-admin)?(?:--[a-z0-9-]+)?\.(?:web\.app|firebaseapp\.com)$/.test(hostname) &&
+    !hostname.startsWith("licensingapi-"),
+    "Não use URLs, aliases ou canais de preview do projeto Firebase de produção."
+  );
+}
 ensure(/^GSLI-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(integrationCode),
   "Informe GUIASYS_INTEGRATION_CODE de um projeto ativo, sem incluir a License Key.");
 
@@ -36,6 +46,12 @@ const health = await json(apiBase + "/health");
 ensure(health.ok === true && health.protocolVersion === "GSL-v1" &&
   health.runtime === "firebase-functions-v2",
   "Health não corresponde ao servidor GSL-v1 Firebase esperado.");
+ensure(typeof health.firebaseProject === "string" &&
+  health.firebaseProject !== "guiasys-licensing",
+  "O projeto Firebase consultado deve ser ISOLADO de guiasys-licensing.");
+const adminHealth = await json(adminBase + "/health");
+ensure(adminHealth.firebaseProject === health.firebaseProject,
+  "Admin e API devem apontar para o MESMO projeto Firebase de homologação.");
 
 const response = await json(apiBase + "/api/v1/project/config", {
   method: "POST",
