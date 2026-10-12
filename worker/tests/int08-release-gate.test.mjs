@@ -14,6 +14,7 @@ function stage(overrides = {}) {
     env: {
       ...process.env,
       GUIASYS_INTEGRATION_CODE: "GSLI-ABCD-EFGH-JKLM",
+      GUIASYS_INTEGRATION_EXPECTED_PROJECT: "guiasys-licensing-hml",
       GUIASYS_INTEGRATION_STAGE_ACK: "",
       GUIASYS_INTEGRATION_API_BASE: "",
       GUIASYS_INTEGRATION_ADMIN_BASE: "",
@@ -51,6 +52,17 @@ test("INT-08.3: active production and its Hosting preview aliases cannot run mut
     assert.notEqual(r.status, 0, api);
     assert.match(r.stderr + r.stdout, /projeto Firebase de produção/, api);
   }
+});
+
+test("INT-08.4: explicit staging project pin required before mutative smoke", () => {
+  const r = stage({
+    GUIASYS_INTEGRATION_STAGE_ACK: "ISOLATED_TEST_PROJECT",
+    GUIASYS_INTEGRATION_API_BASE: "https://guiasys-licensing-hml.web.app",
+    GUIASYS_INTEGRATION_ADMIN_BASE: "https://guiasys-licensing-hml-admin.web.app",
+    GUIASYS_INTEGRATION_EXPECTED_PROJECT: ""
+  });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr + r.stdout, /EXPECTED_PROJECT/);
 });
 
 test("INT-08.3: staging refuses the live Firebase project even under custom aliases", async () => {
