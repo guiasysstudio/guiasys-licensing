@@ -14,7 +14,12 @@ function decodeJwsJson(value) {
 }
 
 function isoMillis(value) {
-  const millis = value ? new Date(value).getTime() : NaN;
+  // Reject date-only and loosely parsed values; server emits full ISO timestamps.
+  if (typeof value !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) {
+    return NaN;
+  }
+  const millis = new Date(value).getTime();
   return Number.isFinite(millis) ? millis : NaN;
 }
 
