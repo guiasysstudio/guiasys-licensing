@@ -156,3 +156,28 @@ test("INT-08.2: duas contas verificadas usam quotas próprias atrás do mesmo pr
   assert.equal(limitDocs(services.store, "customer-api-ingress-ceiling").length, 1);
   assert.equal(limitDocs(services.store, "customer-api-ingress-ceiling")[0].count, 2);
 });
+
+
+test("INT-08.2: contadores de rate limit têm TTL Firestore tipado e sem indexação", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const indexes = JSON.parse(await readFile(
+    new URL("../../firestore.indexes.json", import.meta.url), "utf8"
+  ));
+  const policy = indexes.fieldOverrides.find(item =>
+    item.collectionGroup === "rateLimits" && item.fieldPath === "expireAt"
+  );
+  assert.deepEqual(policy, {
+    collectionGroup: "rateLimits", fieldPath: "expireAt", ttl: true, indexes: []
+  });
+
+  const services = memoryServices();
+  await handleRequest(trialRequest("ttl-device"), env(services));
+  const docs = [...services.store.entries()]
+    .filter(([key]) => key.startsWith("rateLimits/"))
+    .map(([, val]) => val);
+  assert.ok(docs.length >= 2);
+  assert.ok(docs.every(doc => doc.expireAt instanceof Date));
+  assert.ok(docs.every(doc => doc.expireAt.getTime() > Date.now() + 48 * 3600000));
+  assert.ok(docs.every(doc => Object.keys(doc).every(key =>
+    !["licenseKey", "deviceId", "firebaseUid"].includes(key))));
+});
