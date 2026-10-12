@@ -181,3 +181,54 @@ test("INT-08.2: contadores de rate limit têm TTL Firestore tipado e sem indexa�
   assert.ok(docs.every(doc => Object.keys(doc).every(key =>
     !["licenseKey", "deviceId", "firebaseUid"].includes(key))));
 });
+
+
+test("INT-08.2: licença por dispositivo tem quota independente atrás do mesmo CDN", async () => {
+  const services = memoryServices();
+  const e = env(services);
+  function request(deviceId, spoof) {
+    return new Request("https://licencas.guiasys.online/api/v1/license/activate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Forwarded-For": `${spoof}, 192.0.2.33`
+      },
+      body: JSON.stringify({
+        projectId: PROJECT_ID, deviceId, licenseKey: "GSS-ABCDE-FGHIJ-KLMNO-PQRST"
+      })
+    });
+  }
+  const a = await handleRequest(request("DEVICE-A", "198.51.100.5"), e);
+  const b = await handleRequest(request("DEVICE-B", "198.51.100.6"), e);
+  assert.equal(a.status, 404);
+  assert.equal(b.status, 404);
+  assert.equal(limitDocs(services.store, "license-activate").length, 2);
+  assert.equal(limitDocs(services.store, "license-activate-ingress-ceiling").length, 1);
+});
+
+test("INT-08.2: lookup CEP é limitado pelo UID verificado, não pela origem compartilhada", async () => {
+  const services = memoryServices();
+  const e = env(services);
+  async function badCep(uid) {
+    return handleRequest(new Request(
+      "https://licencas.guiasys.online/api/v1/customer/address/cep", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${uid}`,
+          "Content-Type": "application/json",
+          "X-Forwarded-For": "198.51.100.1, 192.0.2.33"
+        },
+        body: JSON.stringify({ postalCode: "INVALIDO" })
+      }), e);
+  }
+  for (let i = 0; i < 30; i++) {
+    const r = await badCep("uid-cep-A");
+    assert.equal(r.status, 400);
+  }
+  const blocked = await badCep("uid-cep-A");
+  assert.equal(blocked.status, 429);
+  assert.equal((await blocked.json()).error, "rate_limited");
+  const other = await badCep("uid-cep-B");
+  assert.equal(other.status, 400);
+  assert.equal(limitDocs(services.store, "cep-lookup").length, 2);
+});
