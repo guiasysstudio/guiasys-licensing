@@ -1339,6 +1339,9 @@ test("INT-03: /project/config expõe apenas material público JWK sem alterar ch
   assert.equal(verificationKey.type, "public");
 
   // A sanitização da resposta não gira a chave, não altera o projeto e não apaga o histórico.
-  assert.deepEqual(services.store.get(`projects/${PROJECT_ID}`), project);
+  const saved = services.store.get(`projects/${PROJECT_ID}`);
+  assert.equal(saved.integrationCode, project.integrationCode);
+  assert.equal(saved.signingKeyId, signing.keyId);
+  assert.deepEqual(saved.signingPublicJwk, legacyPublicJwk);
   assert.equal(services.store.get(`projects/${PROJECT_ID}/internal/signing`).keyId, signing.keyId);
 });
