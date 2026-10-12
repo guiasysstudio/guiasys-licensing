@@ -35,7 +35,14 @@ function recentValidationIds(record, now) {
 
 export function validationMutation(record = {}, requestId = "", now = new Date().toISOString()) {
   const normalizedRequestId = String(requestId || "");
-  const recentRequests = recentValidationIds(record, now);
+  const stored = recentValidationIds(record, now);
+  const legacy = typeof record.lastValidationRequestId === "string" &&
+    typeof record.lastValidatedAt === "string" &&
+    !Array.isArray(record.recentValidationRequests)
+      ? recentValidationIds({ recentValidationRequests: [
+        { id: record.lastValidationRequestId, at: record.lastValidatedAt }
+      ] }, now) : [];
+  const recentRequests = [...legacy, ...stored].slice(-VALIDATION_REPLAY_MAX_IDS);
   // Compatibility with records written before the INT-06 replay window existed.
   const legacyReplay = !Array.isArray(record.recentValidationRequests) &&
     normalizedRequestId &&
