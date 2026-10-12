@@ -13,6 +13,7 @@ on:
       - "assets/js/entitlement-verifier.js"
       - "assets/js/integration-contract-support.js"
       - "scripts/int05-integration-smoke.mjs"
+      - "scripts/int08-firebase-preflight.mjs"
       - "index.html"
       - "public/**"
       - ".github/workflows/worker-security-tests.yml"
@@ -27,6 +28,7 @@ on:
       - "assets/js/entitlement-verifier.js"
       - "assets/js/integration-contract-support.js"
       - "scripts/int05-integration-smoke.mjs"
+      - "scripts/int08-firebase-preflight.mjs"
       - "index.html"
       - "public/**"
       - ".github/workflows/worker-security-tests.yml"
@@ -72,4 +74,5 @@ jobs:
           node --experimental-default-type=module --check assets/js/entitlement-verifier.js
           node --experimental-default-type=module --check assets/js/integration-contract-support.js
           node --check scripts/int05-integration-smoke.mjs
+          node --check scripts/int08-firebase-preflight.mjs
           node --experimental-default-type=module --check public/assets/catalog.js
