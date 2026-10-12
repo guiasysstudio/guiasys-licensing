@@ -44,6 +44,9 @@ if (!files.includes("assets/js/app.js")) fail("assets/js/app.js ausente.");
 if (!files.includes("assets/js/entitlement-verifier.js")) {
   fail("assets/js/entitlement-verifier.js ausente.");
 }
+if (!files.includes("assets/js/integration-contract-support.js")) {
+  fail("assets/js/integration-contract-support.js ausente.");
+}
 
 for (const file of files) {
   if (file === "index.html" || file.startsWith("assets/")) continue;
@@ -70,6 +73,10 @@ for (const item of forbidden) {
 }
 
 const app = await readFile(path.join(dist, "assets/js/app.js"), "utf8");
+
+if (!app.includes('from "./integration-contract-support.js"')) {
+  fail("Painel não importa o módulo de contratos de integração.");
+}
 
 if (!/const API_BASE = window\.location\.origin;/.test(app)) {
   fail("frontend deve usar window.location.origin como API base.");
