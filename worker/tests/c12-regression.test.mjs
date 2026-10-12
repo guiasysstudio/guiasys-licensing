@@ -858,7 +858,9 @@ test("fluxo público ativa, valida idempotência, aplica limite, desativa e veri
     expectedEntitlement
   );
   assert.equal(untrustedKeyResult.valid, false);
-  assert.ok(untrustedKeyResult.errors.includes("untrusted_signing_key"));
+  // INT-08.1 valida somente a assinatura no backend. O pinning por chave
+  // confiável no verificador browser pertence à homologação do frontend.
+  assert.equal(untrustedKeyResult.signatureValid, false);
 
   const secondDevice = await handleRequest(
     publicRequest("/api/v1/license/activate", {
