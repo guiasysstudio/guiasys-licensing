@@ -3,6 +3,7 @@ import {
   sha256HexText,
   verifyEntitlementToken
 } from "./entitlement-verifier.js";
+import { integrationResponseExamples, normalizePublicSigningJwk } from "./integration-contract-support.js";
 import {
   browserSessionPersistence,
   getAuth,
@@ -3055,9 +3056,13 @@ function integrationPlatformNotes(platform) {
     dotnet: [
       "Crie um serviço como GuiaSysLicensingService ou um projeto reutilizável GuiaSys.Licensing.",
       "Use HttpClient com timeout e CancellationToken; não bloqueie a UI.",
+      "No .NET 10, valide o JWS ES256 com ECDsa (P-256, SHA-256 e assinatura IEEE P1363 de 64 bytes, r||s) sobre os bytes exatos de header.payload.",
       "No Windows, derive um Device ID estável do sistema e armazene dados sensíveis com DPAPI/ProtectedData quando aplicável.",
+      "Não dependa exclusivamente de um UUID gravado na pasta do programa, que pode desaparecer na desinstalação; defina persistência entre reinstalações e procedimento de migração de dispositivo.",
+      "Proteja a key, o cache offline e a referência temporal confiável; relógio alterado suspeitamente exige validação online.",
       "Separe modelos de request/response, estado local e apresentação da UI.",
-      "A validação deve ocorrer no startup em background quando já houver cache válido, respeitando validationHours."
+      "A validação deve ocorrer no startup em background quando já houver cache válido, respeitando validationHours.",
+      "A UI não pode liberar recursos sem validação positiva online ou autorização cacheada com assinatura e prazos verificados; bloqueie nos demais casos."
     ],
     web: [
       "Use fetch/HTTPS e nunca coloque credenciais administrativas no JavaScript.",
@@ -3069,12 +3074,14 @@ function integrationPlatformNotes(platform) {
     android: [
       "Implemente a integração em um Repository/Service separado da UI.",
       "Use Android Keystore para proteger material local quando aplicável.",
+      "Valide assinatura JWS ES256 P-256, deviceHash, estado e janelas UTC antes de confiar em qualquer cache offline.",
       "Não dependa apenas de um UUID salvo localmente, pois a desinstalação pode apagá-lo. No Android moderno, derive uma identidade estável apropriada à plataforma (por exemplo, ANDROID_ID no escopo do app/assinatura, devidamente hashado) e trate troca de assinatura, usuário ou reset de fábrica como possível mudança de dispositivo.",
       "Chamadas de rede devem ser assíncronas e a UI deve tratar claramente sem conexão, expiração e limite de dispositivos."
     ],
     ios: [
       "Implemente a integração em uma camada Service/Repository separada da UI.",
       "Use Keychain para armazenar License Key, estado local e material de autorização sensível.",
+      "Valide assinatura ES256, identidade e janela de tempo atual ao recuperar a autorização offline.",
       "Não dependa de um identificador de hardware privado. Use uma identidade estável compatível com as regras da Apple e trate restauração/reset/troca de conta como possível mudança de dispositivo.",
       "Use URLSession/async-await para chamadas HTTPS e aplique no cliente as datas startedAt/expiresAt/activatedAt retornadas pelo servidor.",
       "Atualização pela App Store não deve gerar novo Device ID nem reiniciar trial/licença."
@@ -3084,6 +3091,7 @@ function integrationPlatformNotes(platform) {
       "Use armazenamento seguro nativo por plataforma (Keychain no iOS e Keystore no Android) por meio de um mecanismo apropriado; não trate SharedPreferences como armazenamento seguro.",
       "O Device ID deve permanecer estável entre atualizações e seguir as regras específicas de Android/iOS quando o app for compilado para cada plataforma.",
       "Use HTTP assíncrono com timeout e tratamento explícito dos estados offline, expired, suspended, revoked e device_limit.",
+      "O suporte offline exige verificação JWS ES256 auditada também nas implementações nativas Android/iOS/desktop.",
       "Não duplique regras do GSL-v1 em widgets/telas; a UI apenas apresenta o estado devolvido pela camada de licenciamento."
     ]
   };
@@ -3109,7 +3117,7 @@ function buildIntegrationConfig(project) {
     signing: {
       algorithm: project.signingAlgorithm || "ES256",
       keyId: project.signingKeyId || null,
-      publicJwk: project.signingPublicJwk || null
+      publicJwk: normalizePublicSigningJwk(project.signingPublicJwk)
     },
     web: {
       allowedOrigins: project.allowedOrigins || []
@@ -3186,6 +3194,8 @@ function buildIntegrationContract(project, platform = "universal") {
     "",
     "A resposta de /project/config também devolve signing.algorithm, signing.keyId e signing.publicJwk.",
     "A chave pública deve ser tratada como material confiável da integração e usada para verificar autorizações offline assinadas.",
+    "IMPORTANTE: a chave recebida em /project/config deve ser obtida por HTTPS de origem confiável e comparada com uma referência pública aprovada/distribuída com o produto. Não substitua uma chave fixada silenciosamente.",
+    "Se signing.keyId ou signing.publicJwk mudar, não aceite novos tokens nem a nova chave sem um processo autenticado de rotação. Entitlements antigos devem seguir verificáveis pela chave correspondente durante a migração planejada.",
     "",
     "PLANOS",
     "----------------------------------------------------------------",
@@ -3238,6 +3248,8 @@ function buildIntegrationContract(project, platform = "universal") {
     "",
     "Endpoint: POST /api/v1/trial/validate",
     "requestId identifica uma operação lógica. Gere um UUID novo para cada operação e reutilize o MESMO requestId somente ao repetir a mesma requisição após timeout/erro de rede.",
+    "Revalidações recentes possuem deduplicação limitada a 64 IDs por dispositivo/licença ou trial, por até 7 dias. É uma janela de retry, não uma garantia de idempotência eterna.",
+    "Uma ativação pode ser gravada antes de ocorrer falha na emissão da autorização assinada; após erro de rede/servidor, repita a mesma operação com a mesma key, Device ID e requestId, sem criar uma nova licença.",
     "Nunca permita funcionamento além de expiresAt. Se a tolerância offline terminar antes, exija conexão.",
     "",
     "LICENÇA PAGA",
@@ -3313,6 +3325,7 @@ function buildIntegrationContract(project, platform = "universal") {
     "----------------------------------------------------------------",
     "invalid_request          -> requisição inválida/incompleta",
     "project_not_found        -> integração/projeto não encontrado",
+    "project_selector_mismatch -> projectId e integrationCode apontam para projetos diferentes",
     "project_inactive         -> produto desativado no Licensing",
     "trial_unavailable        -> este produto não oferece trial",
     "trial_not_started        -> trial ainda não foi iniciado neste dispositivo",
@@ -3328,8 +3341,20 @@ function buildIntegrationContract(project, platform = "universal") {
     "origin_not_allowed       -> domínio web não autorizado no projeto",
     "rate_limited             -> limite temporário de requisições atingido",
     "network_error            -> erro local quando não houver resposta do servidor",
+    "device_bound_to_other_license -> dispositivo já ativado em outra key",
+    "customer_inactive        -> cliente desativado",
+    "method_not_allowed      -> método HTTP incorreto",
+    "payload_too_large       -> corpo da requisição acima do limite",
+    "internal_error          -> falha interna do servidor",
+    "upstream_error          -> serviço de backend temporariamente indisponível",
+    "upstream_timeout        -> timeout ao consultar dependência do servidor",
     "",
     "Tome decisões pelo campo 'error'; não analise o texto de 'message'.",
+    "Requisições usam Content-Type: application/json; sucesso HTTP 200 retorna ok:true; falha retorna ok:false, error, message e às vezes details.",
+    "POST /project/config -> project; /trial/start e /trial/validate -> trial; /license/activate e /license/validate -> license; /license/deactivate -> result.",
+    "Timeout e HTTP 5xx não autorizam automaticamente o produto. Use apenas autorização offline previamente verificada e ainda vigente, quando disponível.",
+    "Em HTTP 429, respeite details.retryAfterSeconds, quando informado, e evite repetição agressiva.",
+    "O rate limiting possui teto geral por ingresso, que pode ser compartilhado pelo CDN; a quota individual autenticada usa UID verificado e a quota pública usa projeto/dispositivo/chave informados pelo cliente. Respeite HTTP 429 e implemente backoff, sem contornar limites.",
     "",
     "INTERNET E MODO OFFLINE",
     "----------------------------------------------------------------",
@@ -3344,6 +3369,8 @@ function buildIntegrationContract(project, platform = "universal") {
     "Calcule SHA-256 do Device ID local e compare com deviceHash do entitlement para impedir reutilização em outro dispositivo.",
     "Nunca confie em claims do token antes de validar a assinatura.",
     "Nunca libere o produto depois de offlineUntil ou expiresAt.",
+    "Uma assinatura ES256 correta não significa autorização vigente: compare a hora atual UTC com offlineUntil e expiresAt (quando aplicável) e detecte retrocesso de relógio.",
+    "Licença temporária e trial exigem expiresAt; licença vitalícia exige lifetime=true e ainda depende de offlineUntil.",
     "O relógio local não pode conceder tempo além de expiresAt. Se houver retrocesso suspeito de relógio, exija uma validação online.",
     "Uma resposta online de expired/suspended/revoked/trial_expired/trial_converted sempre prevalece sobre cache anterior.",
     "",
@@ -3352,7 +3379,7 @@ function buildIntegrationContract(project, platform = "universal") {
     `Algoritmo: ${project.signingAlgorithm || "ES256"}`,
     `Key ID: ${project.signingKeyId || "será obtido em /project/config"}`,
     "Public JWK:",
-    JSON.stringify(project.signingPublicJwk || { note: "obter signing.publicJwk em /api/v1/project/config" }, null, 2),
+    JSON.stringify(normalizePublicSigningJwk(project.signingPublicJwk) || { note: "obter signing.publicJwk em /api/v1/project/config" }, null, 2),
     "",
     "INTEGRAÇÃO WEB / CORS",
     "----------------------------------------------------------------",
@@ -3372,6 +3399,10 @@ function buildIntegrationContract(project, platform = "universal") {
     "Nunca inclua FIREBASE_SERVICE_ACCOUNT_JSON, ADMIN_FIREBASE_UID, credenciais administrativas ou segredos do backend.",
     `Pode ficar no cliente: API Base, Código de Integração ${project.integrationCode}, protocolo ${PROTOCOL_VERSION}, Project ID público e a chave PÚBLICA ES256.`,
     "A chave PRIVADA de assinatura nunca é enviada ao cliente e não aparece no contrato.",
+    "",
+    "EXEMPLOS DE RESPOSTAS JSON",
+    "----------------------------------------------------------------",
+    integrationResponseExamples(project, PROTOCOL_VERSION),
     "",
     "ORIENTAÇÕES ESPECÍFICAS DA TECNOLOGIA",
     "----------------------------------------------------------------",
