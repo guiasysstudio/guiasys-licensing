@@ -983,7 +983,11 @@ async function enforceRateLimit(env, request, bucket, limit, windowSeconds, subj
       clientHash,
       count: count + 1,
       windowStartedAt: sameWindow ? current.windowStartedAt : new Date(now).toISOString(),
-      updatedAt: new Date(now).toISOString()
+      updatedAt: new Date(now).toISOString(),
+      // Firestore TTL field (Timestamp). Must be enabled on collection group
+      // rateLimits before production. Keep > largest window (1h) so a live
+      // counter is never garbage-collected mid-window.
+      expireAt: new Date(now + windowSeconds * 1000 + 48 * 60 * 60 * 1000)
     });
   });
 }
