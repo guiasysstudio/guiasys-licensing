@@ -818,20 +818,47 @@ test("fluxo público ativa, valida idempotência, aplica limite, desativa e veri
   assert.ok(activatedBody.license.offlineUntil);
   assert.ok(activatedBody.license.entitlement?.token);
 
+  const configResponse = await handleRequest(
+    new Request("https://licencas.guiasys.online/api/v1/project/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: PROJECT_ID, integrationCode: project.integrationCode })
+    }),
+    env
+  );
+  assert.equal(configResponse.status, 200);
+  const configBody = await configResponse.json();
+  const signingFromApi = configBody.project.signing;
+  assert.equal(signingFromApi.keyId, signing.keyId);
+  assert.equal(signingFromApi.algorithm, "ES256");
+  assert.deepEqual(Object.keys(signingFromApi.publicJwk), ["kty", "crv", "x", "y", "ext", "key_ops"]);
+
+  const expectedEntitlement = {
+    protocolVersion: "GSL-v1",
+    type: "license",
+    projectId: PROJECT_ID,
+    integrationCode: project.integrationCode,
+    deviceHash,
+    status: "active",
+    keyId: signing.keyId,
+    trustedPublicJwk: signing.publicJwk
+  };
   const entitlementCheck = await verifyEntitlementToken(
     activatedBody.license.entitlement.token,
-    signing.publicJwk,
-    {
-      protocolVersion: "GSL-v1",
-      type: "license",
-      projectId: PROJECT_ID,
-      integrationCode: project.integrationCode,
-      deviceHash,
-      status: "active",
-      keyId: signing.keyId
-    }
+    signingFromApi.publicJwk,
+    expectedEntitlement
   );
   assert.equal(entitlementCheck.valid, true);
+  assert.equal(entitlementCheck.signatureValid, true);
+
+  const otherSigning = await signingFixture();
+  const untrustedKeyResult = await verifyEntitlementToken(
+    activatedBody.license.entitlement.token,
+    otherSigning.publicJwk,
+    expectedEntitlement
+  );
+  assert.equal(untrustedKeyResult.valid, false);
+  assert.ok(untrustedKeyResult.errors.includes("untrusted_signing_key"));
 
   const secondDevice = await handleRequest(
     publicRequest("/api/v1/license/activate", {
@@ -868,6 +895,23 @@ test("fluxo público ativa, valida idempotência, aplica limite, desativa e veri
   const replayBody = await replayValidation.json();
   assert.equal(replayBody.license.validationCount, 1);
   assert.equal(replayBody.license.revalidationReplay, true);
+
+  const newerValidation = await handleRequest(
+    publicRequest("/api/v1/license/validate", {
+      deviceId, requestId: "req-c12-validate-B"
+    }), env
+  );
+  assert.equal(newerValidation.status, 200);
+  assert.equal((await newerValidation.json()).license.validationCount, 2);
+  const replayA = await handleRequest(
+    publicRequest("/api/v1/license/validate", {
+      deviceId, requestId: "req-c12-validate"
+    }), env
+  );
+  assert.equal(replayA.status, 200);
+  const replayAData = await replayA.json();
+  assert.equal(replayAData.license.revalidationReplay, true);
+  assert.equal(replayAData.license.validationCount, 2);
 
   const deactivate = await handleRequest(
     publicRequest("/api/v1/license/deactivate", {
@@ -1001,10 +1045,13 @@ test("fluxo de trial preserva período, revalida de forma idempotente e converte
       integrationCode: project.integrationCode,
       deviceHash,
       status: "active",
-      keyId: signing.keyId
+      keyId: signing.keyId,
+      trustedPublicJwk: signing.publicJwk
     }
   );
   assert.equal(entitlementCheck.valid, true);
+  assert.equal(entitlementCheck.claims.startedAt, started.trial.startedAt);
+  assert.equal(entitlementCheck.claims.expiresAt, started.trial.expiresAt);
 
   const startAgain = await handleRequest(
     trialRequest("/api/v1/trial/start", "req-c12-trial-start-again"),
@@ -1033,6 +1080,19 @@ test("fluxo de trial preserva período, revalida de forma idempotente e converte
   const replayed = await validateReplay.json();
   assert.equal(replayed.trial.validationCount, 1);
   assert.equal(replayed.trial.revalidationReplay, true);
+
+  const trialB = await handleRequest(
+    trialRequest("/api/v1/trial/validate", "req-c12-trial-B"), env
+  );
+  assert.equal(trialB.status, 200);
+  assert.equal((await trialB.json()).trial.validationCount, 2);
+  const trialReplayA = await handleRequest(
+    trialRequest("/api/v1/trial/validate", "req-c12-trial-validate"), env
+  );
+  assert.equal(trialReplayA.status, 200);
+  const replayTrialData = await trialReplayA.json();
+  assert.equal(replayTrialData.trial.revalidationReplay, true);
+  assert.equal(replayTrialData.trial.validationCount, 2);
 
   const paidActivation = await handleRequest(
     new Request("https://painel.licencas.guiasys.online/api/v1/license/activate", {
@@ -1163,4 +1223,184 @@ test("emissão administrativa é idempotente para integrações de venda", async
     [...services.store.keys()].filter(key => key.startsWith(`projects/${PROJECT_ID}/licenses/`)).length,
     1
   );
+});
+test("INT-02: seletores contraditórios falham sem alterar o projeto", async () => {
+  const signing = await signingFixture();
+  const integrationCode = "GSLI-ABCD-EFGH-JKLM";
+  const project = {
+    name: "Projeto Integração",
+    prefix: "GSS",
+    status: "active",
+    integrationCode,
+    allowedOrigins: [],
+    signingKeyId: signing.keyId,
+    signingAlgorithm: "ES256",
+    signingPublicJwk: signing.publicJwk
+  };
+  const services = memoryServices({
+    [`projects/${PROJECT_ID}`]: project,
+    [`projects/${PROJECT_ID}/internal/signing`]: signing,
+    [`integrationCodes/${sha256(integrationCode)}`]: { projectId: PROJECT_ID }
+  });
+  const env = { FIREBASE_PROJECT_ID: "guiasys-licensing", __services: services };
+  const request = body => new Request("https://licencas.guiasys.online/api/v1/project/config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+
+  const mismatch = await handleRequest(request({
+    projectId: PROJECT_ID,
+    integrationCode: "GSLI-WXYZ-5678-2345"
+  }), env);
+  assert.equal(mismatch.status, 400);
+  assert.equal((await mismatch.json()).error, "project_selector_mismatch");
+  assert.deepEqual(services.store.get(`projects/${PROJECT_ID}`), project);
+
+  const bothMatch = await handleRequest(request({ projectId: PROJECT_ID, integrationCode }), env);
+  assert.equal(bothMatch.status, 200);
+  const body = await bothMatch.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.project.integrationCode, integrationCode);
+
+  const onlyCode = await handleRequest(request({ integrationCode }), env);
+  assert.equal(onlyCode.status, 200);
+  assert.equal((await onlyCode.json()).project.projectId, PROJECT_ID);
+});
+
+test("INT-02: retry recupera ativação persistida após falha temporária de assinatura", async () => {
+  const signing = await signingFixture();
+  const customerId = "cus_0123456789abcdefabcd";
+  const deviceId = "DEVICE-INT02-RETRY";
+  const deviceHash = sha256(deviceId);
+  const services = memoryServices({
+    [`projects/${PROJECT_ID}`]: {
+      name: "Projeto Retry",
+      prefix: "GSS",
+      status: "active",
+      integrationCode: "GSLI-ABCD-EFGH-JKLM",
+      allowedOrigins: [],
+      validationHours: 24,
+      offlineDays: 7,
+      signingKeyId: signing.keyId,
+      signingAlgorithm: "ES256",
+      signingPublicJwk: signing.publicJwk
+    },
+    [`projects/${PROJECT_ID}/internal/signing`]: signing,
+    [`projects/${PROJECT_ID}/licenseKeys/${sha256(LICENSE_KEY)}`]: {
+      licenseId: LICENSE_ID
+    },
+    [`projects/${PROJECT_ID}/customers/${customerId}`]: {
+      name: "Cliente Retry", email: "retry@example.com", status: "active"
+    },
+    [`projects/${PROJECT_ID}/licenses/${LICENSE_ID}`]: {
+      key: LICENSE_KEY,
+      customerId,
+      customerName: "Cliente Retry",
+      customerEmail: "retry@example.com",
+      planName: "Mensal",
+      durationDays: 30,
+      renewalDaysTotal: 0,
+      renewalCount: 0,
+      lifetime: false,
+      maxDevices: 1,
+      startMode: "first_activation",
+      status: "pending",
+      activatedAt: null,
+      expiresAt: null,
+      createdAt: new Date().toISOString()
+    }
+  });
+  const getDoc = services.getDoc.bind(services);
+  let signingReadShouldFail = true;
+  services.getDoc = async path => {
+    if (signingReadShouldFail && path === `projects/${PROJECT_ID}/internal/signing`) {
+      signingReadShouldFail = false;
+      return null;
+    }
+    return getDoc(path);
+  };
+  const env = { FIREBASE_PROJECT_ID: "guiasys-licensing", __services: services };
+  const request = () => new Request("https://licencas.guiasys.online/api/v1/license/activate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      projectId: PROJECT_ID,
+      licenseKey: LICENSE_KEY,
+      deviceId,
+      requestId: "int02-same-operation"
+    })
+  });
+
+  const first = await handleRequest(request(), env);
+  assert.equal(first.status, 500);
+  assert.equal((await first.json()).error, "internal_error");
+  assert.equal(services.store.get(`projects/${PROJECT_ID}/devices/${deviceHash}`).active, true);
+  assert.equal(services.store.get(`projects/${PROJECT_ID}/licenses/${LICENSE_ID}`).status, "active");
+  const activationsAfterFailure = [...services.store.keys()]
+    .filter(path => path.startsWith(`projects/${PROJECT_ID}/activations/`)).length;
+  assert.equal(activationsAfterFailure, 1);
+
+  const retry = await handleRequest(request(), env);
+  assert.equal(retry.status, 200);
+  const data = await retry.json();
+  assert.equal(data.license.alreadyActive, true);
+  assert.ok(data.license.entitlement.token);
+  const activationsAfterRetry = [...services.store.keys()]
+    .filter(path => path.startsWith(`projects/${PROJECT_ID}/activations/`)).length;
+  assert.equal(activationsAfterRetry, activationsAfterFailure);
+});
+
+test("INT-03: /project/config expõe apenas material público JWK sem alterar chaves legadas", async () => {
+  const signing = await signingFixture();
+  const legacyPublicJwk = {
+    ...signing.publicJwk,
+    d: null, p: null, q: null, n: null, e: null, dp: null
+  };
+  const project = {
+    name: "Projeto JWK",
+    prefix: "GSS",
+    status: "active",
+    integrationCode: "GSLI-ABCD-EFGH-JKLM",
+    signingKeyId: signing.keyId,
+    signingPublicJwk: legacyPublicJwk,
+    signingAlgorithm: "ES256",
+    allowedOrigins: [],
+    offlineDays: 7,
+    validationHours: 24
+  };
+  const services = memoryServices({
+    [`projects/${PROJECT_ID}`]: project,
+    [`projects/${PROJECT_ID}/internal/signing`]: {
+      ...signing, publicJwk: legacyPublicJwk
+    }
+  });
+  const env = { FIREBASE_PROJECT_ID: "guiasys-licensing", __services: services };
+  const response = await handleRequest(
+    new Request("https://licencas.guiasys.online/api/v1/project/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: PROJECT_ID })
+    }), env
+  );
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  const publicJwk = body.project.signing.publicJwk;
+  assert.deepEqual(Object.keys(publicJwk), ["kty", "crv", "x", "y", "ext", "key_ops"]);
+  assert.equal(publicJwk.d, undefined);
+  assert.equal(publicJwk.p, undefined);
+  assert.equal(body.project.signing.keyId, signing.keyId);
+  const verificationKey = await crypto.subtle.importKey(
+    "jwk", publicJwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]
+  );
+  assert.equal(verificationKey.type, "public");
+
+  // A sanitização da resposta não gira a chave, não altera o projeto e não apaga o histórico.
+  const saved = services.store.get(`projects/${PROJECT_ID}`);
+  assert.equal(saved.integrationCode, project.integrationCode);
+  assert.equal(saved.signingKeyId, signing.keyId);
+  assert.deepEqual(saved.signingPublicJwk, legacyPublicJwk);
+  assert.equal(services.store.get(`projects/${PROJECT_ID}/internal/signing`).keyId, signing.keyId);
 });
