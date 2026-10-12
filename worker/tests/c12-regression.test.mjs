@@ -818,20 +818,49 @@ test("fluxo público ativa, valida idempotência, aplica limite, desativa e veri
   assert.ok(activatedBody.license.offlineUntil);
   assert.ok(activatedBody.license.entitlement?.token);
 
+  const configResponse = await handleRequest(
+    new Request("https://licencas.guiasys.online/api/v1/project/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ integrationCode: project.integrationCode })
+    }),
+    env
+  );
+  assert.equal(configResponse.status, 200);
+  const configBody = await configResponse.json();
+  const signingFromApi = configBody.project.signing;
+  assert.equal(signingFromApi.keyId, signing.keyId);
+  assert.equal(signingFromApi.algorithm, "ES256");
+  assert.deepEqual(Object.keys(signingFromApi.publicJwk), ["kty", "crv", "x", "y", "ext", "key_ops"]);
+
+  // INT-05: contrato obtido por HTTPS + chave fixada deve verificar o JWS
+  // emitido pelo backend real. A chave apenas baixada não é confiança suficiente.
+  const expectedEntitlement = {
+    protocolVersion: "GSL-v1",
+    type: "license",
+    projectId: PROJECT_ID,
+    integrationCode: project.integrationCode,
+    deviceHash,
+    status: "active",
+    keyId: signing.keyId,
+    trustedPublicJwk: signing.publicJwk
+  };
   const entitlementCheck = await verifyEntitlementToken(
     activatedBody.license.entitlement.token,
-    signing.publicJwk,
-    {
-      protocolVersion: "GSL-v1",
-      type: "license",
-      projectId: PROJECT_ID,
-      integrationCode: project.integrationCode,
-      deviceHash,
-      status: "active",
-      keyId: signing.keyId
-    }
+    signingFromApi.publicJwk,
+    expectedEntitlement
   );
   assert.equal(entitlementCheck.valid, true);
+  assert.equal(entitlementCheck.signatureValid, true);
+
+  const untrustedKeyPair = await signingFixture();
+  const maliciousKey = await verifyEntitlementToken(
+    activatedBody.license.entitlement.token,
+    untrustedKeyPair.publicJwk,
+    expectedEntitlement
+  );
+  assert.equal(maliciousKey.valid, false);
+  assert.ok(maliciousKey.errors.includes("untrusted_signing_key"));
 
   const secondDevice = await handleRequest(
     publicRequest("/api/v1/license/activate", {
@@ -1001,10 +1030,13 @@ test("fluxo de trial preserva período, revalida de forma idempotente e converte
       integrationCode: project.integrationCode,
       deviceHash,
       status: "active",
-      keyId: signing.keyId
+      keyId: signing.keyId,
+      trustedPublicJwk: signing.publicJwk
     }
   );
   assert.equal(entitlementCheck.valid, true);
+  assert.equal(entitlementCheck.claims.startedAt, started.trial.startedAt);
+  assert.equal(entitlementCheck.claims.expiresAt, started.trial.expiresAt);
 
   const startAgain = await handleRequest(
     trialRequest("/api/v1/trial/start", "req-c12-trial-start-again"),
