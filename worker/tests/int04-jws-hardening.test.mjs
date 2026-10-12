@@ -86,7 +86,7 @@ test("INT04: assinatura adulterada e JWS incompleto não são aceitos", async ()
   const d = await fixture();
   const parts = d.token.split(".");
   const last = parts[2];
-  const modified = `${parts[0]}.${parts[1]}.${last.slice(0, -1)}${last.at(-1) === "A" ? "B" : "A"}`;
+  const modified = `${parts[0]}.${parts[1]}.${last[0] === "A" ? "B" : "A"}${last.slice(1)}`;
   const samples = [modified, "x.y", "", "x..y", "x y.z.w", "x=.y.z", "x".repeat(16385)];
   for (const token of samples) {
     const r = await verifyEntitlementToken(token, d.publicJwk, d.expected);
