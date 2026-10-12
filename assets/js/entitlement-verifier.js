@@ -24,6 +24,18 @@ export async function sha256HexText(value) {
 
 export function validateEntitlementClaims(header, claims, expected = {}) {
   const errors = [];
+  // Validar uma assinatura não significa que ela ainda autorize o uso offline.
+  // "now" só é injetado em testes determinísticos; em produção usa o relógio atual.
+  const now = expected.now == null
+    ? Date.now()
+    : expected.now instanceof Date
+      ? expected.now.getTime()
+      : isoMillis(expected.now);
+  const maxClockSkewMs = 5 * 60 * 1000;
+
+  for (const field of ["protocolVersion", "type", "projectId", "integrationCode", "deviceHash", "keyId"]) {
+    if (!expected[field]) errors.push(`missing_expected_${field}`);
+  }
 
   if (header?.alg !== "ES256") errors.push("unexpected_algorithm");
   if (header?.typ !== "GSL-ENT") errors.push("unexpected_token_type");
@@ -32,13 +44,12 @@ export function validateEntitlementClaims(header, claims, expected = {}) {
 
   if (claims?.protocolVersion !== expected.protocolVersion) errors.push("protocol_mismatch");
   if (claims?.type !== expected.type) errors.push("entitlement_type_mismatch");
+  if (!["license", "trial"].includes(claims?.type)) errors.push("invalid_entitlement_type");
   if (claims?.projectId !== expected.projectId) errors.push("project_mismatch");
   if (claims?.integrationCode !== expected.integrationCode) errors.push("integration_code_mismatch");
   if (claims?.deviceHash !== expected.deviceHash) errors.push("device_mismatch");
-
-  if (expected.status && claims?.status !== expected.status) {
-    errors.push("status_mismatch");
-  }
+  if (claims?.status !== "active") errors.push("inactive_entitlement");
+  if (expected.status && claims?.status !== expected.status) errors.push("status_mismatch");
 
   if (claims?.type === "license" && !claims?.licenseId) {
     errors.push("missing_license_id");
@@ -46,27 +57,49 @@ export function validateEntitlementClaims(header, claims, expected = {}) {
 
   const serverTime = isoMillis(claims?.serverTime);
   if (!Number.isFinite(serverTime)) errors.push("invalid_server_time");
+  if (!Number.isFinite(now)) errors.push("invalid_current_time");
+  if (Number.isFinite(now) && Number.isFinite(serverTime) && serverTime > now + maxClockSkewMs) {
+    errors.push("server_time_in_future");
+  }
 
   const expiresAt = claims?.expiresAt == null ? null : isoMillis(claims.expiresAt);
   if (claims?.expiresAt != null && !Number.isFinite(expiresAt)) {
     errors.push("invalid_expires_at");
   }
+  // Trial e licenças temporárias exigem uma expiração; somente vitalícias não expiram.
+  if (claims?.type === "trial" || (claims?.type === "license" && claims?.lifetime !== true)) {
+    if (!Number.isFinite(expiresAt)) errors.push("missing_expires_at");
+  }
 
   const offlineUntil = claims?.offlineUntil == null ? null : isoMillis(claims.offlineUntil);
-  if (claims?.offlineUntil != null && !Number.isFinite(offlineUntil)) {
-    errors.push("invalid_offline_until");
-  }
+  if (!Number.isFinite(offlineUntil)) errors.push("missing_or_invalid_offline_until");
 
   if (Number.isFinite(serverTime) && Number.isFinite(expiresAt) && expiresAt < serverTime) {
     errors.push("entitlement_already_expired");
   }
-
   if (Number.isFinite(serverTime) && Number.isFinite(offlineUntil) && offlineUntil < serverTime) {
     errors.push("offline_window_in_past");
   }
-
   if (Number.isFinite(expiresAt) && Number.isFinite(offlineUntil) && offlineUntil > expiresAt) {
     errors.push("offline_window_exceeds_expiry");
+  }
+
+  if (Number.isFinite(now) && Number.isFinite(offlineUntil) && now >= offlineUntil) {
+    errors.push("offline_window_elapsed");
+  }
+  if (Number.isFinite(now) && Number.isFinite(expiresAt) && now >= expiresAt) {
+    errors.push("entitlement_expired");
+  }
+
+  // Um cliente pode persistir uma referência temporal confiável para detectar
+  // retrocesso de relógio. Sem essa referência, só a assinatura não o detecta.
+  if (expected.lastTrustedTime != null) {
+    const lastTrustedTime = isoMillis(expected.lastTrustedTime);
+    if (!Number.isFinite(lastTrustedTime)) {
+      errors.push("invalid_last_trusted_time");
+    } else if (Number.isFinite(now) && now + maxClockSkewMs < lastTrustedTime) {
+      errors.push("clock_rollback_detected");
+    }
   }
 
   return {
