@@ -1,0 +1,78 @@
+name: INT-08.4 Isolated Firebase Staging Kit
+
+on:
+  push:
+    branches:
+      - fix/int08-consolidacao-c15-int07
+    paths:
+      - "scripts/int08-staging-kit.mjs"
+      - "worker/src/**"
+      - "worker/package.json"
+      - "assets/**"
+      - "public/**"
+      - "firebase.json"
+      - ".github/workflows/int08-staging-kit-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  staging-offline-dry-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      GUIASYS_STAGE_PROJECT_ID: guiasys-licensing-hml
+      GUIASYS_STAGE_PUBLIC_SITE: guiasys-licensing-hml
+      GUIASYS_STAGE_ADMIN_SITE: guiasys-licensing-hml-admin
+    steps:
+      - name: Checkout candidate source
+        uses: actions/checkout@v7
+      - name: Node 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Provide clearly fake isolated Firebase Web config
+        run: |
+          cat > "${RUNNER_TEMP}/int08-fake-web-config.json" <<'EOF'
+          {
+            "apiKey": "AIzaSyFAKE_STAGING_OFFLINE_FIXTURE_ONLY",
+            "authDomain": "guiasys-licensing-hml.firebaseapp.com",
+            "projectId": "guiasys-licensing-hml",
+            "storageBucket": "guiasys-licensing-hml.firebasestorage.app",
+            "messagingSenderId": "1234567890",
+            "appId": "1:1234567890:web:aaaaaaaaaaaaaaaaaaaaaa"
+          }
+          EOF
+          echo "GUIASYS_STAGE_WEB_CONFIG_FILE=${RUNNER_TEMP}/int08-fake-web-config.json" >> "${GITHUB_ENV}"
+      - name: Validate isolated test config and build temporary assets
+        run: |
+          node scripts/int08-staging-kit.mjs --check
+          node scripts/int08-staging-kit.mjs --build
+          node scripts/int08-staging-kit.mjs --verify
+          node --check .int08-staging/worker/src/index.js
+          node --check .int08-staging/hosting-admin/assets/js/app.js
+          node --check .int08-staging/hosting-public/assets/catalog.js
+      - name: Assert generated stage targets and prod restrictions
+        run: |
+          node --input-type=module <<'EOF'
+          import { readFile } from 'node:fs/promises';
+          import assert from 'node:assert/strict';
+          const source = JSON.parse(await readFile('firebase.json', 'utf8'));
+          const out = JSON.parse(await readFile('.int08-staging/firebase.json', 'utf8'));
+          const app = await readFile('.int08-staging/hosting-admin/assets/js/app.js', 'utf8');
+          const cat = await readFile('.int08-staging/hosting-public/assets/catalog.js', 'utf8');
+          const backend = await readFile('.int08-staging/worker/src/index.js', 'utf8');
+          assert.equal(source.hosting[0].target, 'admin');
+          assert.equal(source.functions.source, 'worker');
+          assert.equal(out.functions.source, '.int08-staging/worker');
+          assert.deepEqual(out.hosting.map(x => x.site).sort(), [
+            'guiasys-licensing-hml', 'guiasys-licensing-hml-admin'
+          ].sort());
+          assert.ok(out.hosting.every(x => !x.target));
+          assert.ok(!app.includes('authDomain: "guiasys-licensing.firebaseapp.com"'));
+          assert.ok(!cat.includes('"guiasys-licensing.firebasestorage.app"'));
+          assert.ok(!backend.includes('"https://licencas.guiasys.online"'));
+          assert.ok(app.includes('https://guiasys-licensing-hml.web.app'));
+          console.log('INT-08.4: artefatos separados e configuração do projeto real preservada.');
+          EOF
