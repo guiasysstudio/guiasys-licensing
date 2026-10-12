@@ -822,7 +822,7 @@ test("fluxo público ativa, valida idempotência, aplica limite, desativa e veri
     new Request("https://licencas.guiasys.online/api/v1/project/config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ integrationCode: project.integrationCode })
+      body: JSON.stringify({ projectId: PROJECT_ID, integrationCode: project.integrationCode })
     }),
     env
   );
