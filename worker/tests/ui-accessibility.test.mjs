@@ -114,7 +114,7 @@ test("navegação, toast, tabela e busca possuem semântica acessível", () => {
   assert.match(app, /node\.setAttribute\("role", tone === "danger" \? "alert" : "status"\)/);
   assert.match(app, /<caption class="sr-only">/);
   assert.match(app, /<th scope="col">/);
-  assert.match(app, /aria-label="Buscar licença por cliente ou chave"/);
+  assert.match(app, /aria-label="Buscar licença por key, cliente, e-mail ou observação"/);
   assert.match(app, /function updateDocumentTitle\(/);
   assert.match(app, /function setSidebarOpen\(/);
 });

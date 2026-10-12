@@ -303,6 +303,19 @@ function e(value = "") {
     .replaceAll("'", "&#039;");
 }
 
+function licenseNotesHtml(notes) {
+  const value = typeof notes === "string" ? notes : "";
+  return value.trim() ? e(value) : "—";
+}
+
+function licenseMatchesSearch(license, query = "") {
+  const q = String(query).trim().toLowerCase();
+  if (!q) return true;
+
+  return [license?.key, license?.customerName, license?.customerEmail, license?.notes]
+    .some(value => String(value || "").toLowerCase().includes(q));
+}
+
 function entitlementExpected(project, type, deviceHash) {
   return {
     protocolVersion: PROTOCOL_VERSION,
@@ -2189,6 +2202,7 @@ function showGeneratedLicense(license) {
           <div><span>Plano</span><strong>${e(license.planName)}</strong></div>
           <div><span>Dispositivos</span><strong>${e(license.maxDevices)}</strong></div>
           <div><span>Status</span><strong>${e(statusMap[license.status]?.[0] || license.status)}</strong></div>
+          <div class="license-notes"><span>Observação</span><strong class="license-notes-content">${licenseNotesHtml(license.notes)}</strong></div>
         </div>
       </div>
     `,
@@ -2208,20 +2222,14 @@ async function licensesView() {
     <article class="card table-shell">
       <div class="table-toolbar">
         <h3>Licenças emitidas</h3>
-        <div class="toolbar-actions"><input id="license-search" class="compact-input" aria-label="Buscar licença por cliente ou chave" placeholder="Buscar cliente ou key"><span class="badge">${licenses.length} registro(s)</span></div>
+        <div class="toolbar-actions"><input id="license-search" class="compact-input" aria-label="Buscar licença por key, cliente, e-mail ou observação" placeholder="Buscar key, cliente ou observação"><span class="badge">${licenses.length} registro(s)</span></div>
       </div>
       <div id="licenses-table"></div>
     </article>
   `;
 
   const draw = query => {
-    const q = query.trim().toLowerCase();
-    const filtered = licenses.filter(item =>
-      !q ||
-      item.key?.toLowerCase().includes(q) ||
-      item.customerName?.toLowerCase().includes(q) ||
-      item.customerEmail?.toLowerCase().includes(q)
-    );
+    const filtered = licenses.filter(item => licenseMatchesSearch(item, query));
 
     document.querySelector("#licenses-table").innerHTML = table(
       ["Key", "Cliente", "Plano", "Status", "Expiração", "Disp.", ""],
@@ -2288,6 +2296,7 @@ function openLicenseActions(license) {
         <div><span>Cliente</span><strong>${e(license.customerName)}</strong></div>
         <div><span>Status</span>${badge(license.status)}</div>
         <div><span>Expiração</span><strong>${license.lifetime ? "Vitalícia" : formatDate(license.expiresAt)}</strong></div>
+        <div class="license-notes"><span>Observação</span><strong class="license-notes-content">${licenseNotesHtml(license.notes)}</strong></div>
       </div>
       <div class="action-grid">
         ${actions.map(([action, label, tone]) => `<button class="btn btn-${tone} do-license-action" data-action="${action}" type="button">${label}</button>`).join("")}

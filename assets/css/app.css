@@ -1471,6 +1471,26 @@ button:disabled {
   font-size: 12px;
 }
 
+.license-notes {
+  min-width: 0;
+}
+
+.license-action-summary > .license-notes {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.license-notes-content {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: left;
+}
+
 .action-grid {
   display: flex;
   flex-wrap: wrap;
