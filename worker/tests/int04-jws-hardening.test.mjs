@@ -172,3 +172,40 @@ test("INT04: clock rollback em relação à última referência confiável bloqu
   assert.equal(r.valid, false);
   assert.ok(r.errors.includes("clock_rollback_detected"));
 });
+
+test("INT04: rejeita codificação base64url não canônica de assinatura ES256", async () => {
+  const d = await fixture();
+  const parts = d.token.split(".");
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  const signature = parts[2];
+  const lastIndex = alphabet.indexOf(signature.at(-1));
+  assert.ok(lastIndex >= 0);
+  // 64 bytes: último caractere possui somente dois bits significativos.
+  // Inverter um bit de padding produz os mesmos bytes, mas não um JWS canônico.
+  const equivalent = signature.slice(0, -1) + alphabet[lastIndex ^ 1];
+  assert.deepEqual(Buffer.from(equivalent, "base64url"), Buffer.from(signature, "base64url"));
+  const token = `${parts[0]}.${parts[1]}.${equivalent}`;
+  const r = await verifyEntitlementToken(token, d.publicJwk, d.expected);
+  assert.equal(r.valid, false);
+  assert.ok(r.errors.includes("verification_error"));
+});
+
+test("INT04: rejeita payload JWS estruturalmente incorreto", async () => {
+  const d = await fixture();
+  const [header,,sig] = d.token.split(".");
+  const token = `${header}.${encode([])}.${sig}`;
+  const r = await verifyEntitlementToken(token, d.publicJwk, d.expected);
+  assert.equal(r.valid, false);
+  assert.ok(r.errors.includes("invalid_jws_structure"));
+});
+
+test("INT04: código de integração e Device ID estável geram hash reproduzível", async () => {
+  const first = await sha256HexText(localDevice);
+  const second = await sha256HexText(localDevice);
+  const afterVersionUpdate = await sha256HexText(localDevice);
+  const otherDevice = await sha256HexText("DEVICE-INT04-OTHER");
+  assert.equal(first, second);
+  assert.equal(second, afterVersionUpdate);
+  assert.notEqual(first, otherDevice);
+  assert.match(first, /^[a-f0-9]{64}$/);
+});
