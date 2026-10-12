@@ -22,6 +22,16 @@ const items = [
   { base: store, relative: "public/index.html", remote: "index.html" }
 ];
 const sha = value => createHash("sha256").update(value).digest("hex");
+const c15Base = "8b47c95aa9938f06e6eb0de234057fcc93cd7354";
+function c15Source(relative) {
+  try {
+    return execFileSync("git", ["show", `${c15Base}:${relative}`], {
+      encoding: "buffer", maxBuffer: 8 * 1024 * 1024
+    });
+  } catch {
+    return null;
+  }
+}
 const temp = await mkdtemp(path.join(tmpdir(), "guiasys-int08-diff-"));
 const report = [];
 try {
@@ -48,6 +58,9 @@ try {
     const normalizedLocal = Buffer.from(localBytes.toString("utf8").replace(/\r\n/g, "\n"));
     const normalizedRemote = deployedBytes === null
       ? null : Buffer.from(deployedBytes.toString("utf8").replace(/\r\n/g, "\n"));
+    const c15Bytes = c15Source(item.relative);
+    const normalizedC15 = c15Bytes === null ? null
+      : Buffer.from(c15Bytes.toString("utf8").replace(/\r\n/g, "\n"));
     let normalizedNumstat = null;
     if (deployedBytes !== null) {
       const copied = path.join(temp, "remote-" + i + path.extname(local));
@@ -79,6 +92,10 @@ try {
       sha256Deployed: deployedBytes === null ? null : sha(deployedBytes),
       exactlyEqual: deployedBytes?.equals(localBytes) ?? false,
       normalizedEqual: normalizedRemote?.equals(normalizedLocal) ?? false,
+      c15SourceExists: normalizedC15 !== null,
+      matchesPublishedC15AfterCrLfNormalization: Boolean(
+        normalizedRemote && normalizedC15 && normalizedRemote.equals(normalizedC15)),
+      sha256C15Normalized: normalizedC15 === null ? null : sha(normalizedC15),
       localCrLfCount: localBytes.toString("utf8").split("\r\n").length - 1,
       deployedCrLfCount: deployedBytes === null ? null
         : deployedBytes.toString("utf8").split("\r\n").length - 1,
