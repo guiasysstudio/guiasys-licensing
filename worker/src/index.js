@@ -11,6 +11,7 @@ import {
 import { assertCents, moneyToCents, transitionOrderStatus, transitionPaymentStatus } from "./commerce-policy.js";
 import { issueLicenseInTransaction } from "./license-service.js";
 import { fetchWithTimeout } from "./network.js";
+import { rateLimitIngressPeer } from "./rate-limit-identity.js";
 import { downloadRemoteImage } from "./remote-image.js";
 import { PagBankProvider } from "./payments/payment-provider.js";
 import {
@@ -947,10 +948,9 @@ async function sha256Hex(value) {
 }
 
 async function enforceRateLimit(env, request, bucket, limit, windowSeconds) {
-  const forwarded = String(request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "")
-    .split(",")[0]
-    .trim();
-  const clientId = forwarded || "unknown";
+  // Only use the rightmost ingress peer; the leftmost XFF or CF header can be
+  // controlled by the requester. CDN traffic may share this coarse bucket.
+  const clientId = rateLimitIngressPeer(request.headers);
   const id = await sha256Hex(`${clientId}|${bucket}`);
   const path = `rateLimits/${id}`;
   const clientHash = await sha256Hex(clientId);
