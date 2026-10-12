@@ -11,6 +11,7 @@ import {
 import { assertCents, moneyToCents, transitionOrderStatus, transitionPaymentStatus } from "./commerce-policy.js";
 import { issueLicenseInTransaction } from "./license-service.js";
 import { fetchWithTimeout } from "./network.js";
+import { rateLimitIngressPeer } from "./rate-limit-identity.js";
 import { downloadRemoteImage } from "./remote-image.js";
 import { PagBankProvider } from "./payments/payment-provider.js";
 import {
@@ -947,10 +948,9 @@ async function sha256Hex(value) {
 }
 
 async function enforceRateLimit(env, request, bucket, limit, windowSeconds) {
-  const forwarded = String(request.headers.get("CF-Connecting-IP") || request.headers.get("X-Forwarded-For") || "")
-    .split(",")[0]
-    .trim();
-  const clientId = forwarded || "unknown";
+  // Conservative last-hop bucket. Shared CDN/proxy identities are not yet
+  // independently validated: production use is blocked pending INT-08.2.
+  const clientId = rateLimitIngressPeer(request.headers);
   const id = await sha256Hex(`${clientId}|${bucket}`);
   const path = `rateLimits/${id}`;
   const clientHash = await sha256Hex(clientId);
@@ -984,6 +984,21 @@ async function enforceRateLimit(env, request, bucket, limit, windowSeconds) {
   });
 }
 
+// Expose only public verification parameters, even for legacy JWKs with private/null fields.
+function publicSigningJwk(value) {
+  if (!value || value.kty !== "EC" || value.crv !== "P-256" ||
+      typeof value.x !== "string" || !value.x ||
+      typeof value.y !== "string" || !value.y) return null;
+  return {
+    kty: "EC",
+    crv: "P-256",
+    x: value.x,
+    y: value.y,
+    ext: true,
+    key_ops: ["verify"]
+  };
+}
+
 async function generateSigningMaterial() {
   const keyPair = await crypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-256" },
@@ -991,7 +1006,7 @@ async function generateSigningMaterial() {
     ["sign", "verify"]
   );
   const privateJwk = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
-  const publicJwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
+  const publicJwk = publicSigningJwk(await crypto.subtle.exportKey("jwk", keyPair.publicKey));
   const keyId = randomId("sig");
   const createdAt = nowIso();
 
@@ -1259,6 +1274,13 @@ async function resolvePublicProject(env, body = {}, origin = "") {
   }
 
   assertProjectOrigin(project, origin);
+  // Reject contradictory selectors before any lazy project writes.
+  if (directProjectId && integrationCode && project.integrationCode !== integrationCode) {
+    throw Object.assign(new Error("projectId e integrationCode não correspondem ao mesmo projeto."), {
+      status: 400,
+      reason: "project_selector_mismatch"
+    });
+  }
   project = await ensureProjectIntegrationCode(env, project);
   return { projectId: project.id, project };
 }
@@ -1273,7 +1295,7 @@ function publicProjectConfigView(project) {
     signing: {
       algorithm: project.signingAlgorithm || "ES256",
       keyId: project.signingKeyId,
-      publicJwk: project.signingPublicJwk
+      publicJwk: publicSigningJwk(project.signingPublicJwk)
     },
     trial: {
       enabled: Boolean(project.trialEnabled && Number(project.trialDays || 0) > 0),
@@ -1701,7 +1723,7 @@ function projectDetailView(project, admin) {
     view.integrationCode = project.integrationCode || "";
     view.signingKeyId = project.signingKeyId || null;
     view.signingAlgorithm = project.signingAlgorithm || "ES256";
-    view.signingPublicJwk = project.signingPublicJwk || null;
+    view.signingPublicJwk = publicSigningJwk(project.signingPublicJwk);
   }
 
   return view;
