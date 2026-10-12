@@ -16,3 +16,4 @@ ui-debug.log*
 .hosting-admin-dist/
 .hosting-public-dist/
 gha-creds-*.json
+.int08-staging/
