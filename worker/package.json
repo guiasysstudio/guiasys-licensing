@@ -8,7 +8,7 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check src/index.js && node --check src/firebase-runtime.js && node --check src/firebase-entry.js"
+    "check": "node --check src/index.js && node --check src/firebase-runtime.js && node --check src/firebase-entry.js && node --check src/rate-limit-identity.js"
   },
   "dependencies": {
     "firebase-admin": "14.5.0",
