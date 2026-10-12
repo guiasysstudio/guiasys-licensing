@@ -1,0 +1,30 @@
+name: INT-08.3 Live Read-only Release Preflight
+
+on:
+  push:
+    branches:
+      - fix/int08-consolidacao-c15-int07
+    paths:
+      - "assets/js/app.js"
+      - "assets/js/entitlement-verifier.js"
+      - "assets/js/integration-contract-support.js"
+      - "scripts/int08-firebase-preflight.mjs"
+      - ".github/workflows/int08-live-readonly-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  observe-production-without-writes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout candidate code
+        uses: actions/checkout@v7
+      - name: Setup Node 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Read-only production health and asset fingerprints
+        run: node scripts/int08-firebase-preflight.mjs --pre
