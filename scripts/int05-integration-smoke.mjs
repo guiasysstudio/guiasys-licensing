@@ -1,5 +1,7 @@
-// INT-05: smoke de leitura, seguro para executar após um deploy autorizado.
-// Não cria, ativa, valida, renova ou desativa nenhuma licença.
+// INT-05: smoke sem operações de licença, para após deploy autorizado.
+// Não ativa, valida, renova, inicia trial ou desativa licenças.
+// ATENÇÃO: /project/config pode preencher dados ausentes em projetos legados.
+// Execute com o integrationCode de um projeto ativo e já integrado.
 const apiBase = String(process.env.GUIASYS_INTEGRATION_API_BASE ||
   "https://licencas.guiasys.online").replace(/\/$/, "");
 const adminBase = String(process.env.GUIASYS_INTEGRATION_ADMIN_BASE ||
@@ -91,7 +93,7 @@ ensure(appText.includes("integration-contract-support.js") &&
   appText.includes("Copiar integração completa"),
   "Painel não contém o gerador de integração atualizado.");
 
-console.log("INT-05: smoke de integração APROVADO (somente leitura).");
+console.log("INT-05: smoke de integração APROVADO (sem operações de licença).");
 console.log("Projeto:", project.name, "| Protocolo:", project.protocolVersion);
 console.log("Assinatura:", project.signing.algorithm, "| Key ID:", project.signing.keyId);
 console.log("Endpoints conferidos:", endpoints.length);
