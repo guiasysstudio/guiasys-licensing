@@ -1291,3 +1291,54 @@ test("INT-02: retry recupera ativação persistida após falha temporária de as
     .filter(path => path.startsWith(`projects/${PROJECT_ID}/activations/`)).length;
   assert.equal(activationsAfterRetry, activationsAfterFailure);
 });
+
+test("INT-03: /project/config expõe apenas material público JWK sem alterar chaves legadas", async () => {
+  const signing = await signingFixture();
+  const legacyPublicJwk = {
+    ...signing.publicJwk,
+    d: null, p: null, q: null, n: null, e: null, dp: null
+  };
+  const project = {
+    name: "Projeto JWK",
+    prefix: "GSS",
+    status: "active",
+    integrationCode: "GSLI-ABCD-EFGH-JKLM",
+    signingKeyId: signing.keyId,
+    signingPublicJwk: legacyPublicJwk,
+    signingAlgorithm: "ES256",
+    allowedOrigins: [],
+    offlineDays: 7,
+    validationHours: 24
+  };
+  const services = memoryServices({
+    [`projects/${PROJECT_ID}`]: project,
+    [`projects/${PROJECT_ID}/internal/signing`]: {
+      ...signing, publicJwk: legacyPublicJwk
+    }
+  });
+  const env = { FIREBASE_PROJECT_ID: "guiasys-licensing", __services: services };
+  const response = await handleRequest(
+    new Request("https://licencas.guiasys.online/api/v1/project/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: PROJECT_ID })
+    }), env
+  );
+
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  const publicJwk = body.project.signing.publicJwk;
+  assert.deepEqual(Object.keys(publicJwk), ["kty", "crv", "x", "y", "ext", "key_ops"]);
+  assert.equal(publicJwk.d, undefined);
+  assert.equal(publicJwk.p, undefined);
+  assert.equal(body.project.signing.keyId, signing.keyId);
+  const verificationKey = await crypto.subtle.importKey(
+    "jwk", publicJwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]
+  );
+  assert.equal(verificationKey.type, "public");
+
+  // A sanitização da resposta não gira a chave, não altera o projeto e não apaga o histórico.
+  assert.deepEqual(services.store.get(`projects/${PROJECT_ID}`), project);
+  assert.equal(services.store.get(`projects/${PROJECT_ID}/internal/signing`).keyId, signing.keyId);
+});
