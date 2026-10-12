@@ -620,20 +620,47 @@ test("fluxo público ativa, valida idempotência, aplica limite, desativa e veri
   assert.ok(activatedBody.license.offlineUntil);
   assert.ok(activatedBody.license.entitlement?.token);
 
+  const configResponse = await handleRequest(
+    new Request("https://licencas.guiasys.online/api/v1/project/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: PROJECT_ID, integrationCode: project.integrationCode })
+    }),
+    env
+  );
+  assert.equal(configResponse.status, 200);
+  const configBody = await configResponse.json();
+  const signingFromApi = configBody.project.signing;
+  assert.equal(signingFromApi.keyId, signing.keyId);
+  assert.equal(signingFromApi.algorithm, "ES256");
+  assert.deepEqual(Object.keys(signingFromApi.publicJwk), ["kty", "crv", "x", "y", "ext", "key_ops"]);
+
+  const expectedEntitlement = {
+    protocolVersion: "GSL-v1",
+    type: "license",
+    projectId: PROJECT_ID,
+    integrationCode: project.integrationCode,
+    deviceHash,
+    status: "active",
+    keyId: signing.keyId,
+    trustedPublicJwk: signing.publicJwk
+  };
   const entitlementCheck = await verifyEntitlementToken(
     activatedBody.license.entitlement.token,
-    signing.publicJwk,
-    {
-      protocolVersion: "GSL-v1",
-      type: "license",
-      projectId: PROJECT_ID,
-      integrationCode: project.integrationCode,
-      deviceHash,
-      status: "active",
-      keyId: signing.keyId
-    }
+    signingFromApi.publicJwk,
+    expectedEntitlement
   );
   assert.equal(entitlementCheck.valid, true);
+  assert.equal(entitlementCheck.signatureValid, true);
+
+  const otherSigning = await signingFixture();
+  const untrustedKeyResult = await verifyEntitlementToken(
+    activatedBody.license.entitlement.token,
+    otherSigning.publicJwk,
+    expectedEntitlement
+  );
+  assert.equal(untrustedKeyResult.valid, false);
+  assert.ok(untrustedKeyResult.errors.includes("untrusted_signing_key"));
 
   const secondDevice = await handleRequest(
     publicRequest("/api/v1/license/activate", {
@@ -670,6 +697,23 @@ test("fluxo público ativa, valida idempotência, aplica limite, desativa e veri
   const replayBody = await replayValidation.json();
   assert.equal(replayBody.license.validationCount, 1);
   assert.equal(replayBody.license.revalidationReplay, true);
+
+  const newerValidation = await handleRequest(
+    publicRequest("/api/v1/license/validate", {
+      deviceId, requestId: "req-c12-validate-B"
+    }), env
+  );
+  assert.equal(newerValidation.status, 200);
+  assert.equal((await newerValidation.json()).license.validationCount, 2);
+  const replayA = await handleRequest(
+    publicRequest("/api/v1/license/validate", {
+      deviceId, requestId: "req-c12-validate"
+    }), env
+  );
+  assert.equal(replayA.status, 200);
+  const replayAData = await replayA.json();
+  assert.equal(replayAData.license.revalidationReplay, true);
+  assert.equal(replayAData.license.validationCount, 2);
 
   const deactivate = await handleRequest(
     publicRequest("/api/v1/license/deactivate", {
@@ -803,10 +847,13 @@ test("fluxo de trial preserva período, revalida de forma idempotente e converte
       integrationCode: project.integrationCode,
       deviceHash,
       status: "active",
-      keyId: signing.keyId
+      keyId: signing.keyId,
+      trustedPublicJwk: signing.publicJwk
     }
   );
   assert.equal(entitlementCheck.valid, true);
+  assert.equal(entitlementCheck.claims.startedAt, started.trial.startedAt);
+  assert.equal(entitlementCheck.claims.expiresAt, started.trial.expiresAt);
 
   const startAgain = await handleRequest(
     trialRequest("/api/v1/trial/start", "req-c12-trial-start-again"),
@@ -835,6 +882,19 @@ test("fluxo de trial preserva período, revalida de forma idempotente e converte
   const replayed = await validateReplay.json();
   assert.equal(replayed.trial.validationCount, 1);
   assert.equal(replayed.trial.revalidationReplay, true);
+
+  const trialB = await handleRequest(
+    trialRequest("/api/v1/trial/validate", "req-c12-trial-B"), env
+  );
+  assert.equal(trialB.status, 200);
+  assert.equal((await trialB.json()).trial.validationCount, 2);
+  const trialReplayA = await handleRequest(
+    trialRequest("/api/v1/trial/validate", "req-c12-trial-validate"), env
+  );
+  assert.equal(trialReplayA.status, 200);
+  const replayTrialData = await trialReplayA.json();
+  assert.equal(replayTrialData.trial.revalidationReplay, true);
+  assert.equal(replayTrialData.trial.validationCount, 2);
 
   const paidActivation = await handleRequest(
     new Request("https://painel.licencas.guiasys.online/api/v1/license/activate", {
