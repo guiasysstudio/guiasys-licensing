@@ -1,0 +1,27 @@
+name: INT-08 Live Firebase Read-only Smoke
+
+on:
+  push:
+    branches:
+      - fix/int08-firebase-preflight
+    paths:
+      - "scripts/int08-firebase-preflight.mjs"
+      - ".github/workflows/int08-live-readonly-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production-readonly-observation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout reviewed integration release
+        uses: actions/checkout@v7
+      - name: Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Check public Firebase health and admin assets without writes
+        run: node scripts/int08-firebase-preflight.mjs --pre
