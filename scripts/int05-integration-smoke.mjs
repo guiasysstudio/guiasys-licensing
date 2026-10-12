@@ -4,6 +4,7 @@
 const apiBase = String(process.env.GUIASYS_INTEGRATION_API_BASE || "").replace(/\/$/, "");
 const adminBase = String(process.env.GUIASYS_INTEGRATION_ADMIN_BASE || "").replace(/\/$/, "");
 const integrationCode = String(process.env.GUIASYS_INTEGRATION_CODE || "").trim();
+const expectedStageProject = String(process.env.GUIASYS_INTEGRATION_EXPECTED_PROJECT || "").trim();
 
 function ensure(condition, message) {
   if (!condition) throw new Error("INT-05 smoke: " + message);
@@ -12,6 +13,8 @@ ensure(/^https:\/\//.test(apiBase) && /^https:\/\//.test(adminBase),
   "Informe explicitamente os dois endereços do ambiente isolado usando HTTPS.");
 ensure(process.env.GUIASYS_INTEGRATION_STAGE_ACK === "ISOLATED_TEST_PROJECT",
   "Confirme explicitamente GUIASYS_INTEGRATION_STAGE_ACK=ISOLATED_TEST_PROJECT.");
+ensure(/^guiasys-licensing-(?:hml|staging|test)(?:-[a-z0-9]+)*$/.test(expectedStageProject),
+  "Informe GUIASYS_INTEGRATION_EXPECTED_PROJECT do Firebase de homologação.");
 for (const base of [apiBase, adminBase]) {
   const hostname = new URL(base).hostname.toLowerCase();
   // Preview Hosting channels in the production Firebase project share the
@@ -49,6 +52,8 @@ ensure(health.ok === true && health.protocolVersion === "GSL-v1" &&
 ensure(typeof health.firebaseProject === "string" &&
   health.firebaseProject !== "guiasys-licensing",
   "O projeto Firebase consultado deve ser ISOLADO de guiasys-licensing.");
+ensure(health.firebaseProject === expectedStageProject,
+  "A API está servindo um projeto diferente daquele autorizado para homologação.");
 const adminHealth = await json(adminBase + "/health");
 ensure(adminHealth.firebaseProject === health.firebaseProject,
   "Admin e API devem apontar para o MESMO projeto Firebase de homologação.");
