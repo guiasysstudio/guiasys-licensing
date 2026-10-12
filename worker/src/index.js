@@ -4296,16 +4296,148 @@ async function cancelOwnedOrder(env, accountId, orderId, actor) {
   });
 }
 
+function maskCustomerDeviceIdentifier(value) {
+  const identifier = String(value || "").trim();
+  const visible = identifier.slice(-8);
+  return visible ? `••••••••${visible}` : "••••••••";
+}
+
+function customerDeviceView(device) {
+  const id = assertEntityId("devices", device.id || device.deviceHash);
+  return {
+    id,
+    maskedDeviceId: maskCustomerDeviceIdentifier(id),
+    name: String(device.name || "Dispositivo").trim() || "Dispositivo",
+    platform: String(device.platform || "Plataforma não informada").trim() || "Plataforma não informada",
+    active: device.active !== false,
+    firstActivatedAt: device.firstActivatedAt || device.createdAt || null,
+    lastSeenAt: device.lastSeenAt || device.updatedAt || null
+  };
+}
+
+function customerLicenseView(project, license, devices = []) {
+  const normalized = normalizeLicenseStatus(license);
+  return {
+    id: normalized.id,
+    licenseId: normalized.id,
+    projectId: project.id,
+    projectName: String(project.name || "Produto GuiaSys"),
+    key: normalized.key,
+    status: normalized.status || "pending",
+    planId: normalized.planId || null,
+    planName: normalized.planName || "Plano",
+    startMode: normalized.startMode || "first_activation",
+    lifetime: Boolean(normalized.lifetime),
+    maxDevices: Math.max(1, Number(normalized.maxDevices || 1)),
+    createdAt: normalized.createdAt || null,
+    activatedAt: normalized.activatedAt || null,
+    expiresAt: normalized.expiresAt || null,
+    orderId: normalized.orderId || null,
+    orderItemId: normalized.orderItemId || null,
+    devices: devices
+      .filter(device => (
+        device.active !== false &&
+        device.licenseId === normalized.id &&
+        (!normalized.customerId || device.customerId === normalized.customerId)
+      ))
+      .map(customerDeviceView)
+      .sort((a, b) => String(b.lastSeenAt || "").localeCompare(String(a.lastSeenAt || "")))
+  };
+}
+
 async function listOwnedLicenses(env, accountId) {
   const refs = await listCollection(env, `customerAccounts/${accountId}/licenses`);
   const result = [];
+  const projects = new Map();
+  const projectDevices = new Map();
+
   for (const ref of refs.slice(0, 200)) {
     const projectId = assertProjectId(ref.projectId);
     const licenseId = assertEntityId("licenses", ref.licenseId || ref.id);
     const license = await getDoc(env, `projects/${projectId}/licenses/${licenseId}`);
-    if (license?.accountId === accountId) result.push(normalizeLicenseStatus({ id: licenseId, projectId, ...license }));
+    if (!license || license.accountId !== accountId) continue;
+
+    if (!projects.has(projectId)) {
+      projects.set(projectId, await getDoc(env, `projects/${projectId}`));
+    }
+    const project = projects.get(projectId);
+    if (!project) continue;
+
+    if (!projectDevices.has(projectId)) {
+      projectDevices.set(projectId, await listCollection(env, `projects/${projectId}/devices`));
+    }
+    result.push(customerLicenseView(
+      { id: projectId, ...project },
+      { id: licenseId, projectId, ...license },
+      projectDevices.get(projectId)
+    ));
   }
-  return result.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+
+  return result.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+}
+
+async function deactivateOwnedLicenseDevice(env, account, licenseId, deviceId) {
+  licenseId = assertEntityId("licenses", licenseId);
+  deviceId = assertEntityId("devices", deviceId);
+
+  return await atomicClient(env).runTransaction(async tx => {
+    const ownership = await tx.get(`customerAccounts/${account.id}/licenses/${licenseId}`);
+    if (!ownership) {
+      throw Object.assign(new Error("Licença não encontrada."), { status: 404, reason: "license_not_found" });
+    }
+
+    const projectId = assertProjectId(ownership.projectId);
+    const license = await tx.get(`projects/${projectId}/licenses/${licenseId}`);
+    if (!license || license.accountId !== account.id) {
+      throw Object.assign(new Error("Licença não encontrada."), { status: 404, reason: "license_not_found" });
+    }
+
+    const devicePath = `projects/${projectId}/devices/${deviceId}`;
+    const device = await tx.get(devicePath);
+    if (
+      !device ||
+      device.licenseId !== licenseId ||
+      (license.customerId && device.customerId !== license.customerId)
+    ) {
+      throw Object.assign(new Error("Dispositivo não encontrado."), { status: 404, reason: "device_not_found" });
+    }
+
+    if (device.active === false) {
+      return { device: customerDeviceView({ id: deviceId, ...device }), alreadyInactive: true };
+    }
+
+    const now = nowIso();
+    const next = {
+      ...device,
+      active: false,
+      deactivatedAt: now,
+      updatedAt: now
+    };
+    tx.set(devicePath, next);
+
+    const actor = account.firebaseUid || account.id;
+    const activationId = randomId("act");
+    tx.create(`projects/${projectId}/activations/${activationId}`, {
+      licenseId,
+      customerId: license.customerId || null,
+      deviceHash: deviceId,
+      type: "deactivate",
+      source: "customer",
+      accountId: account.id,
+      actor,
+      createdAt: now
+    });
+    queueLogInTransaction(
+      tx,
+      projectId,
+      "device.deactivated.customer",
+      { licenseId, deviceId, accountId: account.id },
+      actor,
+      now
+    );
+
+    return { device: customerDeviceView({ id: deviceId, ...next }), alreadyInactive: false };
+  });
 }
 
 async function createRenewalOrder(env, account, licenseId, rawBody) {
@@ -4608,6 +4740,16 @@ async function handleCustomer(request, env, origin, url, user) {
   }
   if (parts.length === 1 && parts[0] === "licenses" && request.method === "GET") {
     return json({ ok: true, licenses: await listOwnedLicenses(env, account.id) }, 200, origin);
+  }
+  if (
+    parts.length === 5 &&
+    parts[0] === "licenses" &&
+    parts[2] === "devices" &&
+    parts[4] === "deactivate" &&
+    request.method === "POST"
+  ) {
+    const result = await deactivateOwnedLicenseDevice(env, account, parts[1], parts[3]);
+    return json({ ok: true, ...result }, 200, origin);
   }
   if (parts.length === 3 && parts[0] === "licenses" && parts[2] === "renewal-order" && request.method === "POST") {
     return json({ ok: true, order: await createRenewalOrder(env, account, parts[1], await readJson(request)) }, 201, origin);

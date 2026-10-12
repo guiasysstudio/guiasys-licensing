@@ -934,6 +934,135 @@ async function renderFavorites() {
   accountLayout("/conta/favoritos", content);
 }
 const statusLabels = { pending_payment:"Aguardando pagamento", payment_reported:"Pagamento informado", paid:"Pago", fulfilling:"Liberando licença", fulfilled:"Concluído", cancelled:"Cancelado", payment_failed:"Falha no pagamento" };
+const licenseStatusLabels = { pending:"Pendente", active:"Ativa", suspended:"Suspensa", expired:"Expirada", revoked:"Revogada" };
+
+function validDate(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function licensePurchaseDetails(license, order) {
+  if (!order) return [];
+  const item = (order.items || []).find(candidate => (
+    candidate.orderItemId === license.orderItemId ||
+    (candidate.projectId === license.projectId && candidate.planId === license.planId)
+  ));
+  const unitPriceCents = Number(item?.unitPriceCents || 0);
+  return [
+    ["Compra relacionada", `Pedido ${order.orderNumber || order.orderId}`],
+    ...(Number.isSafeInteger(unitPriceCents) && unitPriceCents > 0
+      ? [["Valor da licença", money.format(unitPriceCents / 100)]]
+      : [])
+  ];
+}
+
+function licenseValidityDetails(license) {
+  const activatedAt = validDate(license.activatedAt);
+  const expiresAt = validDate(license.expiresAt);
+  const details = [
+    ["Status", licenseStatusLabels[license.status] || license.status || "Pendente"],
+    ["Emitida em", validDate(license.createdAt) ? dateTime.format(new Date(license.createdAt)) : "Não informado"],
+    ["Limite de dispositivos", String(Math.max(1, Number(license.maxDevices || 1)))]
+  ];
+
+  if (activatedAt) details.push(["Ativada em", dateTime.format(activatedAt)]);
+  else if (license.startMode === "first_activation") details.push(["Início", "Validade inicia na primeira ativação"]);
+
+  if (license.lifetime) {
+    details.push(["Término", "Vitalícia"]);
+  } else if (expiresAt) {
+    const remaining = Math.max(0, Math.ceil((expiresAt.getTime() - Date.now()) / 86400000));
+    details.push(["Término", dateTime.format(expiresAt)], ["Dias restantes", String(remaining)]);
+  }
+  return details;
+}
+
+function appendLicenseDetails(container, entries) {
+  for (const [label, value] of entries) {
+    const item = el("div", "license-meta-item");
+    item.append(el("dt", "", label), el("dd", "", value));
+    container.append(item);
+  }
+}
+
+function licenseCard(license, ordersById) {
+  const card = el("article", "record-card license-card");
+  const head = el("div", "record-head");
+  const identity = el("div", "license-identity");
+  identity.append(el("span", "plan-meta", "Produto"), el("h3", "", license.projectName || "Produto GuiaSys"), el("span", "plan-meta", license.planName || "Plano"));
+  head.append(identity, el("span", `status status-${license.status || "pending"}`, licenseStatusLabels[license.status] || license.status || "Pendente"));
+
+  const keyBlock = el("div", "license-key-block");
+  keyBlock.append(el("span", "plan-meta", "Chave da licença"), el("code", "license-key-value", license.key || "Chave indisponível"));
+  const copy = button("Copiar key", "button-secondary", async event => {
+    event.currentTarget.disabled = true;
+    try {
+      await navigator.clipboard.writeText(license.key);
+      showToast("Chave copiada.");
+    } catch {
+      showToast("Não foi possível copiar a chave.");
+    } finally {
+      event.currentTarget.disabled = false;
+    }
+  });
+  copy.disabled = !license.key;
+  keyBlock.append(copy);
+
+  const metadata = el("dl", "license-meta-grid");
+  appendLicenseDetails(metadata, [
+    ...licenseValidityDetails(license),
+    ...licensePurchaseDetails(license, ordersById.get(license.orderId))
+  ]);
+
+  const devicesSection = el("section", "license-devices");
+  const devicesHead = el("div", "license-devices-head");
+  const activeDevices = Array.isArray(license.devices) ? license.devices.filter(device => device.active !== false) : [];
+  devicesHead.append(el("h4", "", "Dispositivos ativos"), el("span", "status", `${activeDevices.length}/${Math.max(1, Number(license.maxDevices || 1))}`));
+  devicesSection.append(devicesHead);
+
+  if (!activeDevices.length) {
+    devicesSection.append(el("p", "device-empty", "Nenhum dispositivo vinculado"));
+  } else {
+    const deviceList = el("div", "device-list");
+    for (const device of activeDevices) {
+      const deviceCard = el("article", "device-card");
+      const deviceInfo = el("div", "device-info");
+      deviceInfo.append(
+        el("strong", "", device.name || "Dispositivo"),
+        el("span", "plan-meta", device.platform || "Plataforma não informada"),
+        el("code", "masked-device-id", device.maskedDeviceId || "••••••••"),
+        el("span", "plan-meta", validDate(device.lastSeenAt) ? `Última validação: ${dateTime.format(new Date(device.lastSeenAt))}` : "Última validação não informada")
+      );
+      const deactivate = button("Desvincular dispositivo", "button-ghost device-deactivate", async event => {
+        const confirmed = window.confirm("Desvincular este dispositivo?\n\nO dispositivo perderá acesso na próxima validação e o slot ficará disponível para outro dispositivo.");
+        if (!confirmed) return;
+        const action = event.currentTarget;
+        if (action.dataset.busy === "true") return;
+        action.dataset.busy = "true";
+        action.disabled = true;
+        action.textContent = "Desvinculando…";
+        try {
+          await api(`/api/v1/customer/licenses/${encodeURIComponent(license.licenseId || license.id)}/devices/${encodeURIComponent(device.id)}/deactivate`, { method: "POST", body: JSON.stringify({}) });
+          showToast("Dispositivo desvinculado. O slot já está disponível.");
+          await renderPurchases();
+        } catch (error) {
+          showToast(errorMessage(error));
+          action.disabled = false;
+          action.textContent = "Desvincular dispositivo";
+          delete action.dataset.busy;
+        }
+      });
+      deviceCard.append(deviceInfo, deactivate);
+      deviceList.append(deviceCard);
+    }
+    devicesSection.append(deviceList);
+  }
+
+  card.append(head, keyBlock, metadata, devicesSection);
+  return card;
+}
+
 async function renderPurchases() {
   setDocument("Compras e licenças");
   if (!await requireAccount()) return;
@@ -941,7 +1070,7 @@ async function renderPurchases() {
   const orders = ordersResponse.orders || [], licenses = licensesResponse.licenses || [];
   const content = el("section");
   content.append(titleBlock("Minha conta", "Compras e licenças", "Acompanhe pedidos, quantidades e todas as chaves emitidas."));
-  const records = el("div", "records");
+  const records = el("div", "records order-records");
   for (const order of orders) {
     const card = el("article", "record-card");
     const head = el("div", "record-head"); head.append(el("strong", "", `Pedido ${order.orderNumber || order.orderId}`), el("span", "status", statusLabels[order.status] || order.status)); card.append(head);
@@ -949,18 +1078,6 @@ async function renderPurchases() {
     const lines = el("div", "order-lines");
     for (const item of order.items || []) lines.append(el("span", "", `${item.quantity}× ${item.projectNameSnapshot} — ${item.planNameSnapshot} · ${money.format(item.lineTotalCents / 100)}`));
     card.append(lines, el("strong", "", `Total: ${money.format(Number(order.totalCents || 0) / 100)}`));
-    const related = licenses.filter(license => license.orderId === order.orderId);
-    if (related.length) {
-      const keys = el("div"); keys.append(el("p", "plan-meta", "Licenças emitidas"));
-      for (const license of related) {
-        const licenseRow = el("div", "license-row");
-        const key = button(license.key, "license-key", async () => { await navigator.clipboard.writeText(license.key); showToast("Chave copiada."); });
-        const validity = license.lifetime ? "Vitalícia" : (license.expiresAt ? `Válida até ${dateTime.format(new Date(license.expiresAt))}` : "Validade inicia na ativação");
-        licenseRow.append(key, el("span", "plan-meta", `${license.status || "pending"} · ${validity}`));
-        keys.append(licenseRow);
-      }
-      card.append(keys);
-    }
     if (order.status === "pending_payment") card.append(button("Continuar pagamento", "button-secondary", async event => {
       event.currentTarget.disabled = true;
       try {
@@ -970,7 +1087,20 @@ async function renderPurchases() {
     }));
     records.append(card);
   }
-  content.append(records.childElementCount ? records : emptyState("Nenhuma compra", "Seus pedidos aparecerão aqui."));
+  if (records.childElementCount) {
+    content.append(el("h3", "account-section-title", "Compras"), records);
+  }
+
+  const licenseRecords = el("div", "records license-records");
+  const ordersById = new Map(orders.map(order => [order.orderId, order]));
+  for (const license of licenses) licenseRecords.append(licenseCard(license, ordersById));
+  if (licenseRecords.childElementCount) {
+    content.append(el("h3", "account-section-title", "Licenças"), licenseRecords);
+  }
+
+  if (!records.childElementCount && !licenseRecords.childElementCount) {
+    content.append(emptyState("Nenhuma compra", "Seus pedidos e licenças aparecerão aqui."));
+  }
   accountLayout("/conta/compras", content);
 }
 function renderLegal(kind) {

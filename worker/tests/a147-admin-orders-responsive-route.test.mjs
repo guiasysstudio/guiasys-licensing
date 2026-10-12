@@ -65,6 +65,13 @@ function createRouteRuntime({ admin = administrator(), projects, selectedProject
     setItem: (key, value) => storage.set(key, value),
     removeItem: key => storage.delete(key)
   };
+  const projectSwitcher = {
+    value: "",
+    options: [
+      { value: "" },
+      ...state.projects.filter(project => project.status !== "archived").map(project => ({ value: project.id }))
+    ]
+  };
 
   const runtime = Function(
     "state",
@@ -73,6 +80,7 @@ function createRouteRuntime({ admin = administrator(), projects, selectedProject
     "sessionStorage",
     "SELECTED_PROJECT_STORAGE_KEY",
     "SELECTED_ROUTE_STORAGE_KEY",
+    "el",
     `${routeRuntimeSource}; return {
       routeAllowed,
       routeKind,
@@ -89,11 +97,33 @@ function createRouteRuntime({ admin = administrator(), projects, selectedProject
     projectItems,
     sessionStorage,
     "gsl:selected-project",
-    "gsl:selected-route"
+    "gsl:selected-route",
+    { projectSwitcher }
   );
 
-  return { ...runtime, state, storage };
+  return { ...runtime, state, storage, projectSwitcher };
 }
+
+test("tooltip fechado não cria caixa geométrica e aberto recebe clamp real na viewport", () => {
+  const tooltipCss = section(cssSource, ".help-tip {", ".money-input {");
+  const tooltipRuntime = section(appSource, "let activeHelpTip", "function fieldTitle(");
+  assert.equal(tooltipCss.includes(".help-tip::after"), false);
+  assert.match(tooltipCss, /\.help-tooltip\s*\{[^}]*position:\s*fixed/s);
+  assert.match(tooltipCss, /max-width:\s*min\(320px,\s*calc\(100vw - 16px\)\)/);
+  assert.match(tooltipCss, /max-height:\s*calc\(100dvh - 16px\)/);
+  assert.match(tooltipRuntime, /helpTooltipElement\.hidden = true/);
+  assert.match(tooltipRuntime, /Math\.min\(Math\.max\(centeredLeft, gutter\), maxLeft\)/);
+  assert.match(tooltipRuntime, /window\.innerHeight - tooltipRect\.height - gutter/);
+  assert.match(tooltipRuntime, /pointerover/);
+  assert.match(tooltipRuntime, /focusin/);
+  assert.equal(/body\s*\{[^}]*overflow-x:\s*hidden/s.test(tooltipCss), false);
+});
+
+test("alvos compactos crescem apenas em viewport pequena ou pointer coarse", () => {
+  const compactRules = section(cssSource, ".btn-sm {", ".badge-success {");
+  assert.match(compactRules, /\.btn-sm\s*\{[^}]*min-height:\s*36px/s);
+  assert.match(compactRules, /@media \(max-width: 820px\), \(pointer: coarse\)[\s\S]*?\.btn-sm\s*\{[^}]*min-height:\s*44px/s);
+});
 
 test("table-scroll contém tabelas largas localmente e continua acessível", () => {
   const rules = section(cssSource, ".table-card {", ".key-button {");
@@ -205,12 +235,36 @@ test("projeto armazenado só restaura quando existe, está ativo e continua no e
   valid.storage.set("gsl:selected-project", PROJECT_A);
   valid.restoreSelectedProject();
   assert.equal(valid.state.selectedProjectId, PROJECT_A);
+  assert.equal(valid.projectSwitcher.value, PROJECT_A);
 
   const revoked = createRouteRuntime({ admin: administrator({ projectIds: [PROJECT_B] }) });
   revoked.storage.set("gsl:selected-project", PROJECT_A);
   revoked.restoreSelectedProject();
   assert.equal(revoked.state.selectedProjectId, "");
+  assert.equal(revoked.projectSwitcher.value, "");
   assert.equal(revoked.storage.has("gsl:selected-project"), false);
+
+  const archived = createRouteRuntime({ projects: [{ id: PROJECT_A, status: "archived" }] });
+  archived.storage.set("gsl:selected-project", PROJECT_A);
+  archived.restoreSelectedProject();
+  assert.equal(archived.state.selectedProjectId, "");
+  assert.equal(archived.projectSwitcher.value, "");
+});
+
+test("setter central mantém estado, storage e select visual sincronizados", () => {
+  const runtime = createRouteRuntime();
+  runtime.setSelectedProject(PROJECT_A);
+  assert.equal(runtime.state.selectedProjectId, PROJECT_A);
+  assert.equal(runtime.storage.get("gsl:selected-project"), PROJECT_A);
+  assert.equal(runtime.projectSwitcher.value, PROJECT_A);
+
+  runtime.setSelectedProject("");
+  assert.equal(runtime.state.selectedProjectId, "");
+  assert.equal(runtime.storage.has("gsl:selected-project"), false);
+  assert.equal(runtime.projectSwitcher.value, "");
+
+  const renderSwitcher = section(appSource, "function renderProjectSwitcher(", "function renderUser(");
+  assert.match(renderSwitcher, /syncProjectSwitcherSelection\(\)/);
 });
 
 test("logout e encerramento administrativo limpam rota e projeto persistidos", () => {

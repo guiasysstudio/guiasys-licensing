@@ -214,6 +214,100 @@ function helpTip(text) {
   return `<span class="help-tip" tabindex="0" data-tip="${e(text)}" aria-label="${e(text)}">?</span>`;
 }
 
+let activeHelpTip = null;
+let helpTooltipElement = null;
+
+function getHelpTooltipElement() {
+  if (helpTooltipElement?.isConnected) return helpTooltipElement;
+  helpTooltipElement = document.createElement("span");
+  helpTooltipElement.id = "admin-help-tooltip";
+  helpTooltipElement.className = "help-tooltip";
+  helpTooltipElement.setAttribute("role", "tooltip");
+  helpTooltipElement.hidden = true;
+  document.body.append(helpTooltipElement);
+  return helpTooltipElement;
+}
+
+function positionHelpTooltip(anchor, tooltip) {
+  const gutter = 8;
+  const gap = 10;
+  const anchorRect = anchor.getBoundingClientRect();
+  const tooltipRect = tooltip.getBoundingClientRect();
+  const maxLeft = Math.max(gutter, window.innerWidth - tooltipRect.width - gutter);
+  const centeredLeft = anchorRect.left + (anchorRect.width / 2) - (tooltipRect.width / 2);
+  const left = Math.min(Math.max(centeredLeft, gutter), maxLeft);
+  const above = anchorRect.top - tooltipRect.height - gap;
+  const below = anchorRect.bottom + gap;
+  const preferredTop = above >= gutter ? above : below;
+  const maxTop = Math.max(gutter, window.innerHeight - tooltipRect.height - gutter);
+
+  tooltip.style.left = `${Math.round(left)}px`;
+  tooltip.style.top = `${Math.round(Math.min(Math.max(preferredTop, gutter), maxTop))}px`;
+}
+
+function showHelpTooltip(anchor) {
+  if (!(anchor instanceof HTMLElement) || !anchor.matches(".help-tip")) return;
+  const tooltip = getHelpTooltipElement();
+  activeHelpTip = anchor;
+  tooltip.textContent = anchor.dataset.tip || "";
+  tooltip.hidden = false;
+  tooltip.style.visibility = "hidden";
+  tooltip.style.left = "8px";
+  tooltip.style.top = "8px";
+  anchor.setAttribute("aria-describedby", tooltip.id);
+  positionHelpTooltip(anchor, tooltip);
+  tooltip.style.visibility = "visible";
+}
+
+function hideHelpTooltip(anchor = activeHelpTip) {
+  if (!anchor || anchor !== activeHelpTip) return;
+  anchor.removeAttribute("aria-describedby");
+  activeHelpTip = null;
+  if (helpTooltipElement) helpTooltipElement.hidden = true;
+}
+
+document.addEventListener("pointerover", event => {
+  const anchor = event.target.closest?.(".help-tip");
+  if (anchor) showHelpTooltip(anchor);
+});
+
+document.addEventListener("pointerout", event => {
+  const anchor = event.target.closest?.(".help-tip");
+  if (anchor && !anchor.contains(event.relatedTarget) && document.activeElement !== anchor) {
+    hideHelpTooltip(anchor);
+  }
+});
+
+document.addEventListener("focusin", event => {
+  const anchor = event.target.closest?.(".help-tip");
+  if (anchor) showHelpTooltip(anchor);
+});
+
+document.addEventListener("focusout", event => {
+  const anchor = event.target.closest?.(".help-tip");
+  if (anchor) hideHelpTooltip(anchor);
+});
+
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && activeHelpTip) {
+    const anchor = activeHelpTip;
+    hideHelpTooltip(anchor);
+    anchor.blur();
+  }
+});
+
+window.addEventListener("scroll", () => {
+  if (activeHelpTip && helpTooltipElement && !helpTooltipElement.hidden) {
+    positionHelpTooltip(activeHelpTip, helpTooltipElement);
+  }
+}, true);
+
+window.addEventListener("resize", () => {
+  if (activeHelpTip && helpTooltipElement && !helpTooltipElement.hidden) {
+    positionHelpTooltip(activeHelpTip, helpTooltipElement);
+  }
+});
+
 function fieldTitle(label, tip = "") {
   return `<span class="field-label">${e(label)}${tip ? helpTip(tip) : ""}</span>`;
 }
@@ -359,12 +453,20 @@ function selectedProject() {
   return state.projects.find(project => project.id === state.selectedProjectId) || null;
 }
 
+function syncProjectSwitcherSelection() {
+  if (!el.projectSwitcher) return;
+  const hasOption = [...el.projectSwitcher.options]
+    .some(option => option.value === state.selectedProjectId);
+  el.projectSwitcher.value = hasOption ? state.selectedProjectId : "";
+}
+
 function setSelectedProject(projectId = "") {
   state.selectedProjectId = projectId;
   try {
     if (projectId) sessionStorage.setItem(SELECTED_PROJECT_STORAGE_KEY, projectId);
     else sessionStorage.removeItem(SELECTED_PROJECT_STORAGE_KEY);
   } catch {}
+  syncProjectSwitcherSelection();
 }
 
 function restoreSelectedProject() {
@@ -1017,7 +1119,7 @@ function renderProjectSwitcher() {
       .map(project => `<option value="${e(project.id)}">${e(project.name)}</option>`)
       .join("")}
   `;
-  el.projectSwitcher.value = state.selectedProjectId;
+  syncProjectSwitcherSelection();
 }
 
 function renderUser() {
