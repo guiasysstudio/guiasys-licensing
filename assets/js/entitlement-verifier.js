@@ -146,8 +146,17 @@ export async function verifyEntitlementToken(token, publicJwk, expected = {}) {
     };
   }
 
-  const parts = String(token).split(".");
-  if (parts.length !== 3) {
+  if (typeof token !== "string" || token.length > 16_384) {
+    return {
+      valid: false,
+      signatureValid: false,
+      claimsValid: false,
+      errors: ["invalid_jws_size"]
+    };
+  }
+
+  const parts = token.split(".");
+  if (parts.length !== 3 || parts.some(part => !part)) {
     return {
       valid: false,
       signatureValid: false,
@@ -160,6 +169,35 @@ export async function verifyEntitlementToken(token, publicJwk, expected = {}) {
     const [headerPart, payloadPart, signaturePart] = parts;
     const header = decodeJwsJson(headerPart);
     const claims = decodeJwsJson(payloadPart);
+    const signatureBytes = base64UrlBytes(signaturePart);
+
+    if (
+      !header || typeof header !== "object" || Array.isArray(header) ||
+      !claims || typeof claims !== "object" || Array.isArray(claims) ||
+      signatureBytes.byteLength !== 64
+    ) {
+      return {
+        valid: false,
+        signatureValid: false,
+        claimsValid: false,
+        errors: ["invalid_jws_structure"]
+      };
+    }
+
+    // Pin against key material trusted by the embedding application.
+    // A JWK downloaded at runtime is not itself proof of trusted identity.
+    const pinned = expected.trustedPublicJwk;
+    if (pinned && (
+      pinned.kty !== publicJwk.kty || pinned.crv !== publicJwk.crv ||
+      pinned.x !== publicJwk.x || pinned.y !== publicJwk.y
+    )) {
+      return {
+        valid: false,
+        signatureValid: false,
+        claimsValid: false,
+        errors: ["untrusted_signing_key"]
+      };
+    }
 
     if (
       publicJwk.kty !== "EC" ||
@@ -188,7 +226,7 @@ export async function verifyEntitlementToken(token, publicJwk, expected = {}) {
     const signatureValid = await crypto.subtle.verify(
       { name: "ECDSA", hash: "SHA-256" },
       publicKey,
-      base64UrlBytes(signaturePart),
+      signatureBytes,
       new TextEncoder().encode(`${headerPart}.${payloadPart}`)
     );
 
