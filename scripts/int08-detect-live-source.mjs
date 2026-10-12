@@ -5,11 +5,11 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 
 const refs = [
-  "main",
-  "fix/c15-auditoria-completa",
-  "fix/int06-rate-limit-idempotency",
-  "fix/int07-integration-only-rc",
-  "fix/int08-firebase-preflight",
+  "origin/main",
+  "origin/fix/c15-auditoria-completa",
+  "origin/fix/int06-rate-limit-idempotency",
+  "origin/fix/int07-integration-only-rc",
+  "origin/fix/int08-firebase-preflight",
   "9a042b771703ee527426ec5a54501f2155a8fcfa"
 ];
 
