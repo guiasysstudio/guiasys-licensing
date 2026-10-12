@@ -178,6 +178,17 @@ const replacements = [
 backendJs = backendJs.slice(0, first) +
   "const ALLOWED_ORIGINS = " + JSON.stringify(replacements, null, 2) + ";" +
   backendJs.slice(last + 2);
+// Static image origins must also be isolated: otherwise sample projects could
+// retain trusted production asset links while their data lives in staging.
+const imageHostsBegin = backendJs.indexOf("const allowedHosts = new Set([");
+const imageHostsEnd = backendJs.indexOf("]);", imageHostsBegin);
+ensure(imageHostsBegin >= 0 && imageHostsEnd > imageHostsBegin,
+  "Allowlist de URLs estáticas não encontrada.");
+const imageHosts = [publicSite + ".web.app", adminSite + ".web.app",
+  publicSite + ".firebaseapp.com", adminSite + ".firebaseapp.com"];
+backendJs = backendJs.slice(0, imageHostsBegin) +
+  "const allowedHosts = new Set(" + JSON.stringify(imageHosts) + ");" +
+  backendJs.slice(imageHostsEnd + 3);
 const originStart = backendJs.indexOf("function isInternalHostingOrigin(origin) {");
 const originEnd = backendJs.indexOf("function assertProjectOrigin(", originStart);
 ensure(originStart >= 0 && originEnd > originStart, "Regra de origens do projeto mudou.");
