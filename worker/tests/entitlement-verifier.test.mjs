@@ -34,6 +34,7 @@ async function fixture(overrides = {}) {
     integrationCode: "GSL-TEST-001",
     deviceHash,
     status: "active",
+    lifetime: false,
     licenseId: "lic_0123456789abcdefabcd",
     expiresAt: "2026-12-01T00:00:00.000Z",
     serverTime: "2026-10-04T23:00:00.000Z",
@@ -58,7 +59,8 @@ async function fixture(overrides = {}) {
       integrationCode: claims.integrationCode,
       deviceHash,
       status: "active",
-      keyId: "sig_test"
+      keyId: "sig_test",
+      now: "2026-10-05T00:00:00.000Z"
     }
   };
 }
@@ -136,4 +138,86 @@ test("validador exige typ GSL-ENT e licença exige licenseId", () => {
   assert.equal(validation.claimsValid, false);
   assert.ok(validation.errors.includes("unexpected_token_type"));
   assert.ok(validation.errors.includes("missing_license_id"));
+});
+
+test("INT-02: rejeita token legítimo após o fim da tolerância offline", async () => {
+  const data = await fixture();
+  const result = await verifyEntitlementToken(data.token, data.publicJwk, {
+    ...data.expected,
+    now: "2026-10-12T00:00:00.000Z"
+  });
+  assert.equal(result.signatureValid, true);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.includes("offline_window_elapsed"));
+});
+
+test("INT-02: rejeita token após expiresAt, mesmo dentro da janela offline", async () => {
+  const data = await fixture({
+    expiresAt: "2026-10-06T00:00:00.000Z",
+    offlineUntil: "2026-10-06T00:00:00.000Z"
+  });
+  const result = await verifyEntitlementToken(data.token, data.publicJwk, {
+    ...data.expected,
+    now: "2026-10-07T00:00:00.000Z"
+  });
+  assert.equal(result.signatureValid, true);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.includes("entitlement_expired"));
+});
+
+test("INT-02: rejeita entitlement sem janela offline ou sem expiração temporária", async () => {
+  for (const claims of [
+    { offlineUntil: null },
+    { expiresAt: null, lifetime: false },
+    { expiresAt: null, lifetime: true, type: "trial" }
+  ]) {
+    const data = await fixture(claims);
+    const result = await verifyEntitlementToken(data.token, data.publicJwk, data.expected);
+    assert.equal(result.signatureValid, true);
+    assert.equal(result.valid, false);
+  }
+});
+
+test("INT-02: rejeita estado suspenso e contexto de verificação incompleto", async () => {
+  const data = await fixture({ status: "suspended" });
+  const result = await verifyEntitlementToken(data.token, data.publicJwk, data.expected);
+  assert.equal(result.signatureValid, true);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.includes("inactive_entitlement"));
+
+  const incomplete = await verifyEntitlementToken(data.token, data.publicJwk, {});
+  assert.equal(incomplete.valid, false);
+  assert.ok(incomplete.errors.includes("missing_expected_keyId"));
+});
+
+test("INT-02: detecta retrocesso de relógio e horário do servidor no futuro", async () => {
+  const data = await fixture();
+  const rollback = await verifyEntitlementToken(data.token, data.publicJwk, {
+    ...data.expected,
+    now: "2026-10-05T00:00:00.000Z",
+    lastTrustedTime: "2026-10-06T00:00:00.000Z"
+  });
+  assert.equal(rollback.valid, false);
+  assert.ok(rollback.errors.includes("clock_rollback_detected"));
+
+  const future = await fixture({ serverTime: "2026-10-06T00:00:00.000Z" });
+  const result = await verifyEntitlementToken(future.token, future.publicJwk, data.expected);
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.includes("server_time_in_future"));
+});
+
+test("INT-02: autoriza licença vitalícia íntegra somente durante a janela offline", async () => {
+  const data = await fixture({
+    lifetime: true,
+    expiresAt: null
+  });
+  const valid = await verifyEntitlementToken(data.token, data.publicJwk, data.expected);
+  assert.equal(valid.valid, true);
+
+  const expiredCache = await verifyEntitlementToken(data.token, data.publicJwk, {
+    ...data.expected,
+    now: "2026-10-12T00:00:00.000Z"
+  });
+  assert.equal(expiredCache.valid, false);
+  assert.ok(expiredCache.errors.includes("offline_window_elapsed"));
 });
