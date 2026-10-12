@@ -14,12 +14,36 @@ export function classifyActivationEvent(type) {
   return "other";
 }
 
+// Bounded transactional replay history; the record remains small in Firestore.
+// Guarantees deduplication for recent operations, not indefinite global idempotency.
+export const VALIDATION_REPLAY_MAX_IDS = 64;
+export const VALIDATION_REPLAY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+function recentValidationIds(record, now) {
+  const currentTime = Date.parse(now);
+  if (!Number.isFinite(currentTime)) return [];
+  const raw = Array.isArray(record.recentValidationRequests)
+    ? record.recentValidationRequests : [];
+  return raw.filter(item => (
+    item && typeof item.id === "string" && item.id.length <= 128 &&
+    typeof item.at === "string" &&
+    Number.isFinite(Date.parse(item.at)) &&
+    Date.parse(item.at) <= currentTime &&
+    currentTime - Date.parse(item.at) <= VALIDATION_REPLAY_WINDOW_MS
+  )).slice(-VALIDATION_REPLAY_MAX_IDS);
+}
+
 export function validationMutation(record = {}, requestId = "", now = new Date().toISOString()) {
   const normalizedRequestId = String(requestId || "");
-  const replay = Boolean(
+  const recentRequests = recentValidationIds(record, now);
+  // Compatibility with records written before the INT-06 replay window existed.
+  const legacyReplay = !Array.isArray(record.recentValidationRequests) &&
     normalizedRequestId &&
-    record.lastValidationRequestId === normalizedRequestId
-  );
+    record.lastValidationRequestId === normalizedRequestId;
+  const replay = Boolean(normalizedRequestId && (
+    legacyReplay ||
+    recentRequests.some(item => item.id === normalizedRequestId)
+  ));
 
   if (replay) {
     return {
@@ -36,7 +60,13 @@ export function validationMutation(record = {}, requestId = "", now = new Date()
     patch: {
       validationCount,
       lastValidatedAt: now,
-      ...(normalizedRequestId ? { lastValidationRequestId: normalizedRequestId } : {})
+      ...(normalizedRequestId ? {
+        lastValidationRequestId: normalizedRequestId,
+        recentValidationRequests: [
+          ...recentRequests.filter(item => item.id !== normalizedRequestId),
+          { id: normalizedRequestId, at: now }
+        ].slice(-VALIDATION_REPLAY_MAX_IDS)
+      } : {})
     }
   };
 }
