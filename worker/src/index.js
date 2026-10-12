@@ -984,6 +984,23 @@ async function enforceRateLimit(env, request, bucket, limit, windowSeconds) {
   });
 }
 
+// Exporta exclusivamente os parâmetros públicos da JWK ES256.
+// Firestore pode conter JWKs legadas com campos privados nulos;
+// esses campos nunca devem aparecer no contrato público de integração.
+function publicSigningJwk(value) {
+  if (!value || value.kty !== "EC" || value.crv !== "P-256" ||
+      typeof value.x !== "string" || !value.x ||
+      typeof value.y !== "string" || !value.y) return null;
+  return {
+    kty: "EC",
+    crv: "P-256",
+    x: value.x,
+    y: value.y,
+    ext: true,
+    key_ops: ["verify"]
+  };
+}
+
 async function generateSigningMaterial() {
   const keyPair = await crypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-256" },
@@ -991,7 +1008,7 @@ async function generateSigningMaterial() {
     ["sign", "verify"]
   );
   const privateJwk = await crypto.subtle.exportKey("jwk", keyPair.privateKey);
-  const publicJwk = await crypto.subtle.exportKey("jwk", keyPair.publicKey);
+  const publicJwk = publicSigningJwk(await crypto.subtle.exportKey("jwk", keyPair.publicKey));
   const keyId = randomId("sig");
   const createdAt = nowIso();
 
@@ -1284,7 +1301,7 @@ function publicProjectConfigView(project) {
     signing: {
       algorithm: project.signingAlgorithm || "ES256",
       keyId: project.signingKeyId,
-      publicJwk: project.signingPublicJwk
+      publicJwk: publicSigningJwk(project.signingPublicJwk)
     },
     trial: {
       enabled: Boolean(project.trialEnabled && Number(project.trialDays || 0) > 0),
@@ -1712,7 +1729,7 @@ function projectDetailView(project, admin) {
     view.integrationCode = project.integrationCode || "";
     view.signingKeyId = project.signingKeyId || null;
     view.signingAlgorithm = project.signingAlgorithm || "ES256";
-    view.signingPublicJwk = project.signingPublicJwk || null;
+    view.signingPublicJwk = publicSigningJwk(project.signingPublicJwk);
   }
 
   return view;
