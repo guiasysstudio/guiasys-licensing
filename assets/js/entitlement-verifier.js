@@ -46,6 +46,9 @@ export function validateEntitlementClaims(header, claims, expected = {}) {
   }
 
   if (header?.alg !== "ES256") errors.push("unexpected_algorithm");
+  if (header?.crit !== undefined || header?.b64 !== undefined) {
+    errors.push("unsupported_jws_critical_header");
+  }
   if (header?.typ !== "GSL-ENT") errors.push("unexpected_token_type");
   if (!header?.kid) errors.push("missing_key_id");
   if (expected.keyId && header?.kid !== expected.keyId) errors.push("key_id_mismatch");
@@ -74,9 +77,26 @@ export function validateEntitlementClaims(header, claims, expected = {}) {
   if (claims?.expiresAt != null && !Number.isFinite(expiresAt)) {
     errors.push("invalid_expires_at");
   }
-  // Trial e licenças temporárias exigem uma expiração; somente vitalícias não expiram.
+  // Somente uma licença vitalícia pode omitir a expiração.
+  if (typeof claims?.lifetime !== "boolean") errors.push("missing_or_invalid_lifetime");
+  if (claims?.type === "trial" && claims?.lifetime !== false) {
+    errors.push("invalid_trial_lifetime");
+  }
+  if (claims?.type === "license" && claims?.lifetime === true && claims?.expiresAt != null) {
+    errors.push("lifetime_with_expires_at");
+  }
   if (claims?.type === "trial" || (claims?.type === "license" && claims?.lifetime !== true)) {
     if (!Number.isFinite(expiresAt)) errors.push("missing_expires_at");
+  }
+  if (claims?.type === "trial") {
+    const startedAt = isoMillis(claims?.startedAt);
+    if (!Number.isFinite(startedAt)) errors.push("invalid_trial_started_at");
+    if (Number.isFinite(startedAt) && Number.isFinite(serverTime) && startedAt > serverTime) {
+      errors.push("trial_start_after_server_time");
+    }
+    if (Number.isFinite(startedAt) && Number.isFinite(expiresAt) && startedAt >= expiresAt) {
+      errors.push("trial_expiry_before_start");
+    }
   }
 
   const offlineUntil = claims?.offlineUntil == null ? null : isoMillis(claims.offlineUntil);
