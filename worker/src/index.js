@@ -1259,6 +1259,17 @@ async function resolvePublicProject(env, body = {}, origin = "") {
   }
 
   assertProjectOrigin(project, origin);
+
+  // GSL-v1 aceita projectId por compatibilidade, mas dois seletores enviados
+  // juntos precisam identificar o MESMO projeto. Falhar antes de qualquer
+  // migração evita persistir novos códigos para payloads contraditórios.
+  if (directProjectId && integrationCode && project.integrationCode !== integrationCode) {
+    throw Object.assign(new Error("projectId e integrationCode não correspondem ao mesmo projeto."), {
+      status: 400,
+      reason: "project_selector_mismatch"
+    });
+  }
+
   project = await ensureProjectIntegrationCode(env, project);
   return { projectId: project.id, project };
 }
