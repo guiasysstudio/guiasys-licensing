@@ -31,6 +31,12 @@ const report = {
 function digest(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
+
+// Hosting deployments produced on Windows may contain CRLF. Compare their
+// source-equivalent LF content separately from the raw SHA-256 fingerprint.
+function normalizedDigest(bytes) {
+  return digest(Buffer.from(bytes.toString("utf8").replace(/\r\n/g, "\n")));
+}
 async function request(url) {
   const response = await fetch(url, {
     method: "GET", redirect: "error", cache: "no-store",
@@ -66,15 +72,22 @@ async function health(base, name) {
 async function staticFile(base, publicPath, localPath, requiredPost = true) {
   const local = await readFile(path.join(root, localPath));
   const localSha = digest(local);
+  const localNormalizedSha = normalizedDigest(local);
   try {
     const r = await request(base + publicPath);
     const remoteSha = r.status === 200 ? digest(r.bytes) : null;
-    const match = r.status === 200 && remoteSha === localSha;
+    const remoteNormalizedSha = r.status === 200 ? normalizedDigest(r.bytes) : null;
+    const match = r.status === 200 && remoteNormalizedSha === localNormalizedSha;
     const result = {
       url: base + publicPath,
       status: r.status,
       contentType: r.headers.get("content-type") || "",
-      localSha256: localSha, deployedSha256: remoteSha, matchesLocalRelease: match
+      localSha256: localSha,
+      deployedSha256: remoteSha,
+      localSha256Normalized: localNormalizedSha,
+      deployedSha256Normalized: remoteNormalizedSha,
+      exactlyEqualBytes: r.status === 200 && remoteSha === localSha,
+      matchesLocalRelease: match
     };
     report.files.push(result);
     if (mode === "post" && requiredPost) {
