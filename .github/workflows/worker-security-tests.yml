@@ -17,6 +17,13 @@ on:
       - "scripts/int08-live-diff.mjs"
       - "scripts/int08-staging-kit.mjs"
       - "scripts/int08-staging-readonly-smoke.mjs"
+      - "scripts/test-int08-emulators.mjs"
+      - "scripts/test-int08-e2e-emulator.mjs"
+      - "scripts/test-c14c-emulator.mjs"
+      - "scripts/test-c15-auth-emulator.mjs"
+      - "scripts/test-c15-functions-emulator.mjs"
+      - "scripts/test-c15-rules-emulator.mjs"
+      - "scripts/test-firebase-rules.mjs"
       - "scripts/int05-integration-smoke.mjs"
       - "index.html"
       - "public/**"
@@ -36,6 +43,13 @@ on:
       - "scripts/int08-live-diff.mjs"
       - "scripts/int08-staging-kit.mjs"
       - "scripts/int08-staging-readonly-smoke.mjs"
+      - "scripts/test-int08-emulators.mjs"
+      - "scripts/test-int08-e2e-emulator.mjs"
+      - "scripts/test-c14c-emulator.mjs"
+      - "scripts/test-c15-auth-emulator.mjs"
+      - "scripts/test-c15-functions-emulator.mjs"
+      - "scripts/test-c15-rules-emulator.mjs"
+      - "scripts/test-firebase-rules.mjs"
       - "scripts/int05-integration-smoke.mjs"
       - "index.html"
       - "public/**"
@@ -86,4 +100,11 @@ jobs:
           node --check scripts/int08-live-diff.mjs
           node --check scripts/int08-staging-kit.mjs
           node --check scripts/int08-staging-readonly-smoke.mjs
+          node --check scripts/test-int08-emulators.mjs
+          node --check scripts/test-int08-e2e-emulator.mjs
+          node --check scripts/test-c14c-emulator.mjs
+          node --check scripts/test-c15-auth-emulator.mjs
+          node --check scripts/test-c15-functions-emulator.mjs
+          node --check scripts/test-c15-rules-emulator.mjs
+          node --check scripts/test-firebase-rules.mjs
           node --experimental-default-type=module --check public/assets/catalog.js

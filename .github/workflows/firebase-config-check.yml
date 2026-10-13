@@ -93,9 +93,9 @@ jobs:
       - name: Compile production Firestore and Storage rules
         env:
           CI: "true"
-        run: npx --yes firebase-tools@15.32.1 emulators:exec --project guiasys-licensing --only firestore,storage "node scripts/verify-firebase-config.mjs"
+        run: npx --yes firebase-tools@15.32.1 emulators:exec --project demo-guiasys-licensing --only firestore,storage "node scripts/verify-firebase-config.mjs"
 
       - name: Validate Firestore transaction contention/retry
         env:
           CI: "true"
-        run: npx --yes firebase-tools@15.32.1 --config firebase.transaction-test.json emulators:exec --project guiasys-licensing --only firestore "node scripts/test-firestore-transactions.mjs"
+        run: npx --yes firebase-tools@15.32.1 --config firebase.transaction-test.json emulators:exec --project demo-guiasys-licensing --only firestore "node scripts/test-firestore-transactions.mjs"

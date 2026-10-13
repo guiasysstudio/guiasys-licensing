@@ -96,8 +96,16 @@ node scripts/verify-hosting-dist.mjs
 node scripts/prepare-public-hosting.mjs
 node scripts/verify-public-hosting-dist.mjs
 node scripts/verify-firebase-config.mjs
-npx --yes firebase-tools@15.32.1 emulators:exec --project guiasys-licensing --only firestore,storage "node scripts/verify-firebase-config.mjs"
+$env:FUNCTIONS_EMULATOR_HOST = "127.0.0.1:5001"
+firebase emulators:exec --project demo-guiasys-licensing --only auth,firestore,storage,functions "node scripts/test-int08-emulators.mjs"
 ```
+
+O ID `demo-guiasys-licensing` e obrigatorio para ensaios que escrevem dados. A suite
+interrompe antes dos testes se algum host nao for local, se o PIX manual/PagBank
+desativado nao estiver configurado ou se `worker/.secret.local` nao contiver um UID
+inequivocamente ficticio. O comando exige Java no `PATH` para iniciar o Firestore
+Emulator; no Windows, a JBR incluida no Android Studio tambem pode ser usada apenas na
+sessao local.
 
 ## Deploy de produção
 

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 
 const host = process.env.FUNCTIONS_EMULATOR_HOST || "127.0.0.1:5001";
-const projectId = process.env.GCLOUD_PROJECT || "guiasys-licensing";
+const projectId = process.env.GCLOUD_PROJECT;
+assert.match(host, /^(?:127\.0\.0\.1|localhost):\d+$/, "Functions Emulator deve usar host local.");
+assert.equal(projectId, "demo-guiasys-licensing", "Functions Emulator deve usar o projeto ficticio.");
 const base = `http://${host}/${projectId}/southamerica-east1/licensingApi`;
 
 const healthResponse = await fetch(`${base}/health`);

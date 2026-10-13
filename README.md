@@ -214,9 +214,14 @@ node scripts/smoke-production.mjs
 
 Emuladores:
 
-```bash
-firebase emulators:start --only functions,hosting,firestore,storage --project guiasys-licensing
+```powershell
+$env:FUNCTIONS_EMULATOR_HOST = "127.0.0.1:5001"
+firebase emulators:exec --project demo-guiasys-licensing --only auth,firestore,storage,functions "node scripts/test-int08-emulators.mjs"
 ```
+
+Os testes mutativos recusam o ID de producao e qualquer host que nao seja local.
+`worker/.env.local` deve manter PIX manual e PagBank desativado; `worker/.secret.local`
+deve conter apenas o UID ficticio do administrador do emulador.
 
 ## Versionamento e implantação
 

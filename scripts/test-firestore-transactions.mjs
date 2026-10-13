@@ -1,7 +1,11 @@
+import assert from "node:assert/strict";
 import { createFirestoreAtomicClient } from "../worker/src/firestore-atomic.js";
 
-const projectId = "guiasys-licensing";
-const apiBase = "http://127.0.0.1:8080/v1";
+const projectId = process.env.GCLOUD_PROJECT;
+const firestoreHost = process.env.FIRESTORE_EMULATOR_HOST;
+assert.equal(projectId, "demo-guiasys-licensing", "Teste transacional deve usar o projeto ficticio.");
+assert.match(firestoreHost || "", /^(?:127\.0\.0\.1|localhost):\d+$/, "Firestore Emulator deve usar host local.");
+const apiBase = `http://${firestoreHost}/v1`;
 
 function encodeValue(value) {
   if (typeof value === "boolean") return { booleanValue: value };

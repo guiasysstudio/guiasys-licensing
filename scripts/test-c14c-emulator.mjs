@@ -5,8 +5,19 @@ import { createFirebaseRuntime } from "../worker/src/firebase-runtime.js";
 
 const PROJECT = "prj_11111111111111111111";
 const PLAN = "plan_22222222222222222222";
+const EMULATOR_PROJECT = process.env.GCLOUD_PROJECT;
+
+assert.equal(EMULATOR_PROJECT, "demo-guiasys-licensing", "Teste integrado deve usar o projeto ficticio.");
+for (const [name, host] of [
+  ["FIRESTORE_EMULATOR_HOST", process.env.FIRESTORE_EMULATOR_HOST],
+  ["FIREBASE_AUTH_EMULATOR_HOST", process.env.FIREBASE_AUTH_EMULATOR_HOST],
+  ["FIREBASE_STORAGE_EMULATOR_HOST", process.env.FIREBASE_STORAGE_EMULATOR_HOST]
+]) {
+  assert.match(host || "", /^(?:127\.0\.0\.1|localhost):\d+$/, `${name} deve apontar para um emulador local.`);
+}
+
 const envBase = {
-  FIREBASE_PROJECT_ID: "guiasys-licensing",
+  FIREBASE_PROJECT_ID: EMULATOR_PROJECT,
   ADMIN_FIREBASE_UID: "master-emulator-c14c",
   PAYMENT_PROVIDER: "manual_pix",
   PAGBANK_ENABLED: "false"
@@ -24,8 +35,8 @@ const services = {
   async verifyIdToken() {
     const now = Math.floor(Date.now() / 1000);
     return {
-      aud: "guiasys-licensing",
-      iss: "https://securetoken.google.com/guiasys-licensing",
+      aud: EMULATOR_PROJECT,
+      iss: `https://securetoken.google.com/${EMULATOR_PROJECT}`,
       sub: identity.uid,
       exp: now + 3600,
       iat: now - 10,

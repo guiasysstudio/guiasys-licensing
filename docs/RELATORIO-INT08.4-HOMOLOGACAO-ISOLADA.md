@@ -1,5 +1,12 @@
 # INT-08.4 — Preparação segura de homologação Firebase isolada
 
+> **Documento historico.** A estrategia de criar um segundo projeto Firebase foi
+> descartada na finalizacao da INT-08. O projeto oficial continua sendo
+> `guiasys-licensing`; toda escrita de homologacao deve ocorrer exclusivamente nos
+> emuladores locais com o ID ficticio `demo-guiasys-licensing`. O kit descrito abaixo
+> permanece versionado somente como evidencia da etapa anterior e nao integra o fluxo
+> atual de liberacao.
+
 **Data:** 12 de outubro de 2026  
 **Status verificável:** preparação de artefatos e CI **APROVADOS**; infraestrutura Firebase isolada e ensaios reais **NÃO EXECUTADOS**. **NO-GO para produção.**  
 **Branch:** `fix/int08-consolidacao-c15-int07`, mantendo C15.3 original, INT-07 e `main` intactas.

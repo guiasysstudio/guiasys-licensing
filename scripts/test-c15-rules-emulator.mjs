@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 
-const projectId = process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || "guiasys-licensing";
+const projectId = process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT;
 const firestoreHost = process.env.FIRESTORE_EMULATOR_HOST;
 const storageHost = process.env.FIREBASE_STORAGE_EMULATOR_HOST;
 
+assert.equal(projectId, "demo-guiasys-licensing", "Rules Emulator deve usar o projeto ficticio.");
 assert.ok(firestoreHost, "FIRESTORE_EMULATOR_HOST ausente.");
 assert.ok(storageHost, "FIREBASE_STORAGE_EMULATOR_HOST ausente.");
+assert.match(firestoreHost, /^(?:127\.0\.0\.1|localhost):\d+$/, "Firestore Emulator deve usar host local.");
+assert.match(storageHost, /^(?:127\.0\.0\.1|localhost):\d+$/, "Storage Emulator deve usar host local.");
 
 const firestoreRead = await fetch(
   `http://${firestoreHost}/v1/projects/${projectId}/databases/(default)/documents/customerAccounts/probe`
