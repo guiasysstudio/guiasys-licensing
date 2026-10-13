@@ -42,7 +42,7 @@ test("hero separa fundo full-bleed do conteúdo limitado ao grid", () => {
   assert.match(catalog, /el\("section", "hero-shell"\)/);
   assert.match(catalog, /el\("div", "hero section"\)/);
   assert.match(catalog, /heroShell\.append\(hero\)/);
-  assert.match(catalog, /app\.append\(heroShell, featured, institutional\)/);
+  assert.match(catalog, /app\.append\(heroShell, featured, institutional, howItWorks\)/);
 
   assert.match(rule(".hero-shell"), /overflow:hidden/);
   assert.match(rule(".hero-shell::before"), /inset:0/);

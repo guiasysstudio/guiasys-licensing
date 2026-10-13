@@ -13,6 +13,7 @@ import {
 
 const PROJECT = "prj_c15c15c15c15c15c15c1";
 const PLAN = "plan_c15c15c15c15c15c15c1";
+const TEMP_PIX_PLAN = "plan_c15c15c15c15c15c15c2";
 const PROJECT_2 = "prj_d15d15d15d15d15d15d1";
 const PLAN_2 = "plan_d15d15d15d15d15d15d1";
 const sha = value => createHash("sha256").update(String(value)).digest("hex");
@@ -35,6 +36,12 @@ function projectData() {
       termsVersion: "2026-10", price: 50, priceCents: 5000, durationDays: 365,
       lifetime: false, deviceLimit: 2, startMode: "first_activation",
       active: true, publicCatalog: false, publishedInCatalog: true, catalogOrder: 1
+    },
+    [`projects/${PROJECT}/plans/${TEMP_PIX_PLAN}`]: {
+      name: "Teste PIX Real", description: "Plano temporário encerrado",
+      price: 2, priceCents: 200, durationDays: 1, lifetime: false,
+      deviceLimit: 1, startMode: "immediate", active: true,
+      publicCatalog: false, publishedInCatalog: false, catalogOrder: 99
     }
   };
 }
@@ -179,6 +186,7 @@ test("catálogo ignora booleano legado do projeto e usa publicação explícita 
   assert.equal(catalog.projects.length, 2);
   assert.deepEqual(catalog.projects.map(item => item.slug), ["primeiro-destaque", "programa-c15"]);
   assert.equal(catalog.projects[1].plans[0].commercialDescription, "Oferta anual");
+  assert.equal(catalog.projects[1].plans.some(plan => plan.name === "Teste PIX Real"), false);
   assert.equal(catalog.projects[1].plans[0].termsVersion, "2026-10");
   assert.equal(catalog.projects[1].logoUrl, "", "catálogo não expõe URL externa legada");
 
