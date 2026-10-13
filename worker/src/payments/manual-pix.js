@@ -199,16 +199,17 @@ export function manualPixWhatsappUrl({ whatsapp, orderNumber, customerName, prod
   const number = String(whatsapp || "").replace(/\D/g, "");
   if (!/^55\d{10,11}$/.test(number)) settingsError("WhatsApp PIX inválido.");
   const message = [
-    `Olá! Efetuei o pagamento via PIX do pedido ${orderNumber} no GuiaSys Licensing.`,
+    "Olá! 👋",
     "",
-    `Cliente: ${customerName}`,
-    `Produto: ${productName}`,
-    `Plano: ${planName}`,
-    `Valor: ${totalFormatted}`,
+    `Acabei de realizar o pagamento via PIX do pedido *${orderNumber}*.`,
     "",
-    "Estou enviando o comprovante de pagamento nesta conversa.",
+    `*Produto:* ${productName}`,
+    `*Plano:* ${planName}`,
+    `*Valor:* ${totalFormatted}`,
     "",
-    "Por favor, confirme o recebimento e libere minha licença."
+    "Estou enviando o comprovante nesta conversa para conferência.",
+    "",
+    "Obrigado!"
   ].join("\n");
   return `https://wa.me/${number}?text=${encodeURIComponent(message)}`;
 }

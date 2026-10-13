@@ -3931,16 +3931,19 @@ function commerceTable(rows, columns, emptyMessage) {
 
 function customerNotification(order) {
   return [
-    `Olá, ${order.customerName || "cliente"}!`,
+    "✅ *Pagamento confirmado*",
     "",
-    `Confirmamos o pagamento do pedido ${order.orderNumber || order.orderId}.`,
+    `O pagamento do pedido *${order.orderNumber || order.orderId}* foi confirmado.`,
     "",
-    `Sua licença do ${order.productName || order.items?.[0]?.projectNameSnapshot || "produto GuiaSys"} já está disponível.`,
+    `Sua licença de *${order.productName || order.items?.[0]?.projectNameSnapshot || "produto GuiaSys"}* já está disponível.`,
     "",
-    'Acesse sua conta no GuiaSys Licensing e entre em "Minhas Compras" para visualizar sua licença.',
+    "Acesse:",
+    "*Minha conta → Compras e licenças*",
+    "https://licencas.guiasys.online/conta/compras",
     "",
-    "Obrigado,",
-    "GuiaSys"
+    "Lá você pode visualizar e copiar sua chave de licença.",
+    "",
+    "Obrigado por escolher a GuiaSys."
   ].join("\n");
 }
 

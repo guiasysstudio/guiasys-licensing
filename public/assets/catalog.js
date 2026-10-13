@@ -319,8 +319,9 @@ function planCard(project, plan) {
     el("h3", "", plan.name),
     el("p", "plan-price", money.format(Number(plan.price || 0))),
     el("p", "", plan.commercialDescription || plan.description || "Licença oficial GuiaSys."),
-    el("p", "plan-meta", `${formatDuration(plan)} · ${plan.deviceLimit} ${Number(plan.deviceLimit) === 1 ? "dispositivo" : "dispositivos"}`),
-    el("p", "plan-meta", `${plan.startMode === "immediate" ? "Validade iniciada na emissão" : "Validade iniciada na primeira ativação"}${plan.termsVersion ? ` · Termos ${plan.termsVersion}` : ""}`)
+    el("p", "plan-meta", `Duração: ${formatDuration(plan)}`),
+    el("p", "plan-meta", `Uso em até ${plan.deviceLimit} ${Number(plan.deviceLimit) === 1 ? "dispositivo" : "dispositivos"}`),
+    el("p", "plan-meta", `${plan.startMode === "immediate" ? "A validade começa na emissão" : "A validade começa na primeira ativação"}${plan.termsVersion ? ` · Termos ${plan.termsVersion}` : ""}`)
   );
   const actions = el("div", "card-actions");
   actions.append(
@@ -346,10 +347,10 @@ async function renderHome() {
   const hero = el("div", "hero section");
   const copy = el("div", "hero-copy");
   copy.append(
-    el("p", "eyebrow", "Software GuiaSys · licenças oficiais"),
-    el("h1", "", "Licenças oficiais GuiaSys."),
-    el("p", "lead", "Conheça programas GuiaSys, compare planos e receba suas licenças em uma conta segura."),
-    (() => { const actions = el("div", "hero-actions"); actions.append(anchor("Explorar programas", "/programas", "button"), anchor("Acessar minha conta", state.user ? "/conta/compras" : "/entrar", "button-secondary")); return actions; })()
+    el("p", "eyebrow", "GuiaSys Licensing"),
+    el("h1", "", "Licenças oficiais para seus softwares GuiaSys"),
+    el("p", "lead", "Compre, acompanhe e gerencie suas licenças GuiaSys em um só lugar, com suporte humano quando precisar."),
+    (() => { const actions = el("div", "hero-actions"); actions.append(anchor("Ver programas", "/programas", "button"), anchor("Minha conta", state.user ? "/conta/compras" : "/entrar", "button-secondary")); return actions; })()
   );
   const visual = el("div", "hero-visual");
   const logo = el("img", "hero-lockup");
@@ -366,7 +367,7 @@ async function renderHome() {
   heroShell.append(hero);
   const featured = el("section", "section");
   const heading = el("div", "section-heading");
-  heading.append(titleBlock("Destaques", "Programas em destaque"), el("p", "", "Programas publicados e mantidos pela equipe GuiaSys."));
+  heading.append(titleBlock("Programas", "Encontre o software ideal"), el("p", "", "Conheça os programas oficiais e escolha o plano adequado para você."));
   featured.append(heading);
   const featuredItems = state.catalog.filter(item => item.featured).sort((a, b) => a.featuredOrder - b.featuredOrder);
   const grid = el("div", "catalog-grid");
@@ -375,23 +376,32 @@ async function renderHome() {
   const institutional = el("section", "institutional");
   institutional.id = "sobre";
   const inside = el("div", "section");
-  inside.append(titleBlock("GuiaSys Licensing", "A plataforma oficial das licenças GuiaSys", "Centraliza comercialização, emissão de keys, gerenciamento de licenças, ativação, validação e a conta de cada cliente."));
+  inside.append(titleBlock("Por que escolher", "Licenciamento claro do início ao fim", "Da escolha do programa ao gerenciamento da sua licença, tudo acontece na plataforma oficial GuiaSys."));
   const values = el("div", "institutional-grid");
-  for (const [title, text] of [["Produtos objetivos", "Recursos que resolvem necessidades reais sem complicar a rotina."], ["Licenciamento seguro", "Cada compra gera chaves rastreáveis e vinculadas à sua conta."], ["Suporte humano", "Orientação direta antes, durante e depois da compra."]]) {
+  for (const [title, text] of [["Licenciamento oficial", "Licenças emitidas e gerenciadas diretamente pela plataforma GuiaSys."], ["Gestão simples", "Acompanhe compras, chaves, validade e dispositivos em sua conta."], ["Suporte humano", "Pagamentos e atendimento com acompanhamento humano quando necessário."]]) {
     const card = el("article", "value-card"); card.append(el("h3", "", title), el("p", "", text)); values.append(card);
   }
   inside.append(values); institutional.append(inside);
-  app.append(heroShell, featured, institutional);
+  const howItWorks = el("section", "section how-it-works");
+  howItWorks.append(titleBlock("Como funciona", "Sua licença em três passos", "Um processo simples, com as informações da compra sempre disponíveis na sua conta."));
+  const steps = el("div", "steps-grid");
+  for (const [number, title, text] of [["1", "Escolha seu programa", "Selecione o software e o plano adequado."], ["2", "Finalize sua compra", "Faça o pagamento via PIX seguindo as instruções apresentadas."], ["3", "Receba sua licença", "Após a confirmação do pagamento, a chave fica disponível em sua conta."]]) {
+    const step = el("article", "step-card");
+    step.append(el("span", "step-number", number), el("h3", "", title), el("p", "", text));
+    steps.append(step);
+  }
+  howItWorks.append(steps);
+  app.append(heroShell, featured, institutional, howItWorks);
 }
 async function renderPrograms() {
   setDocument("Programas", "Conheça os programas e planos oficiais publicados pela GuiaSys.");
   await loadCatalog();
   app.replaceChildren();
   const page = el("section", "page");
-  page.append(titleBlock("Catálogo oficial", "Programas", "Conheça os programas oficiais da GuiaSys."));
+  page.append(titleBlock("Catálogo oficial", "Programas GuiaSys", "Explore nossos softwares e veja os detalhes de cada opção antes de escolher seu plano."));
   const grid = el("div", "catalog-grid");
   for (const project of state.catalog) grid.append(productCard(project, { favoriteAction: true }));
-  page.append(grid.childElementCount ? grid : emptyState("Nenhum programa publicado", "Novas ofertas aparecerão aqui quando estiverem disponíveis."));
+  page.append(grid.childElementCount ? grid : emptyState("Novidades em breve", "Ainda não há programas disponíveis para compra. Volte em outro momento."));
   app.append(page);
 }
 async function renderProgram(slug) {
@@ -458,7 +468,7 @@ async function renderProgram(slug) {
       gallery.append(shots); page.append(gallery);
     }
     const offers = el("section", "product-offers");
-    offers.append(titleBlock("Licenciamento", "Escolha seu plano"));
+    offers.append(titleBlock("Planos disponíveis", "Escolha sua licença", "Compare duração, quantidade de dispositivos e valor antes de continuar."));
     const plans = el("div", "plans");
     for (const plan of project.plans) plans.append(planCard(project, plan));
     offers.append(plans); page.append(offers);
@@ -504,7 +514,7 @@ function openPixModal(order, payment) {
   if (payment.pixTxid) {
     const row = el("p", "pix-meta"); row.append(el("strong", "", "Identificação: "), document.createTextNode(payment.pixTxid)); details.append(row);
   }
-  const codeLabel = el("label", "pix-code-label", "PIX Copia e Cola");
+  const codeLabel = el("label", "pix-code-label", "Código PIX Copia e Cola");
   const code = el("textarea", "pix-code"); code.readOnly = true; code.value = payment.pixCode; codeLabel.append(code);
   const copy = button("Copiar código PIX", "button-secondary", async () => {
     await navigator.clipboard.writeText(payment.pixCode); showToast("Código PIX copiado.");
@@ -533,7 +543,7 @@ function openPixModal(order, payment) {
     }
   });
   const actions = el("div", "pix-actions"); actions.append(copy, reported);
-  details.append(codeLabel, actions, el("p", "pix-help", "A confirmação é manual. Envie o comprovante pelo WhatsApp; a licença será exibida em Minhas compras após a aprovação."));
+  details.append(codeLabel, actions, el("p", "pix-help", "Depois de pagar, informe o pagamento e envie o comprovante pelo WhatsApp. Após a conferência, sua licença ficará disponível em Compras e licenças."));
   grid.append(qrWrap, details); dialog.append(header, grid); backdrop.append(dialog); document.body.append(backdrop); document.body.classList.add("pix-modal-open");
 
   const focusable = () => [...dialog.querySelectorAll('button:not([disabled]), textarea, [href], [tabindex]:not([tabindex="-1"])')];
@@ -600,7 +610,7 @@ async function renderCart() {
   saveLocalCart();
   app.replaceChildren();
   const page = el("section", "page");
-  page.append(titleBlock("Compra", "Seu carrinho", "Cada unidade comprada gera uma licença independente e uma key própria."));
+  page.append(titleBlock("Finalizar compra", "Seu carrinho", "Revise os itens e as quantidades antes de seguir para o pagamento via PIX."));
   const offers = cartOffers();
   if (!offers.length) {
     page.append(emptyState("Seu carrinho está vazio", "Adicione um plano para continuar."), anchor("Explorar programas", "/programas", "button"));
@@ -632,16 +642,16 @@ async function renderCart() {
   const units = offers.reduce((sum, offer) => sum + offer.item.quantity, 0);
   const total = offers.reduce((sum, offer) => sum + planCents(offer.plan) * offer.item.quantity, 0);
   const unitRow = el("div", "summary-row"); unitRow.append(el("span", "", "Licenças"), el("strong", "", units));
-  const totalRow = el("div", "summary-row summary-total"); totalRow.append(el("span", "", "Total estimado"), el("strong", "", money.format(total / 100)));
-  summary.append(el("h2", "", "Resumo"), unitRow, totalRow, el("p", "plan-meta", "Preço e disponibilidade serão recalculados no servidor."), button("Finalizar com PIX", "button", checkout));
+  const totalRow = el("div", "summary-row summary-total"); totalRow.append(el("span", "", "Total"), el("strong", "", money.format(total / 100)));
+  summary.append(el("h2", "", "Resumo da compra"), unitRow, totalRow, el("p", "plan-meta", "Preço e disponibilidade são confirmados ao iniciar o pagamento."), button("Finalizar com PIX", "button", checkout));
   summary.lastElementChild.id = "checkout-button";
   layout.append(list, summary); page.append(layout); app.append(page);
 }
 function authPage(mode) {
   const config = {
-    login: ["Entrar", "Acesse compras e licenças.", "Entrar"],
-    signup: ["Criar conta", "Cadastre-se para comprar e acompanhar licenças.", "Criar conta"],
-    reset: ["Recuperar senha", "Enviaremos um link de redefinição ao seu e-mail.", "Enviar link"]
+    login: ["Entrar", "Acesse suas compras, licenças e dispositivos.", "Entrar"],
+    signup: ["Criar conta", "Crie sua conta para comprar e gerenciar licenças GuiaSys.", "Criar conta"],
+    reset: ["Recuperar senha", "Enviaremos um link seguro de redefinição para o seu e-mail.", "Enviar link"]
   }[mode];
   setDocument(config[0]);
   app.replaceChildren();
@@ -1069,7 +1079,7 @@ async function renderPurchases() {
   const [ordersResponse, licensesResponse] = await Promise.all([api("/api/v1/customer/orders"), api("/api/v1/customer/licenses")]);
   const orders = ordersResponse.orders || [], licenses = licensesResponse.licenses || [];
   const content = el("section");
-  content.append(titleBlock("Minha conta", "Compras e licenças", "Acompanhe pedidos, quantidades e todas as chaves emitidas."));
+  content.append(titleBlock("Área do cliente", "Compras e licenças", "Acompanhe seus pedidos e gerencie as licenças disponíveis na sua conta."));
   const records = el("div", "records order-records");
   for (const order of orders) {
     const card = el("article", "record-card");
