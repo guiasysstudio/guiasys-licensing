@@ -788,6 +788,22 @@ test("portal SPA contém rotas, carrinho sem navegação automática, PIX manual
   assert.equal(/PAGBANK_TOKEN/.test(js), false);
 });
 
+test("SVGs oficiais da marca não dependem de estilos inline bloqueados pela CSP", async () => {
+  const assets = await Promise.all([
+    "guiasys-licensing-symbol.svg",
+    "guiasys-licensing-lockup.svg",
+    "guiasys-licensing-wordmark.svg"
+  ].map(file => readFile(new URL(`../../public/assets/brand/${file}`, import.meta.url), "utf8")));
+
+  for (const svg of assets) {
+    assert.doesNotMatch(svg, /\sstyle\s*=/i);
+    assert.doesNotMatch(svg, /<style\b/i);
+    assert.doesNotMatch(svg, /class="fil\d+"/i);
+    assert.match(svg, /shape-rendering="geometricPrecision"/);
+    assert.match(svg, /fill="(?:#F2A900|#13212B|#6D747E)"/);
+  }
+});
+
 test("fallback de avatar usa uma inicial maiúscula de nome, e-mail ou A", async () => {
   const js = await readFile(new URL("../../public/assets/catalog.js", import.meta.url), "utf8");
   const start = js.indexOf("function profileInitial(");
