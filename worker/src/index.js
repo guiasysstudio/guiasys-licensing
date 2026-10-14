@@ -1139,7 +1139,7 @@ async function signProjectEntitlement(env, project, claims) {
   const stored = await getDoc(env, `projects/${project.id}/internal/signing`);
   if (!hasUsableSigningShape(stored)) {
     throw Object.assign(new Error("Material de assinatura indisponível."), {
-      status: 503,
+      status: 500,
       reason: "signing_unavailable"
     });
   }
@@ -1179,7 +1179,7 @@ async function signProjectEntitlement(env, project, claims) {
       errorName: error?.name || "Error"
     });
     throw Object.assign(new Error("Não foi possível assinar a autorização do cliente."), {
-      status: 503,
+      status: 500,
       reason: "signing_unavailable",
       cause: error
     });
