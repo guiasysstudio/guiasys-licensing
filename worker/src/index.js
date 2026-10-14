@@ -975,6 +975,38 @@ async function generateSigningMaterial() {
   };
 }
 
+function hasUsableSigningShape(stored) {
+  const privateJwk = stored?.privateJwk;
+  const publicJwk = stored?.publicJwk;
+  return Boolean(
+    stored?.keyId &&
+    privateJwk?.kty === "EC" &&
+    privateJwk?.crv === "P-256" &&
+    privateJwk?.d &&
+    privateJwk?.x &&
+    privateJwk?.y &&
+    publicJwk?.kty === "EC" &&
+    publicJwk?.crv === "P-256" &&
+    publicJwk?.x &&
+    publicJwk?.y
+  );
+}
+
+async function canImportSigningPrivateJwk(privateJwk) {
+  try {
+    await crypto.subtle.importKey(
+      "jwk",
+      privateJwk,
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["sign"]
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function ensureProjectSigningKey(env, project) {
   if (!project) return null;
 
@@ -990,11 +1022,15 @@ async function ensureProjectSigningKey(env, project) {
     }
 
     const stored = await tx.get(signingPath);
-    if (stored?.privateJwk && stored?.publicJwk && stored?.keyId) {
+    const storedUsable =
+      hasUsableSigningShape(stored) &&
+      await canImportSigningPrivateJwk(stored.privateJwk);
+
+    if (storedUsable) {
       if (
         currentProject.signingKeyId === stored.keyId &&
-        currentProject.signingPublicJwk?.x &&
-        currentProject.signingPublicJwk?.y
+        currentProject.signingPublicJwk?.x === stored.publicJwk.x &&
+        currentProject.signingPublicJwk?.y === stored.publicJwk.y
       ) {
         return currentProject;
       }
@@ -1011,7 +1047,8 @@ async function ensureProjectSigningKey(env, project) {
     }
 
     const material = await generateSigningMaterial();
-    tx.create(signingPath, material);
+    if (stored) tx.set(signingPath, material);
+    else tx.create(signingPath, material);
 
     const synced = {
       ...currentProject,
@@ -1021,6 +1058,13 @@ async function ensureProjectSigningKey(env, project) {
       updatedAt: material.createdAt
     };
     tx.set(projectPathValue, synced);
+
+    structuredLog(env, "warn", "signing.material.repaired", {
+      projectId: project.id,
+      previousKeyId: stored?.keyId || null,
+      newKeyId: material.keyId
+    });
+
     return synced;
   });
 }
@@ -1028,37 +1072,53 @@ async function ensureProjectSigningKey(env, project) {
 async function signProjectEntitlement(env, project, claims) {
   project = await ensureProjectSigningKey(env, project);
   const stored = await getDoc(env, `projects/${project.id}/internal/signing`);
-  if (!stored?.privateJwk || !stored?.keyId) {
-    throw Object.assign(new Error("Material de assinatura indisponível."), { status: 500, reason: "signing_unavailable" });
+  if (!hasUsableSigningShape(stored)) {
+    throw Object.assign(new Error("Material de assinatura indisponível."), {
+      status: 503,
+      reason: "signing_unavailable"
+    });
   }
 
-  const privateKey = await crypto.subtle.importKey(
-    "jwk",
-    stored.privateJwk,
-    { name: "ECDSA", namedCurve: "P-256" },
-    false,
-    ["sign"]
-  );
+  try {
+    const privateKey = await crypto.subtle.importKey(
+      "jwk",
+      stored.privateJwk,
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["sign"]
+    );
 
-  const header = base64UrlEncode(JSON.stringify({
-    alg: "ES256",
-    typ: "GSL-ENT",
-    kid: stored.keyId
-  }));
-  const payload = base64UrlEncode(JSON.stringify(claims));
-  const signingInput = `${header}.${payload}`;
-  const signature = await crypto.subtle.sign(
-    { name: "ECDSA", hash: "SHA-256" },
-    privateKey,
-    new TextEncoder().encode(signingInput)
-  );
+    const header = base64UrlEncode(JSON.stringify({
+      alg: "ES256",
+      typ: "GSL-ENT",
+      kid: stored.keyId
+    }));
+    const payload = base64UrlEncode(JSON.stringify(claims));
+    const signingInput = `${header}.${payload}`;
+    const signature = await crypto.subtle.sign(
+      { name: "ECDSA", hash: "SHA-256" },
+      privateKey,
+      new TextEncoder().encode(signingInput)
+    );
 
-  return {
-    format: "JWS",
-    algorithm: "ES256",
-    keyId: stored.keyId,
-    token: `${signingInput}.${base64UrlEncode(signature)}`
-  };
+    return {
+      format: "JWS",
+      algorithm: "ES256",
+      keyId: stored.keyId,
+      token: `${signingInput}.${base64UrlEncode(signature)}`
+    };
+  } catch (error) {
+    structuredLog(env, "error", "signing.entitlement.failed", {
+      projectId: project.id,
+      keyId: stored.keyId,
+      errorName: error?.name || "Error"
+    });
+    throw Object.assign(new Error("Não foi possível assinar a autorização do cliente."), {
+      status: 503,
+      reason: "signing_unavailable",
+      cause: error
+    });
+  }
 }
 
 async function attachSignedEntitlement(env, project, view, deviceHash) {
@@ -3833,7 +3893,7 @@ async function routeRequest(request, env) {
         : 500;
       const serverError = status >= 500;
       const safeError = serverError
-        ? (["upstream_error", "upstream_timeout"].includes(error?.reason) ? error.reason : "internal_error")
+        ? (["upstream_error", "upstream_timeout", "signing_unavailable"].includes(error?.reason) ? error.reason : "internal_error")
         : (error?.reason || "invalid_request");
       const safeMessage = serverError
         ? (status === 504 ? "Serviço temporariamente indisponível." : "Erro interno do servidor.")
@@ -3845,6 +3905,7 @@ async function routeRequest(request, env) {
         path: url.pathname,
         status,
         reason: safeError,
+        internalReason: error?.reason || null,
         errorName: error?.name || "Error"
       });
 
