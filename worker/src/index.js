@@ -6045,7 +6045,7 @@ async function routeRequest(request, env) {
         : 500;
       const serverError = status >= 500;
       const safeError = serverError
-        ? (["upstream_error", "upstream_timeout", "signing_unavailable"].includes(error?.reason) ? error.reason : "internal_error")
+        ? (["upstream_error", "upstream_timeout"].includes(error?.reason) ? error.reason : "internal_error")
         : (error?.reason || "invalid_request");
       const safeMessage = serverError
         ? (status === 504 ? "Serviço temporariamente indisponível." : "Erro interno do servidor.")
