@@ -35,7 +35,7 @@
 - Origem Web é autorizada antes de qualquer migração/geração de configuração pública do projeto.
 - Desativações administrativas de dispositivos também entram no histórico técnico de ativações.
 - Updates administrativos rejeitam nomes vazios e identificadores de projeto inválidos.
-- Contrato de integração usa `https://licencas.guiasys.online` como API pública, mantendo o painel administrativo same-origin.
+- Contrato de integração usa `https://licencas.guiasys.com.br` como API pública, mantendo o painel administrativo same-origin.
 - Target `public` passa a ser versionado como gateway mínimo da API GSL-v1, sem publicar o painel nem depender do Worker legado.
 - Hosting administrativo ganha Content-Security-Policy e revalidação imediata dos assets após deploy.
 - Adicionado smoke test não destrutivo para painel, health, headers e catálogo público.
@@ -50,7 +50,7 @@
 - Rewrites do Hosting não usam `pinTag`; Functions e Hosting são implantados separadamente para evitar mutação de tags/tráfego do Cloud Run durante a finalização.
 - Hosting convertido para multi-site: `public` -> `guiasys-licensing` e `admin` -> `guiasys-licensing-admin`.
 - Painel administrativo passa a usar staging `.hosting-admin-dist/` com allowlist estrita de `index.html` e `assets/`.
-- `licencas.guiasys.online` fica reservado ao portal público e `painel.licencas.guiasys.online` ao painel administrativo.
+- `licencas.guiasys.com.br` fica reservado ao portal público e `painel.licencas.guiasys.com.br` ao painel administrativo.
 - Removido `CNAME` do GitHub Pages.
 - Adicionados headers de segurança e política explícita de cache.
 - Emulador Hosting configurado na porta 5000.

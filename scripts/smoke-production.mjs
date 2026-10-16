@@ -1,8 +1,8 @@
 const ADMIN_BASE = String(
-  process.env.GUIASYS_ADMIN_BASE || "https://painel.licencas.guiasys.online"
+  process.env.GUIASYS_ADMIN_BASE || "https://painel.licencas.guiasys.com.br"
 ).replace(/\/$/, "");
 const PUBLIC_BASE = String(
-  process.env.GUIASYS_PUBLIC_BASE || "https://licencas.guiasys.online"
+  process.env.GUIASYS_PUBLIC_BASE || "https://licencas.guiasys.com.br"
 ).replace(/\/$/, "");
 
 function fail(message) {
@@ -77,7 +77,7 @@ const adminHealth = await expectJson(`${ADMIN_BASE}/health`);
 for (const [field, expected] of Object.entries({
   ok: true,
   service: "guiasys-licensing-api",
-  version: "2.0.1",
+  version: "2.1.0",
   protocolVersion: "GSL-v1",
   firebaseProject: "guiasys-licensing",
   runtime: "firebase-functions-v2",

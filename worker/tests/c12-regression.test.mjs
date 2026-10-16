@@ -162,7 +162,7 @@ function authenticatedEnv(services, token = firebaseToken(), adminUid = token.su
 }
 
 function jsonRequest(path, method, body, token = "test-token") {
-  return new Request(`https://painel.licencas.guiasys.online${path}`, {
+  return new Request(`https://painel.licencas.guiasys.com.br${path}`, {
     method,
     headers: {
       "Authorization": `Bearer ${token}`,
@@ -206,7 +206,7 @@ test("validação preserva suspensão mesmo depois do expiresAt", async () => {
   });
 
   const response = await handleRequest(
-    new Request("https://painel.licencas.guiasys.online/api/v1/license/validate", {
+    new Request("https://painel.licencas.guiasys.com.br/api/v1/license/validate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -403,7 +403,7 @@ test("trial não reinicia em dispositivo que já foi vinculado a licença paga",
   });
 
   const response = await handleRequest(
-    new Request("https://painel.licencas.guiasys.online/api/v1/trial/start", {
+    new Request("https://painel.licencas.guiasys.com.br/api/v1/trial/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -474,7 +474,7 @@ test("origem web não autorizada é recusada antes de qualquer migração do pro
   });
 
   const response = await handleRequest(
-    new Request("https://painel.licencas.guiasys.online/api/v1/project/config", {
+    new Request("https://painel.licencas.guiasys.com.br/api/v1/project/config", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -587,7 +587,7 @@ test("fluxo público ativa, valida idempotência, aplica limite, desativa e veri
   };
 
   const publicRequest = (path, body) => new Request(
-    `https://painel.licencas.guiasys.online${path}`,
+    `https://painel.licencas.guiasys.com.br${path}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -764,7 +764,7 @@ test("fluxo de trial preserva período, revalida de forma idempotente e converte
   };
 
   const trialRequest = (path, requestId) => new Request(
-    `https://painel.licencas.guiasys.online${path}`,
+    `https://painel.licencas.guiasys.com.br${path}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -837,7 +837,7 @@ test("fluxo de trial preserva período, revalida de forma idempotente e converte
   assert.equal(replayed.trial.revalidationReplay, true);
 
   const paidActivation = await handleRequest(
-    new Request("https://painel.licencas.guiasys.online/api/v1/license/activate", {
+    new Request("https://painel.licencas.guiasys.com.br/api/v1/license/activate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

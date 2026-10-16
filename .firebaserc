@@ -10,6 +10,9 @@
         ],
         "public": [
           "guiasys-licensing"
+        ],
+        "studio": [
+          "guiasys-studio-e1ea8"
         ]
       }
     }

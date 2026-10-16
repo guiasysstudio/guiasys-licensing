@@ -2,6 +2,256 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Assumed data model:
+    // studioAdmins/{uid}: enabled (bool). Provisioned only by trusted backend/console.
+    // studioProfiles/{uid}: private identity/contact/address profile owned by the UID.
+    // studioProjects/{slug}: public CMS content only when visible == true; admin writes.
+    // studioContactMessages/{id}: public create, Studio-admin read/workflow updates.
+    // All Licensing collections remain outside these matches and fall through to default-deny.
+    function isAuthenticated() { return request.auth != null; }
+    function isOwner(userId) { return isAuthenticated() && request.auth.uid == userId; }
+    function uidUnchangedOnCreate(userId) {
+      return request.resource.data.uid == userId && request.resource.data.uid == request.auth.uid;
+    }
+    function uidNotModifiedOnUpdate() {
+      return request.resource.data.uid == resource.data.uid;
+    }
+    function isStudioAdmin() {
+      return isAuthenticated()
+        && exists(/databases/$(database)/documents/studioAdmins/$(request.auth.uid))
+        && get(/databases/$(database)/documents/studioAdmins/$(request.auth.uid)).data.enabled == true;
+    }
+    function validText(value, minSize, maxSize) {
+      return value is string && value.size() >= minSize && value.size() <= maxSize;
+    }
+    function validOptionalText(value, maxSize) {
+      return value is string && value.size() <= maxSize;
+    }
+    function validOptionalUrl(value, maxSize) {
+      return value is string && value.size() <= maxSize
+        && (value == '' || (value.size() >= 8 && value.matches('^https://.+$')));
+    }
+    function validMediaPath(value, projectId, group) {
+      return value is string && (value == '' || (
+        value.size() <= 500
+        && value.matches('^studio-projects/' + projectId + '/' + group + '/[^/]+$')
+      ));
+    }
+    function validStringList(value, maxItems, maxItemSize) {
+      return value is list && value.size() <= maxItems
+        && (value.size() == 0 || validText(value[0], 1, maxItemSize))
+        && (value.size() < 2 || validText(value[1], 1, maxItemSize))
+        && (value.size() < 3 || validText(value[2], 1, maxItemSize))
+        && (value.size() < 4 || validText(value[3], 1, maxItemSize))
+        && (value.size() < 5 || validText(value[4], 1, maxItemSize))
+        && (value.size() < 6 || validText(value[5], 1, maxItemSize))
+        && (value.size() < 7 || validText(value[6], 1, maxItemSize))
+        && (value.size() < 8 || validText(value[7], 1, maxItemSize))
+        && (value.size() < 9 || validText(value[8], 1, maxItemSize))
+        && (value.size() < 10 || validText(value[9], 1, maxItemSize));
+    }
+    function validStudioProfile(userId) {
+      return request.resource.data.keys().hasAll([
+          'uid', 'fullName', 'email', 'cpf', 'birthDate', 'phone', 'cep',
+          'street', 'number', 'complement', 'neighborhood', 'city', 'state',
+          'profileComplete', 'schemaVersion', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'uid', 'fullName', 'email', 'cpf', 'birthDate', 'phone', 'cep',
+          'street', 'number', 'complement', 'neighborhood', 'city', 'state',
+          'profileComplete', 'schemaVersion', 'createdAt', 'updatedAt'
+        ])
+        && uidUnchangedOnCreate(userId)
+        && request.auth.token.email is string
+        && request.resource.data.email == request.auth.token.email
+        && validText(request.resource.data.fullName, 3, 120)
+        && request.resource.data.cpf is string && request.resource.data.cpf.matches('^[0-9]{11}$')
+        && request.resource.data.birthDate is string && request.resource.data.birthDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && request.resource.data.phone is string && request.resource.data.phone.matches('^[0-9]{10,11}$')
+        && request.resource.data.cep is string && request.resource.data.cep.matches('^[0-9]{8}$')
+        && validText(request.resource.data.street, 2, 160)
+        && validText(request.resource.data.number, 1, 20)
+        && validOptionalText(request.resource.data.complement, 100)
+        && validText(request.resource.data.neighborhood, 1, 120)
+        && validText(request.resource.data.city, 2, 120)
+        && request.resource.data.state is string && request.resource.data.state.matches('^[A-Z]{2}$')
+        && request.resource.data.profileComplete == true
+        && request.resource.data.schemaVersion == 1;
+    }
+    function validCategories(value) {
+      return value is list && value.size() >= 1 && value.size() <= 3
+        && value[0] in ['Programa', 'Aplicativo', 'Site']
+        && (value.size() < 2 || value[1] in ['Programa', 'Aplicativo', 'Site'])
+        && (value.size() < 3 || value[2] in ['Programa', 'Aplicativo', 'Site']);
+    }
+    function validDownload(value) {
+      return value is map
+        && value.keys().hasAll(['label', 'url'])
+        && value.keys().hasOnly(['label', 'url'])
+        && validText(value.label, 1, 80)
+        && validText(value.url, 8, 1000)
+        && value.url.matches('^https://.+$');
+    }
+    function validDownloads(value) {
+      return value is list && value.size() <= 12
+        && (value.size() == 0 || validDownload(value[0]))
+        && (value.size() < 2 || validDownload(value[1]))
+        && (value.size() < 3 || validDownload(value[2]))
+        && (value.size() < 4 || validDownload(value[3]))
+        && (value.size() < 5 || validDownload(value[4]))
+        && (value.size() < 6 || validDownload(value[5]))
+        && (value.size() < 7 || validDownload(value[6]))
+        && (value.size() < 8 || validDownload(value[7]))
+        && (value.size() < 9 || validDownload(value[8]))
+        && (value.size() < 10 || validDownload(value[9]))
+        && (value.size() < 11 || validDownload(value[10]))
+        && (value.size() < 12 || validDownload(value[11]));
+    }
+    function validFaqItem(value) {
+      return value is map
+        && value.keys().hasAll(['question', 'answer'])
+        && value.keys().hasOnly(['question', 'answer'])
+        && validText(value.question, 1, 240)
+        && validText(value.answer, 1, 1200);
+    }
+    function validFaq(value) {
+      return value is list && value.size() <= 10
+        && (value.size() == 0 || validFaqItem(value[0]))
+        && (value.size() < 2 || validFaqItem(value[1]))
+        && (value.size() < 3 || validFaqItem(value[2]))
+        && (value.size() < 4 || validFaqItem(value[3]))
+        && (value.size() < 5 || validFaqItem(value[4]))
+        && (value.size() < 6 || validFaqItem(value[5]))
+        && (value.size() < 7 || validFaqItem(value[6]))
+        && (value.size() < 8 || validFaqItem(value[7]))
+        && (value.size() < 9 || validFaqItem(value[8]))
+        && (value.size() < 10 || validFaqItem(value[9]));
+    }
+    function validGalleryItem(value, projectId) {
+      return value is map
+        && value.keys().hasAll(['url', 'path', 'alt'])
+        && value.keys().hasOnly(['url', 'path', 'alt'])
+        && validText(value.url, 8, 2000) && value.url.matches('^https://.+$')
+        && validMediaPath(value.path, projectId, 'gallery')
+        && validOptionalText(value.alt, 240);
+    }
+    function validGallery(value, projectId) {
+      return value is list && value.size() <= 12
+        && (value.size() == 0 || validGalleryItem(value[0], projectId))
+        && (value.size() < 2 || validGalleryItem(value[1], projectId))
+        && (value.size() < 3 || validGalleryItem(value[2], projectId))
+        && (value.size() < 4 || validGalleryItem(value[3], projectId))
+        && (value.size() < 5 || validGalleryItem(value[4], projectId))
+        && (value.size() < 6 || validGalleryItem(value[5], projectId))
+        && (value.size() < 7 || validGalleryItem(value[6], projectId))
+        && (value.size() < 8 || validGalleryItem(value[7], projectId))
+        && (value.size() < 9 || validGalleryItem(value[8], projectId))
+        && (value.size() < 10 || validGalleryItem(value[9], projectId))
+        && (value.size() < 11 || validGalleryItem(value[10], projectId))
+        && (value.size() < 12 || validGalleryItem(value[11], projectId));
+    }
+    function validStudioProject(projectId) {
+      return request.resource.data.keys().hasAll([
+          'slug', 'name', 'shortDescription', 'fullDescription', 'categories',
+          'platforms', 'status', 'version', 'requirements', 'features', 'faq',
+          'downloads', 'downloadUrl', 'supportUrl', 'licenseUrl', 'order', 'visible', 'featured',
+          'logoUrl', 'logoPath', 'bannerUrl', 'bannerPath', 'gallery',
+          'seoTitle', 'seoDescription', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'slug', 'name', 'shortDescription', 'fullDescription', 'categories',
+          'platforms', 'status', 'version', 'requirements', 'features', 'faq',
+          'downloads', 'downloadUrl', 'supportUrl', 'licenseUrl', 'order', 'visible', 'featured',
+          'logoUrl', 'logoPath', 'bannerUrl', 'bannerPath', 'gallery',
+          'seoTitle', 'seoDescription', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.slug == projectId
+        && request.resource.data.slug.matches('^[a-z0-9]+(?:-[a-z0-9]+)*$')
+        && validText(request.resource.data.name, 2, 120)
+        && validOptionalText(request.resource.data.shortDescription, 280)
+        && validOptionalText(request.resource.data.fullDescription, 12000)
+        && validCategories(request.resource.data.categories)
+        && validStringList(request.resource.data.platforms, 10, 80)
+        && validOptionalText(request.resource.data.status, 80)
+        && validOptionalText(request.resource.data.version, 40)
+        && validStringList(request.resource.data.requirements, 10, 500)
+        && validStringList(request.resource.data.features, 10, 500)
+        && validFaq(request.resource.data.faq)
+        && validDownloads(request.resource.data.downloads)
+        && validOptionalUrl(request.resource.data.downloadUrl, 1000)
+        && validOptionalUrl(request.resource.data.supportUrl, 1000)
+        && validOptionalUrl(request.resource.data.licenseUrl, 1000)
+        && request.resource.data.order is number && request.resource.data.order >= 0 && request.resource.data.order <= 9999
+        && request.resource.data.visible is bool && request.resource.data.featured is bool
+        && validOptionalUrl(request.resource.data.logoUrl, 2000)
+        && validMediaPath(request.resource.data.logoPath, projectId, 'logo')
+        && validOptionalUrl(request.resource.data.bannerUrl, 2000)
+        && validMediaPath(request.resource.data.bannerPath, projectId, 'banner')
+        && validGallery(request.resource.data.gallery, projectId)
+        && validOptionalText(request.resource.data.seoTitle, 70)
+        && validOptionalText(request.resource.data.seoDescription, 180);
+    }
+    function validNewStudioMessage() {
+      return request.resource.data.keys().hasAll([
+          'name', 'email', 'projectSlug', 'projectName', 'message',
+          'status', 'source', 'userId', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'name', 'email', 'projectSlug', 'projectName', 'message',
+          'status', 'source', 'userId', 'createdAt', 'updatedAt'
+        ])
+        && validText(request.resource.data.name, 2, 120)
+        && validText(request.resource.data.email, 5, 180)
+        && request.resource.data.email.matches('^.+@.+\\..+$')
+        && validText(request.resource.data.projectSlug, 1, 80)
+        && validText(request.resource.data.projectName, 2, 120)
+        && validText(request.resource.data.message, 10, 5000)
+        && request.resource.data.status == 'new'
+        && request.resource.data.source in ['contact', 'project']
+        && request.resource.data.userId is string
+        && ((request.auth == null && request.resource.data.userId == '')
+          || (isAuthenticated() && request.resource.data.userId == request.auth.uid))
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    match /studioAdmins/{adminId} {
+      allow get: if isOwner(adminId);
+      allow list, create, update, delete: if false;
+    }
+    match /studioProfiles/{userId} {
+      allow get: if isOwner(userId);
+      allow list: if false;
+      allow create: if isOwner(userId) && validStudioProfile(userId)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if isOwner(userId) && validStudioProfile(userId)
+        && uidNotModifiedOnUpdate()
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+    match /studioProjects/{projectId} {
+      allow get, list: if isStudioAdmin() || resource.data.visible == true;
+      allow create: if isStudioAdmin() && validStudioProject(projectId)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if isStudioAdmin() && validStudioProject(projectId)
+        && request.resource.data.slug == resource.data.slug
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if isStudioAdmin();
+    }
+    match /studioContactMessages/{messageId} {
+      allow create: if validNewStudioMessage();
+      allow read: if isStudioAdmin();
+      allow update: if isStudioAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && request.resource.data.status in ['new', 'read', 'archived']
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if isStudioAdmin();
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

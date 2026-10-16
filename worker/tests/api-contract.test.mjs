@@ -19,7 +19,7 @@ function firebaseEnv(logs = []) {
 test("raiz preserva GSL-v1, expõe API 2.1 e request id", async () => {
   const logs = [];
   const response = await handleRequest(
-    new Request("https://licencas.guiasys.online/", {
+    new Request("https://licencas.guiasys.com.br/", {
       headers: { "X-Request-Id": "req_test_root_001" }
     }),
     firebaseEnv(logs)
@@ -42,7 +42,7 @@ test("raiz preserva GSL-v1, expõe API 2.1 e request id", async () => {
 
 test("health identifica Firebase Functions/Admin SDK sem exigir service account JSON", async () => {
   const response = await handleRequest(
-    new Request("https://licencas.guiasys.online/health"),
+    new Request("https://licencas.guiasys.com.br/health"),
     firebaseEnv()
   );
 
@@ -60,7 +60,7 @@ test("health identifica Firebase Functions/Admin SDK sem exigir service account 
 
 test("request id inválido é substituído por identificador seguro", async () => {
   const response = await handleRequest(
-    new Request("https://licencas.guiasys.online/health", {
+    new Request("https://licencas.guiasys.com.br/health", {
       headers: { "X-Request-Id": "x" }
     }),
     firebaseEnv()
@@ -70,24 +70,26 @@ test("request id inválido é substituído por identificador seguro", async () =
 });
 
 test("método incorreto mantém erro contratual e CORS administrativo", async () => {
-  const response = await handleRequest(
-    new Request("https://licencas.guiasys.online/health", {
-      method: "POST",
-      headers: { Origin: "https://licencas.guiasys.online" }
-    }),
-    firebaseEnv()
-  );
+  for (const origin of [
+    "https://licencas.guiasys.com.br",
+    "https://painel.licencas.guiasys.com.br"
+  ]) {
+    const response = await handleRequest(
+      new Request("https://licencas.guiasys.com.br/health", {
+        method: "POST",
+        headers: { Origin: origin }
+      }),
+      firebaseEnv()
+    );
 
-  assert.equal(response.status, 405);
-  assert.equal(
-    response.headers.get("Access-Control-Allow-Origin"),
-    "https://licencas.guiasys.online"
-  );
+    assert.equal(response.status, 405);
+    assert.equal(response.headers.get("Access-Control-Allow-Origin"), origin);
 
-  const body = await response.json();
-  assert.equal(body.ok, false);
-  assert.equal(body.error, "method_not_allowed");
-  assert.equal(body.details.expectedMethod, "GET");
+    const body = await response.json();
+    assert.equal(body.ok, false);
+    assert.equal(body.error, "method_not_allowed");
+    assert.equal(body.details.expectedMethod, "GET");
+  }
 });
 
 test("preflight das rotas públicas continua compatível com clientes web", async () => {
@@ -112,7 +114,7 @@ test("preflight das rotas públicas continua compatível com clientes web", asyn
 
 test("rota inexistente continua retornando 404 sem vazar detalhes internos", async () => {
   const response = await handleRequest(
-    new Request("https://licencas.guiasys.online/nao-existe"),
+    new Request("https://licencas.guiasys.com.br/nao-existe"),
     firebaseEnv()
   );
 

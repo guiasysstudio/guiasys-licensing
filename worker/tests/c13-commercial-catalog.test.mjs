@@ -147,7 +147,7 @@ function authenticatedEnv(services, uid, email) {
 }
 
 function adminRequest(path, method, body) {
-  return new Request(`https://painel.licencas.guiasys.online${path}`, {
+  return new Request(`https://painel.licencas.guiasys.com.br${path}`, {
     method,
     headers: { Authorization: "Bearer token", "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body)
@@ -175,7 +175,7 @@ test("catálogo publica somente programas e planos elegíveis, ordenados e sanit
   });
 
   const response = await handleRequest(
-    new Request("https://licencas.guiasys.online/api/v1/catalog"),
+    new Request("https://licencas.guiasys.com.br/api/v1/catalog"),
     envFor(services)
   );
   assert.equal(response.status, 200);
@@ -212,7 +212,7 @@ test("catálogo vazio retorna lista estável", async () => {
     [`projects/${PROJECT_HIDDEN}`]: project({ publicCatalog: false })
   });
   const response = await handleRequest(
-    new Request("https://licencas.guiasys.online/api/v1/catalog"),
+    new Request("https://licencas.guiasys.com.br/api/v1/catalog"),
     envFor(services)
   );
   assert.equal(response.status, 200);

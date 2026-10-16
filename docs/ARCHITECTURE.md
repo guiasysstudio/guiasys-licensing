@@ -7,7 +7,7 @@ Existe um único motor de licenciamento e múltiplos ambientes independentes. Ca
 ## Componentes
 
 ### Firebase Hosting
-Opera em arquitetura multi-site no mesmo projeto Firebase. O site `guiasys-licensing` hospeda o catálogo comercial e funciona como gateway público da API GSL-v1 em `licencas.guiasys.online`; o site `guiasys-licensing-admin` hospeda o painel em `painel.licencas.guiasys.online`. O painel é preparado em `.hosting-admin-dist/`; o frontend público isolado é preparado em `.hosting-public-dist/`. Ambos reescrevem `/api/**` e `/health` para a Function `licensingApi`.
+Opera em arquitetura multi-site no mesmo projeto Firebase. O site `guiasys-licensing` hospeda o catálogo comercial e funciona como gateway público da API GSL-v1 em `licencas.guiasys.com.br`; o site `guiasys-licensing-admin` hospeda o painel em `painel.licencas.guiasys.com.br`. O painel é preparado em `.hosting-admin-dist/`; o frontend público isolado é preparado em `.hosting-public-dist/`. Ambos reescrevem `/api/**` e `/health` para a Function `licensingApi`.
 
 ### Firebase Authentication
 Autentica o administrador usando Google ou e-mail/senha. O Firebase ID Token é enviado ao backend.
@@ -94,7 +94,7 @@ O site em `public/` usa DOM seguro (`textContent`/`createElement`), restringe im
 
 O contrato público atual é `GSL-v1`.
 
-A API base entregue aos produtos integrados é `https://licencas.guiasys.online`. O painel administrativo continua usando `window.location.origin` em `painel.licencas.guiasys.online`. Isso separa o endereço público de integração do endereço administrativo.
+A API base entregue aos produtos integrados é `https://licencas.guiasys.com.br`. O painel administrativo continua usando `window.location.origin` em `painel.licencas.guiasys.com.br`. Isso separa o endereço público de integração do endereço administrativo.
 
 Um projeto cliente conhece somente:
 
@@ -185,9 +185,9 @@ O target `admin` publica somente `index.html` e `assets/`, preparados por script
 
 Os rewrites `/api/**` e `/health` apontam para `licensingApi` em `southamerica-east1` sem `pinTag`. Functions e Hosting são implantados separadamente para que o Hosting não precise modificar tags/tráfego do serviço Cloud Run durante a finalização. O path e a query originais são preservados pelo Hosting ao encaminhar a requisição.
 
-O domínio `painel.licencas.guiasys.online` deve ser conectado ao site `guiasys-licensing-admin` somente depois do smoke test em `guiasys-licensing-admin.web.app`. O domínio `licencas.guiasys.online` permanece reservado ao portal público. O antigo `CNAME` de GitHub Pages não faz mais parte do repositório.
+O domínio `painel.licencas.guiasys.com.br` deve ser conectado ao site `guiasys-licensing-admin` somente depois do smoke test em `guiasys-licensing-admin.web.app`. O domínio `licencas.guiasys.com.br` permanece reservado ao portal público. O antigo `CNAME` de GitHub Pages não faz mais parte do repositório.
 
-Durante a janela de migração, Cloudflare pode permanecer online para rollback operacional, mas não é mais referência do frontend nem da documentação de integração.
+O Cloudflare permanece como provedor DNS dos domínios oficiais, sem aliases de produção legados.
 
 
 ## Fluxo de versionamento e deploy

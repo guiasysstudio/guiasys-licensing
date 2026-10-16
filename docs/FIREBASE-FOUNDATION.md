@@ -28,8 +28,8 @@ O runtime Firebase usa as credenciais nativas da service account da Function. N�
 
 Targets versionados em `.firebaserc`:
 
-- `public` -> `guiasys-licensing`, catálogo comercial e gateway público GSL-v1 em `licencas.guiasys.online`;
-- `admin` -> `guiasys-licensing-admin`, painel em `painel.licencas.guiasys.online`.
+- `public` -> `guiasys-licensing`, catálogo comercial e gateway público GSL-v1 em `licencas.guiasys.com.br`;
+- `admin` -> `guiasys-licensing-admin`, painel em `painel.licencas.guiasys.com.br`.
 
 O target `public` publica o staging `.hosting-public-dist/`, gerado exclusivamente de `public/index.html`, `public/404.html` e `public/assets/`, e encaminha `/api/**` e `/health` para a Function. Nenhum artefato administrativo é publicado nesse site.
 
@@ -104,8 +104,8 @@ GitHub Actions não realiza deploy de produção. A implantação é feita pela 
 
 Domínios de produção:
 
-- portal público reservado: `https://licencas.guiasys.online`
-- painel administrativo: `https://painel.licencas.guiasys.online`
+- portal público reservado: `https://licencas.guiasys.com.br`
+- painel administrativo: `https://painel.licencas.guiasys.com.br`
 
 ## Fundacao comercial C14-A
 

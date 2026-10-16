@@ -87,7 +87,7 @@ test("Hosting aplica headers de cache e hardening", () => {
 });
 
 test("origens administrativas incluem o novo Hosting e subdomínio do painel", () => {
-  assert.match(backend, /https:\/\/painel\.licencas\.guiasys\.online/);
+  assert.match(backend, /https:\/\/painel\.licencas\.guiasys\.com\.br/);
   assert.match(backend, /https:\/\/guiasys-licensing-admin\.web\.app/);
   assert.match(backend, /https:\/\/guiasys-licensing-admin\.firebaseapp\.com/);
 });

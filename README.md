@@ -41,19 +41,24 @@ Firebase Auth + Cloud Firestore
 - Function: `licensingApi`
 - Região: `southamerica-east1`
 - Node.js: 22
-- Portal público reservado: `https://licencas.guiasys.online`
-- Painel administrativo: `https://painel.licencas.guiasys.online`
+- Portal público reservado: `https://licencas.guiasys.com.br`
+- Painel administrativo: `https://painel.licencas.guiasys.com.br`
 - Hosting admin Firebase: `https://guiasys-licensing-admin.web.app`
 - Protocolo dos clientes: `GSL-v1`
 
-O navegador nunca recebe credencial administrativa do Firestore. As Security Rules continuam deny-all para clientes e toda operação privilegiada passa pela Function.
+O navegador nunca recebe credencial administrativa do Firestore. As coleções do Licensing continuam deny-all para clientes e toda operação privilegiada passa pela Function.
+
+As exceções diretas são exclusivamente os namespaces do site institucional preparados na C01:
+`studioAdmins`, `studioProfiles`, `studioProjects` e `studioContactMessages`. As coleções do Licensing,
+incluindo `projects`, `customerAccounts`, `admins` e `adminUids`, continuam inacessíveis diretamente ao navegador.
 
 ## Firebase Hosting
 
 O projeto usa arquitetura multi-site:
 
-- target `public` -> site `guiasys-licensing`, catálogo público e gateway da API GSL-v1 em `licencas.guiasys.online`;
-- target `admin` -> site `guiasys-licensing-admin`, dedicado ao painel administrativo em `painel.licencas.guiasys.online`.
+- target `public` -> site `guiasys-licensing`, catálogo público e gateway da API GSL-v1 em `licencas.guiasys.com.br`;
+- target `admin` -> site `guiasys-licensing-admin`, dedicado ao painel administrativo em `painel.licencas.guiasys.com.br`.
+- target `studio` -> site `guiasys-studio-e1ea8`, mantido no repositório separado `guiasysstudio/GuiaSys`.
 
 O target `public` publica somente o frontend comercial em `public/`. Ele consome `GET /api/v1/catalog` pelo mesmo origin, mantém os rewrites `/api/**` e `/health` e nunca inclui os assets do painel administrativo.
 
@@ -234,8 +239,8 @@ Antes do primeiro deploy ao vivo:
 5. validar `/health` e login;
 6. publicar e validar o site administrativo `guiasys-licensing-admin.web.app`;
 7. publicar o target `public` como gateway da API e validar `guiasys-licensing.web.app/health`;
-8. conectar `painel.licencas.guiasys.online` ao target admin;
-9. conectar `licencas.guiasys.online` ao target public e validar `/health` + `/api/v1/catalog`;
+8. conectar `painel.licencas.guiasys.com.br` ao target admin;
+9. conectar `licencas.guiasys.com.br` ao target public e validar `/health` + `/api/v1/catalog`;
 10. manter o Worker antigo disponível somente durante a janela de rollback.
 
 Com Firebase CLI autenticada localmente:

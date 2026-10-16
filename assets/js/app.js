@@ -25,7 +25,7 @@ const firebaseConfig = {
 };
 
 const API_BASE = window.location.origin;
-const PUBLIC_API_BASE = "https://licencas.guiasys.online";
+const PUBLIC_API_BASE = "https://licencas.guiasys.com.br";
 const PANEL_VERSION = "0.17.0";
 const PROTOCOL_VERSION = "GSL-v1";
 
