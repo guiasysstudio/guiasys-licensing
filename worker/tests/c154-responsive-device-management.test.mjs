@@ -8,6 +8,8 @@ import { handleRequest } from "../src/index.js";
 const PROJECT = "prj_aaaaaaaaaaaaaaaaaaaa";
 const LICENSE_A = "lic_aaaaaaaaaaaaaaaaaaaa";
 const LICENSE_B = "lic_bbbbbbbbbbbbbbbbbbbb";
+const LICENSE_LEGACY = "lic_cccccccccccccccccccc";
+const LICENSE_PENDING = "lic_dddddddddddddddddddd";
 const CUSTOMER_A = "cus_aaaaaaaaaaaaaaaaaaaa";
 const CUSTOMER_B = "cus_bbbbbbbbbbbbbbbbbbbb";
 const DEVICE_A = createHash("sha256").update("DEVICE-A-C15.4").digest("hex");
@@ -190,11 +192,91 @@ test("ownership nega licença alheia, inexistente, device de outra licença e de
   assert.equal(services.store.get(`projects/${PROJECT}/devices/${DEVICE_OTHER_CUSTOMER}`).active, true);
 });
 
+test("licença administrativa legada é recuperada pelo e-mail verificado e aparece no painel", async () => {
+  const { services, accountA } = fixture();
+  services.store.set(`projects/${PROJECT}/customers/${CUSTOMER_A}`, {
+    name: "Cliente A",
+    email: "a@example.com",
+    status: "active",
+    createdAt: "2026-10-01T00:00:00.000Z"
+  });
+  services.store.set(`projects/${PROJECT}/licenses/${LICENSE_LEGACY}`, {
+    key: "GPL-CCCCC-DDDDD-EEEEE-FFFFF",
+    customerId: CUSTOMER_A,
+    planId: "plan_cccccccccccccccccccc",
+    planName: "Cortesia",
+    source: "admin",
+    status: "pending",
+    startMode: "first_activation",
+    lifetime: true,
+    maxDevices: 1,
+    createdAt: "2026-10-10T00:00:00.000Z"
+  });
+
+  const response = await handleRequest(request("/api/v1/customer/licenses"), env(services));
+  assert.equal(response.status, 200);
+  const licenses = (await response.json()).licenses;
+  const legacy = licenses.find(item => item.licenseId === LICENSE_LEGACY);
+  assert.equal(legacy.source, "admin");
+  assert.equal(legacy.orderId, null);
+  assert.equal(services.store.get(`projects/${PROJECT}/licenses/${LICENSE_LEGACY}`).accountId, accountA.accountId);
+  assert.equal(
+    services.store.get(`customerAccounts/${accountA.accountId}/licenses/${LICENSE_LEGACY}`).source,
+    "admin"
+  );
+  assert.equal(
+    services.store.get(`customerAccounts/${accountA.accountId}/state/adminLicenseClaims`).version,
+    1
+  );
+});
+
+test("atribuição administrativa pendente continua sendo assumida após a varredura legada", async () => {
+  const { services, accountA } = fixture();
+  services.store.set(`customerAccounts/${accountA.accountId}/state/adminLicenseClaims`, {
+    version: 1,
+    scannedAt: "2026-10-15T00:00:00.000Z"
+  });
+  services.store.set(`projects/${PROJECT}/customers/${CUSTOMER_A}`, {
+    name: "Cliente A",
+    email: "a@example.com",
+    status: "active"
+  });
+  services.store.set(`projects/${PROJECT}/licenses/${LICENSE_PENDING}`, {
+    key: "GPL-DDDDD-EEEEE-FFFFF-GGGGG",
+    customerId: CUSTOMER_A,
+    planId: "plan_dddddddddddddddddddd",
+    planName: "Presente",
+    source: "admin",
+    status: "pending",
+    startMode: "first_activation",
+    lifetime: false,
+    maxDevices: 1,
+    createdAt: "2026-10-16T00:00:00.000Z"
+  });
+  const pendingPath = `customerLicenseAssignments/${sha("a@example.com")}/licenses/${LICENSE_PENDING}`;
+  services.store.set(pendingPath, {
+    licenseId: LICENSE_PENDING,
+    projectId: PROJECT,
+    customerId: CUSTOMER_A,
+    source: "admin",
+    createdAt: "2026-10-16T00:00:00.000Z"
+  });
+
+  const response = await handleRequest(request("/api/v1/customer/licenses"), env(services));
+  assert.equal(response.status, 200);
+  const licenses = (await response.json()).licenses;
+  assert.ok(licenses.some(item => item.licenseId === LICENSE_PENDING));
+  assert.equal(services.store.has(pendingPath), false);
+  assert.equal(services.store.get(`projects/${PROJECT}/licenses/${LICENSE_PENDING}`).accountId, accountA.accountId);
+});
+
 test("portal renderiza licenças, estados, datas, devices e confirmação sem expor hash visualmente", async () => {
   const js = await readFile(new URL("../../public/assets/catalog.js", import.meta.url), "utf8");
   const css = await readFile(new URL("../../public/assets/catalog.css", import.meta.url), "utf8");
   assert.match(js, /pending:"Pendente", active:"Ativa", suspended:"Suspensa", expired:"Expirada", revoked:"Revogada"/);
   assert.match(js, /Validade inicia na primeira ativação/);
+  assert.match(js, /Concedida pela GuiaSys/);
+  assert.match(js, /license\.source === "admin"/);
   assert.match(js, /Math\.max\(0, Math\.ceil/);
   assert.match(js, /Nenhum dispositivo vinculado/);
   assert.match(js, /device\.maskedDeviceId/);

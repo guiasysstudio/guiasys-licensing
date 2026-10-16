@@ -563,6 +563,75 @@ test("emissão personalizada temporária não converte duração zero em fallbac
   );
 });
 
+test("emissão administrativa cria ownership para conta vinculada e fila segura para conta futura", async () => {
+  const linkedCustomerId = "cus_11111111111111111111";
+  const pendingCustomerId = "cus_22222222222222222222";
+  const linkedAccountId = "acct_11111111111111111111";
+  const linkedUid = "customer-linked-uid";
+  const pendingEmail = "futuro@example.com";
+  const services = memoryServices({
+    [`projects/${PROJECT_ID}`]: {
+      name: "Projeto Teste",
+      prefix: "GSS",
+      status: "active"
+    },
+    [`projects/${PROJECT_ID}/customers/${linkedCustomerId}`]: {
+      name: "Cliente vinculado",
+      email: "vinculado@example.com",
+      accountId: linkedAccountId,
+      status: "active"
+    },
+    [`projects/${PROJECT_ID}/customers/${pendingCustomerId}`]: {
+      name: "Cliente futuro",
+      email: pendingEmail,
+      status: "active"
+    },
+    [`customerAccounts/${linkedAccountId}`]: {
+      accountId: linkedAccountId,
+      firebaseUid: linkedUid,
+      email: "vinculado@example.com",
+      status: "active"
+    }
+  });
+  const env = authenticatedEnv(services);
+  const payload = customerId => ({
+    customerId,
+    planName: "Concedida",
+    lifetime: true,
+    durationDays: 0,
+    maxDevices: 1,
+    startMode: "first_activation"
+  });
+
+  const linkedResponse = await handleRequest(
+    jsonRequest(`/api/v1/admin/projects/${PROJECT_ID}/licenses`, "POST", payload(linkedCustomerId)),
+    env
+  );
+  assert.equal(linkedResponse.status, 201);
+  const linkedLicense = (await linkedResponse.json()).license;
+  assert.equal(linkedLicense.accountId, linkedAccountId);
+  assert.equal(linkedLicense.customerUid, linkedUid);
+  assert.equal(
+    services.store.get(`customerAccounts/${linkedAccountId}/licenses/${linkedLicense.id}`).source,
+    "admin"
+  );
+  assert.equal(
+    services.store.get(`customerAccounts/${linkedAccountId}/projectCustomers/${PROJECT_ID}`).customerId,
+    linkedCustomerId
+  );
+
+  const pendingResponse = await handleRequest(
+    jsonRequest(`/api/v1/admin/projects/${PROJECT_ID}/licenses`, "POST", payload(pendingCustomerId)),
+    env
+  );
+  assert.equal(pendingResponse.status, 201);
+  const pendingLicense = (await pendingResponse.json()).license;
+  assert.equal(pendingLicense.accountId, "");
+  const pendingPath = `customerLicenseAssignments/${sha256(pendingEmail)}/licenses/${pendingLicense.id}`;
+  assert.equal(services.store.get(pendingPath).customerId, pendingCustomerId);
+  assert.equal(services.store.get(pendingPath).source, "admin");
+});
+
 
 test("origem web não autorizada é recusada antes de qualquer migração do projeto", async () => {
   const services = memoryServices({

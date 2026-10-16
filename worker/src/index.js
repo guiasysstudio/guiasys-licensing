@@ -1938,6 +1938,99 @@ async function createCustomer(env, projectId, body, admin) {
   });
 }
 
+function normalizedCustomerEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+async function resolveAdminLicenseOwnerInTransaction(tx, projectId, customerId, customer, now) {
+  const accountId = String(customer.accountId || "").trim();
+  if (!accountId) return null;
+
+  const account = await tx.get(`customerAccounts/${assertSafePathSegment(accountId, "accountId")}`);
+  if (!account || account.firebaseUid == null) {
+    throw Object.assign(new Error("O vínculo do cliente aponta para uma conta inexistente."), {
+      status: 409,
+      reason: "customer_account_orphan"
+    });
+  }
+
+  const customerEmail = normalizedCustomerEmail(customer.email);
+  const accountEmail = normalizedCustomerEmail(account.email);
+  if (!customerEmail || customerEmail !== accountEmail) {
+    throw Object.assign(new Error("O e-mail do cliente não corresponde à conta vinculada."), {
+      status: 409,
+      reason: "customer_account_email_mismatch"
+    });
+  }
+
+  const mappingPath = `customerAccounts/${accountId}/projectCustomers/${projectId}`;
+  const mapping = await tx.get(mappingPath);
+  if (mapping && mapping.customerId !== customerId) {
+    throw Object.assign(new Error("A conta já está vinculada a outro cliente deste projeto."), {
+      status: 409,
+      reason: "customer_mapping_inconsistent"
+    });
+  }
+
+  const customerPath = `${entityPath(projectId, "customers")}/${customerId}`;
+  const nextCustomer = {
+    ...customer,
+    accountId,
+    customerUid: account.firebaseUid,
+    updatedAt: now
+  };
+  delete nextCustomer.id;
+  tx.set(customerPath, nextCustomer);
+  if (!mapping) {
+    tx.create(mappingPath, {
+      projectId,
+      customerId,
+      createdAt: now,
+      updatedAt: now
+    });
+  }
+
+  return { id: accountId, ...account };
+}
+
+async function queueAdminLicenseOwnershipInTransaction({
+  tx,
+  projectId,
+  customerId,
+  customer,
+  owner,
+  licenseId,
+  planId,
+  source,
+  createdAt
+}) {
+  if (owner) {
+    tx.create(`customerAccounts/${owner.id}/licenses/${licenseId}`, {
+      licenseId,
+      projectId,
+      planId: planId || "",
+      customerId,
+      customerUid: owner.firebaseUid,
+      accountId: owner.id,
+      source,
+      createdAt
+    });
+    return;
+  }
+
+  const email = normalizedCustomerEmail(customer.email);
+  if (!email) return;
+  const emailHash = await sha256Hex(email);
+  tx.create(`customerLicenseAssignments/${emailHash}/licenses/${licenseId}`, {
+    licenseId,
+    projectId,
+    planId: planId || "",
+    customerId,
+    source,
+    createdAt
+  });
+}
+
 async function createLicense(env, projectId, body, admin) {
   body = validateLicenseCreatePayload(body);
   const customerId = assertEntityId("customers", body.customerId);
@@ -2041,6 +2134,13 @@ async function createLicense(env, projectId, body, admin) {
 
     const id = randomId("lic");
     const createdAt = nowIso();
+    const owner = await resolveAdminLicenseOwnerInTransaction(
+      tx,
+      projectId,
+      customerId,
+      customer,
+      createdAt
+    );
     const selectedPlan = plan || {
       id: "",
       name: String(body.planName || "Personalizada"),
@@ -2059,6 +2159,8 @@ async function createLicense(env, projectId, body, admin) {
       now: createdAt,
       source: String(body.source || "admin"),
       externalOrderId: String(body.externalOrderId || ""),
+      accountId: owner?.id || "",
+      customerUid: owner?.firebaseUid || "",
       notes: body.notes,
       id,
       key: generateLicenseKey(project.prefix),
@@ -2066,6 +2168,18 @@ async function createLicense(env, projectId, body, admin) {
       plusDays,
       queueLog: queueLogInTransaction,
       actor: admin?.email || admin?.uid || "admin"
+    });
+
+    await queueAdminLicenseOwnershipInTransaction({
+      tx,
+      projectId,
+      customerId,
+      customer,
+      owner,
+      licenseId: id,
+      planId: selectedPlan.id || "",
+      source: result.source,
+      createdAt
     });
 
     if (idempotencyPath) {
@@ -4358,6 +4472,159 @@ function customerDeviceView(device) {
   };
 }
 
+async function claimLicenseForCustomerAccount(env, account, candidate, pendingPath = "") {
+  const projectId = assertProjectId(candidate.projectId);
+  const customerId = assertEntityId("customers", candidate.customerId);
+  const licenseId = assertEntityId("licenses", candidate.licenseId || candidate.id);
+  const accountEmail = normalizedCustomerEmail(account.email);
+  if (!accountEmail) return false;
+
+  return await atomicClient(env).runTransaction(async tx => {
+    const accountPath = `customerAccounts/${account.id}`;
+    const customerPath = `projects/${projectId}/customers/${customerId}`;
+    const licensePath = `projects/${projectId}/licenses/${licenseId}`;
+    const mappingPath = `customerAccounts/${account.id}/projectCustomers/${projectId}`;
+    const ownershipPath = `customerAccounts/${account.id}/licenses/${licenseId}`;
+
+    const storedAccount = await tx.get(accountPath);
+    const customer = await tx.get(customerPath);
+    const license = await tx.get(licensePath);
+    const mapping = await tx.get(mappingPath);
+    const ownership = await tx.get(ownershipPath);
+
+    if (
+      !storedAccount ||
+      storedAccount.firebaseUid !== account.firebaseUid ||
+      normalizedCustomerEmail(storedAccount.email) !== accountEmail ||
+      !customer ||
+      normalizedCustomerEmail(customer.email) !== accountEmail ||
+      !license ||
+      license.customerId !== customerId
+    ) {
+      return false;
+    }
+    if (candidate.customerEmail && normalizedCustomerEmail(candidate.customerEmail) !== accountEmail) {
+      return false;
+    }
+    if (customer.accountId && customer.accountId !== account.id) return false;
+    if (license.accountId && license.accountId !== account.id) return false;
+    if (mapping && mapping.customerId !== customerId) return false;
+    if (ownership && (
+      ownership.projectId !== projectId ||
+      (ownership.customerId && ownership.customerId !== customerId)
+    )) return false;
+
+    const now = nowIso();
+    const nextCustomer = {
+      ...customer,
+      accountId: account.id,
+      customerUid: account.firebaseUid,
+      updatedAt: now
+    };
+    const nextLicense = {
+      ...license,
+      accountId: account.id,
+      customerUid: account.firebaseUid,
+      updatedAt: now
+    };
+    delete nextCustomer.id;
+    delete nextLicense.id;
+    tx.set(customerPath, nextCustomer);
+    tx.set(licensePath, nextLicense);
+    if (!mapping) {
+      tx.create(mappingPath, {
+        projectId,
+        customerId,
+        createdAt: now,
+        updatedAt: now
+      });
+    }
+    if (!ownership) {
+      tx.create(ownershipPath, {
+        licenseId,
+        projectId,
+        planId: license.planId || candidate.planId || "",
+        customerId,
+        customerUid: account.firebaseUid,
+        accountId: account.id,
+        source: license.source || candidate.source || "admin",
+        createdAt: license.createdAt || candidate.createdAt || now
+      });
+    }
+    if (pendingPath) tx.delete(pendingPath);
+    return true;
+  });
+}
+
+async function claimIssuedLicensesForCustomer(env, account) {
+  const email = normalizedCustomerEmail(account.email);
+  if (!email || !account.emailVerified) return;
+
+  let claimed = 0;
+  const emailHash = await sha256Hex(email);
+  const pendingBase = `customerLicenseAssignments/${emailHash}/licenses`;
+  const pending = await listCollection(env, pendingBase);
+  for (const assignment of pending.slice(0, 200)) {
+    try {
+      if (await claimLicenseForCustomerAccount(
+        env,
+        account,
+        assignment,
+        `${pendingBase}/${assertEntityId("licenses", assignment.licenseId || assignment.id)}`
+      )) claimed += 1;
+    } catch (error) {
+      env.__services?.log?.("warn", "customer.license_assignment_failed", {
+        accountId: account.id,
+        reason: error?.reason || error?.message || "unknown_error"
+      });
+    }
+  }
+
+  const markerPath = `customerAccounts/${account.id}/state/adminLicenseClaims`;
+  const marker = await getDoc(env, markerPath);
+  if (Number(marker?.version || 0) >= 1) return;
+
+  const projects = await listCollection(env, "projects");
+  let completeScan = projects.length <= 100;
+  for (const project of projects.slice(0, 100)) {
+    const projectId = assertProjectId(project.id);
+    const customers = await listCollection(env, `projects/${projectId}/customers`);
+    for (const customer of customers.filter(item => normalizedCustomerEmail(item.email) === email)) {
+      const customerId = assertEntityId("customers", customer.id);
+      const licenses = await listCollection(env, `projects/${projectId}/licenses`);
+      const customerLicenses = licenses.filter(item => item.customerId === customerId);
+      if (customerLicenses.length > 200) completeScan = false;
+      for (const license of customerLicenses.slice(0, 200)) {
+        try {
+          if (await claimLicenseForCustomerAccount(env, account, {
+            ...license,
+            licenseId: license.id,
+            projectId,
+            customerId,
+            customerEmail: email
+          })) claimed += 1;
+        } catch (error) {
+          env.__services?.log?.("warn", "customer.legacy_license_claim_failed", {
+            accountId: account.id,
+            projectId,
+            reason: error?.reason || error?.message || "unknown_error"
+          });
+        }
+      }
+    }
+  }
+
+  if (completeScan) {
+    await atomicClient(env).runTransaction(async tx => {
+      tx.set(markerPath, {
+        version: 1,
+        claimed,
+        scannedAt: nowIso()
+      });
+    });
+  }
+}
+
 function customerLicenseView(project, license, devices = []) {
   const normalized = normalizeLicenseStatus(license);
   return {
@@ -4375,6 +4642,7 @@ function customerLicenseView(project, license, devices = []) {
     createdAt: normalized.createdAt || null,
     activatedAt: normalized.activatedAt || null,
     expiresAt: normalized.expiresAt || null,
+    source: normalized.source || null,
     orderId: normalized.orderId || null,
     orderItemId: normalized.orderItemId || null,
     devices: devices
@@ -4782,6 +5050,7 @@ async function handleCustomer(request, env, origin, url, user) {
     }
   }
   if (parts.length === 1 && parts[0] === "licenses" && request.method === "GET") {
+    await claimIssuedLicensesForCustomer(env, account);
     return json({ ok: true, licenses: await listOwnedLicenses(env, account.id) }, 200, origin);
   }
   if (

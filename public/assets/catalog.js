@@ -967,6 +967,14 @@ function licensePurchaseDetails(license, order) {
   ];
 }
 
+function licenseOriginDetails(license) {
+  if (license.orderId) return [];
+  return [[
+    "Origem",
+    license.source === "admin" ? "Concedida pela GuiaSys" : "Emitida pela GuiaSys"
+  ]];
+}
+
 function licenseValidityDetails(license) {
   const activatedAt = validDate(license.activatedAt);
   const expiresAt = validDate(license.expiresAt);
@@ -1022,6 +1030,7 @@ function licenseCard(license, ordersById) {
   const metadata = el("dl", "license-meta-grid");
   appendLicenseDetails(metadata, [
     ...licenseValidityDetails(license),
+    ...licenseOriginDetails(license),
     ...licensePurchaseDetails(license, ordersById.get(license.orderId))
   ]);
 
