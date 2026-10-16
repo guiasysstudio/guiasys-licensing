@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.1 — 2026-10-16
+
+- Isola o envio das configurações de projeto para impedir rejeições assíncronas não tratadas.
+- Traduz erros de permissão do Firebase e exibe o identificador seguro da solicitação da API.
+- Garante por regressão a persistência dos campos comerciais com `manageProjectSettings`.
+
 ## 0.18.0 — 2026-10-06
 
 ### C14-C — checkout PIX manual

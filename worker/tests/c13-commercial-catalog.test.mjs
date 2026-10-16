@@ -281,6 +281,68 @@ test("RBAC bloqueia alterações comerciais de programa e plano", async () => {
   assert.equal((await planResponse.json()).error, "permission_denied");
 });
 
+test("manageProjectSettings persiste todos os campos comerciais sem depender das regras do cliente", async () => {
+  const uid = "uid-project-settings-editor";
+  const email = "settings-editor@example.com";
+  const adminId = sha256(email);
+  const services = memoryServices({
+    [`adminUids/${sha256(uid)}`]: { adminId },
+    [`admins/${adminId}`]: {
+      email,
+      status: "active",
+      allProjects: false,
+      projectIds: [PROJECT_A],
+      permissions: { manageProjectSettings: true },
+      firebaseUid: uid
+    },
+    [`projects/${PROJECT_A}`]: project()
+  });
+  const env = authenticatedEnv(services, uid, email);
+  const commercial = {
+    name: "GuiaPlay",
+    slug: "guiaplay",
+    prefix: "GPL",
+    status: "active",
+    shortDescription: "Descrição curta atualizada",
+    tagline: "Mídia organizada em um só lugar",
+    description: "Descrição técnica atualizada",
+    fullDescription: "Descrição comercial completa do GuiaPlay.",
+    commercialText: "Texto comercial complementar.",
+    additionalInfo: "Informações adicionais do produto.",
+    features: ["Recurso um", "Recurso dois"],
+    requirements: ["Windows 10 ou superior", "Conexão para ativação"],
+    seoTitle: "GuiaPlay — player multimídia",
+    seoDescription: "Organize e reproduza sua biblioteca multimídia com o GuiaPlay.",
+    featured: true,
+    featuredOrder: 2,
+    catalogOrder: 3,
+    allowedOrigins: ["https://guiaplay.guiasys.com.br"],
+    offlineDays: 7,
+    validationHours: 24,
+    logoUrl: "",
+    iconUrl: "",
+    bannerUrl: "",
+    screenshots: []
+  };
+
+  const response = await handleRequest(
+    adminRequest(`/api/v1/admin/projects/${PROJECT_A}`, "PATCH", commercial),
+    env
+  );
+  assert.equal(response.status, 200);
+  const saved = services.store.get(`projects/${PROJECT_A}`);
+  for (const field of [
+    "shortDescription", "tagline", "description", "fullDescription", "commercialText",
+    "additionalInfo", "features", "requirements", "seoTitle", "seoDescription",
+    "featured", "featuredOrder", "catalogOrder", "allowedOrigins", "offlineDays",
+    "validationHours"
+  ]) {
+    assert.deepEqual(saved[field], commercial[field], `campo não persistido: ${field}`);
+  }
+  assert.equal(saved.integrationCode, "GSLI-ABCD-EFGH-JKLM");
+  assert.deepEqual(saved.signingPrivateJwk, { d: "nunca-vazar" });
+});
+
 test("frontend público cobre carregamento, vazio, erro, CTA e renderização anti-XSS", async () => {
   const html = await readFile(new URL("../../public/index.html", import.meta.url), "utf8");
   const app = await readFile(new URL("../../public/assets/catalog.js", import.meta.url), "utf8");

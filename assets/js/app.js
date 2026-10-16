@@ -27,7 +27,7 @@ const firebaseConfig = {
 
 const API_BASE = window.location.origin;
 const PUBLIC_API_BASE = "https://licencas.guiasys.com.br";
-const PANEL_VERSION = "0.18.0";
+const PANEL_VERSION = "0.18.1";
 const PROTOCOL_VERSION = "GSL-v1";
 
 const firebaseApp = initializeApp(firebaseConfig);
@@ -680,10 +680,23 @@ async function fetchWithClientTimeout(url, options = {}, timeoutMs = API_TIMEOUT
 }
 
 function clientErrorMessage(error) {
+  const code = String(error?.code || "").toLowerCase();
+  const message = String(error?.message || "");
+  const requestSuffix = error?.requestId ? ` Código da solicitação: ${error.requestId}.` : "";
   if (error?.code === "client_timeout") return "A API demorou demais para responder. Tente novamente.";
   if (error?.code === "network_error") return "Não foi possível conectar à API.";
   if (error?.code === "rate_limited") return "Muitas solicitações em sequência. Aguarde um pouco e tente novamente.";
-  return error?.message || "Ocorreu um erro inesperado.";
+  if (["permission_denied", "project_access_denied"].includes(code)) {
+    return `${message || "Sua conta não possui permissão para realizar esta operação."}${requestSuffix}`;
+  }
+  if (
+    code.includes("permission-denied") ||
+    code.includes("storage/unauthorized") ||
+    /missing or insufficient permissions/i.test(message)
+  ) {
+    return `O Firebase bloqueou a operação. Atualize o painel e tente novamente; se o problema continuar, confirme as permissões administrativas.${requestSuffix}`;
+  }
+  return `${message || "Ocorreu um erro inesperado."}${requestSuffix}`;
 }
 
 async function runButtonAction(button, task) {
@@ -811,6 +824,7 @@ async function api(path, options = {}, retry = true) {
     const error = new Error(data.message || `Erro HTTP ${response.status}`);
     error.status = response.status;
     error.code = data.error;
+    error.requestId = response.headers.get("X-Request-Id") || "";
 
     if (
       response.status === 401 ||
@@ -3588,18 +3602,21 @@ async function projectSettingsView() {
   const settingsForm = document.querySelector("#project-settings-form");
   bindProjectMediaUploads(settingsForm, project.id);
 
-  settingsForm.addEventListener("submit", async event => {
+  settingsForm.addEventListener("submit", event => {
     event.preventDefault();
     const form = event.currentTarget;
-    const values = Object.fromEntries(new FormData(form).entries());
-    const data = await api(`/api/v1/admin/projects/${project.id}`, {
-      method: "PATCH",
-      body: JSON.stringify(projectPayload(values, form))
+    const button = form.querySelector('button[type="submit"]');
+    runButtonAction(button, async () => {
+      const values = Object.fromEntries(new FormData(form).entries());
+      const data = await api(`/api/v1/admin/projects/${encodeURIComponent(project.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify(projectPayload(values, form))
+      });
+      state.projects[state.projects.findIndex(p => p.id === project.id)] = data.project;
+      renderProjectSwitcher();
+      invalidate(project.id);
+      toast("Configurações salvas.");
     });
-    state.projects[state.projects.findIndex(p => p.id === project.id)] = data.project;
-    renderProjectSwitcher();
-    invalidate(project.id);
-    toast("Configurações salvas.");
   });
 
   document.querySelector("#archive-project")?.addEventListener("click", event => {

@@ -254,6 +254,14 @@ test("tela Configurações vincula os quatro uploads ao projeto renderizado", ()
   for (const kind of ["logo", "icon", "banner", "screenshot"]) {
     assert.match(source.slice(source.indexOf("function projectForm(project = {})"), source.indexOf("function projectPayload")), new RegExp(`data-media-kind="${kind}"`));
   }
+  assert.match(settingsSource, /runButtonAction\(button, async \(\) =>/);
+  assert.match(settingsSource, /encodeURIComponent\(project\.id\)/);
+});
+
+test("erros de permissão do Firebase são traduzidos e a API propaga request ID", () => {
+  assert.match(source, /missing or insufficient permissions/i);
+  assert.match(source, /O Firebase bloqueou a operação/);
+  assert.match(source, /response\.headers\.get\("X-Request-Id"\)/);
 });
 
 

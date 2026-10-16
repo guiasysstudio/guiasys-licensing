@@ -10,7 +10,7 @@ O PagBank da C14-B permanece preservado, porém congelado por `PAYMENT_PROVIDER=
 
 ## Estado
 
-**Painel:** v0.18.0
+**Painel:** v0.18.1
 
 **API:** v2.1.0
 
