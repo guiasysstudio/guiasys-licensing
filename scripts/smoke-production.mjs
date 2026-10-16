@@ -1,8 +1,8 @@
 const ADMIN_BASE = String(
-  process.env.GUIASYS_ADMIN_BASE || "https://painel.licencas.guiasys.online"
+  process.env.GUIASYS_ADMIN_BASE || "https://painel.licencas.guiasys.com.br"
 ).replace(/\/$/, "");
 const PUBLIC_BASE = String(
-  process.env.GUIASYS_PUBLIC_BASE || "https://licencas.guiasys.online"
+  process.env.GUIASYS_PUBLIC_BASE || "https://licencas.guiasys.com.br"
 ).replace(/\/$/, "");
 
 function fail(message) {

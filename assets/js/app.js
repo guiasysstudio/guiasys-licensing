@@ -26,7 +26,7 @@ const firebaseConfig = {
 };
 
 const API_BASE = window.location.origin;
-const PUBLIC_API_BASE = "https://licencas.guiasys.online";
+const PUBLIC_API_BASE = "https://licencas.guiasys.com.br";
 const PANEL_VERSION = "0.18.0";
 const PROTOCOL_VERSION = "GSL-v1";
 
@@ -3939,7 +3939,7 @@ function customerNotification(order) {
     "",
     "Acesse:",
     "*Minha conta → Compras e licenças*",
-    "https://licencas.guiasys.online/conta/compras",
+    "https://licencas.guiasys.com.br/conta/compras",
     "",
     "Lá você pode visualizar e copiar sua chave de licença.",
     "",

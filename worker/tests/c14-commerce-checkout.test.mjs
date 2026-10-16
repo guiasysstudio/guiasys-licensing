@@ -63,7 +63,7 @@ function services(initial = {}) {
 
 function env(api) { return { FIREBASE_PROJECT_ID: "guiasys-licensing", ADMIN_FIREBASE_UID: "master", __services: api }; }
 function request(path, method = "GET", body) {
-  return new Request(`https://licencas.guiasys.online${path}`, { method, headers: { Authorization: "Bearer customer", ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  return new Request(`https://licencas.guiasys.com.br${path}`, { method, headers: { Authorization: "Bearer customer", ...(body ? { "Content-Type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
 }
 function baseData() {
   return {
@@ -129,10 +129,10 @@ test("conta A não consulta pedido da conta B", async () => {
 
 test("namespace do cliente limita CORS aos domínios autorizados", async () => {
   const api = services(baseData());
-  const denied = await handleRequest(new Request("https://licencas.guiasys.online/api/v1/customer/me", { method: "OPTIONS", headers: { Origin: "https://evil.example" } }), env(api));
-  const allowed = await handleRequest(new Request("https://licencas.guiasys.online/api/v1/customer/me", { method: "OPTIONS", headers: { Origin: "https://licencas.guiasys.online" } }), env(api));
+  const denied = await handleRequest(new Request("https://licencas.guiasys.com.br/api/v1/customer/me", { method: "OPTIONS", headers: { Origin: "https://evil.example" } }), env(api));
+  const allowed = await handleRequest(new Request("https://licencas.guiasys.com.br/api/v1/customer/me", { method: "OPTIONS", headers: { Origin: "https://licencas.guiasys.com.br" } }), env(api));
   assert.equal(denied.headers.get("Access-Control-Allow-Origin"), null);
-  assert.equal(allowed.headers.get("Access-Control-Allow-Origin"), "https://licencas.guiasys.online");
+  assert.equal(allowed.headers.get("Access-Control-Allow-Origin"), "https://licencas.guiasys.com.br");
 });
 
 test("fulfillment pago gera exatamente cinco keys e replay não duplica", async () => {

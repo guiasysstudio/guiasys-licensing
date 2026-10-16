@@ -79,10 +79,10 @@ const ALLOWED_ORIGINS = [
   "http://127.0.0.1:5501",
   "http://localhost:5500",
   "http://localhost:5501",
-  "https://licencas.guiasys.online",
+  "https://licencas.guiasys.com.br",
   "https://guiasys-licensing.web.app",
   "https://guiasys-licensing.firebaseapp.com",
-  "https://painel.licencas.guiasys.online",
+  "https://painel.licencas.guiasys.com.br",
   "https://guiasys-licensing-admin.web.app",
   "https://guiasys-licensing-admin.firebaseapp.com"
 ];
@@ -1515,10 +1515,10 @@ function hostedStaticImageUrl(value) {
   try {
     const url = new URL(raw);
     const allowedHosts = new Set([
-      "licencas.guiasys.online",
+      "licencas.guiasys.com.br",
       "guiasys-licensing.web.app",
       "guiasys-licensing.firebaseapp.com",
-      "painel.licencas.guiasys.online",
+      "painel.licencas.guiasys.com.br",
       "guiasys-licensing-admin.web.app",
       "guiasys-licensing-admin.firebaseapp.com"
     ]);

@@ -28,7 +28,7 @@ test("portal público apresenta linguagem comercial sem referências internas", 
 
 test("rodapé contém somente identidade, links reais e direitos autorais", () => {
   assert.match(html, /Compre e gerencie suas licenças oficiais GuiaSys em um só lugar/);
-  for (const href of ["/programas", "/conta/perfil", "/termos", "/privacidade", "mailto:suporte@guiasys.online"]) {
+  for (const href of ["/programas", "/conta/perfil", "/termos", "/privacidade", "mailto:suporte@guiasys.com.br"]) {
     assert.match(html, new RegExp(`href="${href.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
   }
   assert.match(html, /GuiaSys\. Todos os direitos reservados/);
@@ -85,6 +85,6 @@ test("WhatsApp de comprovante é curto, formatado e não inclui nome do cliente"
 test("confirmação administrativa orienta para a conta oficial", () => {
   assert.match(admin, /✅ \*Pagamento confirmado\*/);
   assert.match(admin, /\*Minha conta → Compras e licenças\*/);
-  assert.match(admin, /https:\/\/licencas\.guiasys\.online\/conta\/compras/);
+  assert.match(admin, /https:\/\/licencas\.guiasys\.com\.br\/conta\/compras/);
   assert.match(admin, /visualizar e copiar sua chave de licença/);
 });
