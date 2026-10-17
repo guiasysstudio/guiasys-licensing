@@ -263,7 +263,7 @@ export async function readJsonBody(request, maxBytes = MAX_JSON_BYTES) {
 
 export function validateProjectPayload(body, { partial = false } = {}) {
   const allowed = new Set([
-    "name", "slug", "prefix", "description", "shortDescription", "imageUrl",
+    "name", "slug", "studioProjectSlug", "prefix", "description", "shortDescription", "imageUrl",
     "logoUrl", "iconUrl", "bannerUrl", "tagline", "fullDescription",
     "screenshots", "features", "requirements", "additionalInfo", "commercialText",
     "seoTitle", "seoDescription", "status", "publicCatalog", "featured",
@@ -279,6 +279,10 @@ export function validateProjectPayload(body, { partial = false } = {}) {
     min: 1,
     max: 48,
     pattern: /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/
+  }));
+  assignIfDefined(result, "studioProjectSlug", readString(body, "studioProjectSlug", {
+    max: 80,
+    pattern: /^[a-z0-9]+(?:-[a-z0-9]+)*$/
   }));
   assignIfDefined(result, "prefix", readString(body, "prefix", {
     min: 1,
@@ -347,7 +351,7 @@ export function validatePlanPayload(body, { partial = false } = {}) {
 
 export function validateCustomerProfilePayload(body) {
   const allowed = new Set([
-    "displayName", "taxId", "phone", "postalCode", "street", "number",
+    "displayName", "taxId", "birthDate", "phone", "postalCode", "street", "number",
     "complement", "neighborhood", "city", "state"
   ]);
   allowFields(body, allowed);
@@ -357,6 +361,15 @@ export function validateCustomerProfilePayload(body) {
   if (taxId !== undefined) {
     if (!isValidCpf(taxId)) fail("Informe um CPF válido.", 400, "invalid_cpf");
     result.taxId = digits(taxId);
+  }
+  const birthDate = readString(body, "birthDate", { max: 10, pattern: /^\d{4}-\d{2}-\d{2}$/ });
+  if (birthDate !== undefined) {
+    const [year, month, day] = birthDate.split("-").map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day || year < 1900 || date > new Date()) {
+      fail("Informe uma data de nascimento válida.", 400, "invalid_birth_date");
+    }
+    result.birthDate = birthDate;
   }
   const phone = readString(body, "phone", { max: 20 });
   if (phone !== undefined) {

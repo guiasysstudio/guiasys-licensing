@@ -84,7 +84,11 @@ const ALLOWED_ORIGINS = [
   "https://guiasys-licensing.firebaseapp.com",
   "https://painel.licencas.guiasys.com.br",
   "https://guiasys-licensing-admin.web.app",
-  "https://guiasys-licensing-admin.firebaseapp.com"
+  "https://guiasys-licensing-admin.firebaseapp.com",
+  "https://guiasys.com.br",
+  "https://www.guiasys.com.br",
+  "https://guiasys-studio-e1ea8.web.app",
+  "https://guiasys-studio-e1ea8.firebaseapp.com"
 ];
 
 const ENTITY_NAMES = new Set([
@@ -3107,31 +3111,45 @@ function publicCatalogPlanView(plan) {
   };
 }
 
-function publicCatalogProjectView(project, plans) {
+function studioPublicUrl(value) {
+  try { const url = new URL(String(value || "")); return url.protocol === "https:" ? url.href : ""; } catch { return ""; }
+}
+
+function publicCatalogProjectView(project, plans, studio = null) {
   const screenshotMedia = normalizedProjectScreenshotMedia(project);
+  const studioVisible = studio?.visible === true;
+  const studioGallery = studioVisible && Array.isArray(studio.gallery)
+    ? studio.gallery.map(item => studioPublicUrl(item?.url)).filter(Boolean).slice(0, 12)
+    : [];
+  const studioShort = studioVisible ? String(studio.shortDescription || "") : "";
+  const studioFull = studioVisible ? String(studio.fullDescription || "") : "";
+  const studioLogo = studioVisible ? studioPublicUrl(studio.logoUrl) : "";
+  const studioBanner = studioVisible ? studioPublicUrl(studio.bannerUrl) : "";
   return {
     projectId: project.id,
     integrationCode: project.integrationCode,
     name: project.name,
     slug: project.slug,
     prefix: project.prefix,
-    description: project.description || "",
-    shortDescription: project.shortDescription || "",
+    description: studioShort || project.description || "",
+    shortDescription: studioShort || project.shortDescription || "",
     tagline: project.tagline || "",
-    fullDescription: project.fullDescription || project.description || "",
+    fullDescription: studioFull || project.fullDescription || project.description || "",
     commercialText: project.commercialText || "",
     additionalInfo: project.additionalInfo || "",
-    features: Array.isArray(project.features) ? project.features : [],
-    requirements: Array.isArray(project.requirements) ? project.requirements : [],
-    screenshots: screenshotMedia.screenshots
+    features: studioVisible && Array.isArray(studio.features) ? studio.features : (Array.isArray(project.features) ? project.features : []),
+    requirements: studioVisible && Array.isArray(studio.requirements) ? studio.requirements : (Array.isArray(project.requirements) ? project.requirements : []),
+    faq: studioVisible && Array.isArray(studio.faq) ? studio.faq.map(item => ({ question: String(item?.question || ""), answer: String(item?.answer || "") })).filter(item => item.question && item.answer) : [],
+    screenshots: studioGallery.length ? studioGallery : screenshotMedia.screenshots
       .map((url, index) => catalogImageUrl(project, url, screenshotMedia.screenshotStoragePaths[index]))
       .filter(Boolean),
-    imageUrl: catalogImageUrl(project, project.imageUrl, project.imageStoragePath),
-    logoUrl: catalogImageUrl(project, project.logoUrl, project.logoStoragePath) || catalogImageUrl(project, project.imageUrl, project.imageStoragePath),
+    imageUrl: studioLogo || studioBanner || catalogImageUrl(project, project.imageUrl, project.imageStoragePath),
+    logoUrl: studioLogo || catalogImageUrl(project, project.logoUrl, project.logoStoragePath) || catalogImageUrl(project, project.imageUrl, project.imageStoragePath),
     iconUrl: catalogImageUrl(project, project.iconUrl, project.iconStoragePath) || catalogImageUrl(project, project.imageUrl, project.imageStoragePath),
-    bannerUrl: catalogImageUrl(project, project.bannerUrl, project.bannerStoragePath) || catalogImageUrl(project, project.imageUrl, project.imageStoragePath),
-    seoTitle: project.seoTitle || "",
-    seoDescription: project.seoDescription || "",
+    bannerUrl: studioBanner || catalogImageUrl(project, project.bannerUrl, project.bannerStoragePath) || catalogImageUrl(project, project.imageUrl, project.imageStoragePath),
+    seoTitle: studioVisible ? String(studio.seoTitle || "") : (project.seoTitle || ""),
+    seoDescription: studioVisible ? String(studio.seoDescription || "") : (project.seoDescription || ""),
+    contentSource: studioVisible ? "studio" : "licensing-fallback",
     featured: Boolean(project.featured),
     featuredOrder: catalogNonNegativeNumber(project.featuredOrder ?? project.displayOrder),
     catalogOrder: catalogNonNegativeNumber(project.catalogOrder ?? project.displayOrder),
@@ -3151,11 +3169,13 @@ function planPublishedInCatalog(plan) {
 
 async function catalogProjectCandidate(env, project) {
   project = await ensureProjectIntegrationCode(env, project);
+  const studioSlug = project.studioProjectSlug || project.slug;
+  const studio = studioSlug ? await getDoc(env, `studioProjects/${studioSlug}`) : null;
   const plans = (await listCollection(env, `projects/${project.id}/plans`))
     .filter(plan => plan.active !== false && planPublishedInCatalog(plan))
     .map(publicCatalogPlanView)
     .sort((a, b) => compareCatalogItems(a, b));
-  return publicCatalogProjectView(project, plans);
+  return publicCatalogProjectView(project, plans, studio);
 }
 
 async function publicCatalog(env) {
@@ -3277,6 +3297,7 @@ function customerAccountView(account) {
     displayName: account.displayName || "",
     phone: account.phone || "",
     taxId: account.taxId || "",
+    birthDate: account.birthDate || "",
     postalCode: account.postalCode || "",
     street: account.street || "",
     number: account.number || "",
@@ -3417,6 +3438,7 @@ async function ensureCustomerAccount(env, user) {
   const account = await atomicClient(env).runTransaction(async tx => {
     const path = `customerAccounts/${accountId}`;
     const current = await tx.get(path);
+    const studioProfile = await tx.get(`studioProfiles/${user.uid}`);
     if (current && current.firebaseUid !== user.uid) {
       throw Object.assign(new Error("Identidade global inconsistente."), { status: 403, reason: "account_identity_mismatch" });
     }
@@ -3424,7 +3446,7 @@ async function ensureCustomerAccount(env, user) {
       throw Object.assign(new Error("Esta conta está bloqueada para compras."), { status: 403, reason: "account_blocked" });
     }
     const normalizedEmail = String(user.email).toLowerCase();
-    const displayName = current?.displayName || user.name || "";
+    const displayName = current?.displayName || studioProfile?.fullName || user.name || "";
     const normalizedCurrent = { ...current, firebaseUid: user.uid };
     const managedPhotoUrl = managedCustomerPhoto(normalizedCurrent);
     let googlePhotoUrl = managedCustomerPhoto(
@@ -3456,15 +3478,16 @@ async function ensureCustomerAccount(env, user) {
       email: normalizedEmail,
       emailVerified: Boolean(user.emailVerified),
       displayName,
-      phone: current?.phone || "",
-      taxId: current?.taxId || "",
-      postalCode: current?.postalCode || "",
-      street: current?.street || "",
-      number: current?.number || "",
-      complement: current?.complement || "",
-      neighborhood: current?.neighborhood || "",
-      city: current?.city || "",
-      state: current?.state || "",
+      phone: current?.phone || studioProfile?.phone || "",
+      taxId: current?.taxId || studioProfile?.cpf || "",
+      birthDate: current?.birthDate || studioProfile?.birthDate || "",
+      postalCode: current?.postalCode || studioProfile?.cep || "",
+      street: current?.street || studioProfile?.street || "",
+      number: current?.number || studioProfile?.number || "",
+      complement: current?.complement || studioProfile?.complement || "",
+      neighborhood: current?.neighborhood || studioProfile?.neighborhood || "",
+      city: current?.city || studioProfile?.city || "",
+      state: current?.state || studioProfile?.state || "",
       photoUrl: activePhotoUrl,
       photoStoragePath: activePhotoStoragePath,
       photoSource,

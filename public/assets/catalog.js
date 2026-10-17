@@ -461,6 +461,15 @@ async function renderProgram(slug) {
       additional.append(el("h2", "", "Informações adicionais"), el("p", "", project.additionalInfo));
       page.append(additional);
     }
+    if (Array.isArray(project.faq) && project.faq.length) {
+      const faq = el("section", "section"); faq.append(titleBlock("Dúvidas", "Perguntas frequentes"));
+      const list = el("div", "faq-list");
+      for (const item of project.faq) {
+        if (!item?.question || !item?.answer) continue;
+        const details = el("details", "panel"); details.append(el("summary", "", item.question), el("p", "", item.answer)); list.append(details);
+      }
+      faq.append(list); page.append(faq);
+    }
     if (project.screenshots.length) {
       const gallery = el("section", "section"); gallery.append(titleBlock("Interface", "Veja o programa"));
       const shots = el("div", "screenshots");
@@ -770,7 +779,8 @@ async function renderProfile() {
   const form = el("form", "form-grid"); form.noValidate = true;
   const fields = [
     ["displayName","Nome completo","text","name",true],["email","E-mail","email","email",false],
-    ["taxId","CPF","text","off",true],["phone","Telefone com DDD","tel","tel",true],
+    ["taxId","CPF","text","off",true],["birthDate","Data de nascimento","date","bday",true],
+    ["phone","Telefone com DDD","tel","tel",true],
     ["postalCode","CEP","text","postal-code",true],["street","Logradouro","text","street-address",true],
     ["number","Número","text","off",true],["complement","Complemento","text","off",false],
     ["neighborhood","Bairro","text","off",true],["city","Cidade","text","address-level2",true],

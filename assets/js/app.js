@@ -1482,6 +1482,10 @@ function projectForm(project = {}) {
         <input name="slug" maxlength="48" data-mask="slug" value="${e(project.slug || "")}" placeholder="guiaplay">
       </label>
       <label class="field">
+        ${fieldTitle("Projeto no GuiaSys Studio", "Slug do projeto que fornece descrições, recursos, requisitos, FAQ e imagens públicas.")}
+        <input name="studioProjectSlug" maxlength="80" data-mask="slug" value="${e(project.studioProjectSlug || project.slug || "")}" placeholder="guia-play">
+      </label>
+      <label class="field">
         ${fieldTitle("Status", "Projetos inativos não aceitam novas ativações de licença.")}
         <select name="status" ${project.status === "archived" ? "disabled" : ""}>
           ${project.status === "archived" ? '<option value="archived" selected>Arquivado</option>' : ""}
@@ -1510,13 +1514,14 @@ function projectForm(project = {}) {
         ${fieldTitle("Ordem de destaque", "Menores números aparecem primeiro entre os programas destacados.")}
         <input name="featuredOrder" inputmode="numeric" data-mask="integer" data-max-digits="5" value="${e(project.featuredOrder ?? project.displayOrder ?? 0)}">
       </label>
+      <div class="field field-full notice notice-info">O conteúdo público, as imagens, os recursos, os requisitos e o SEO são administrados no GuiaSys Studio e sincronizados automaticamente pelo vínculo acima.</div>
       <label class="field field-full">
         ${fieldTitle("Domínios permitidos para integração Web", "Um domínio por linha. Sites JavaScript/TypeScript só poderão chamar a API pública deste projeto a partir destas origens. Aplicativos desktop/mobile não usam esta restrição de navegador.")}
         <textarea name="allowedOrigins" rows="3" placeholder="https://app.exemplo.com&#10;https://www.exemplo.com">${e((project.allowedOrigins || []).join("\n"))}</textarea>
       </label>
-      <label class="field field-full">
+      <label class="field field-full" hidden>
         ${fieldTitle("Descrição curta do catálogo", "Resumo de até 180 caracteres exibido junto ao nome do programa.")}
-        <textarea name="shortDescription" rows="2" maxlength="180" placeholder="Resumo comercial do programa">${e(project.shortDescription || "")}</textarea>
+        <textarea name="shortDescription" rows="2" maxlength="180" disabled>${e(project.shortDescription || "")}</textarea>
       </label>
       <label class="field field-full">
         ${fieldTitle("Chamada comercial", "Frase curta exibida em destaque na página do programa.")}
@@ -1526,69 +1531,69 @@ function projectForm(project = {}) {
         ${fieldTitle("Descrição técnica", "Resumo administrativo separado do conteúdo comercial público.")}
         <textarea name="description" rows="3" maxlength="300">${e(project.description || "")}</textarea>
       </label>
-      <label class="field field-full">
+      <label class="field field-full" hidden>
         ${fieldTitle("Descrição comercial completa", "Conteúdo principal da página pública do programa.")}
-        <textarea name="fullDescription" rows="6" maxlength="12000">${e(project.fullDescription || "")}</textarea>
+        <textarea name="fullDescription" rows="6" maxlength="12000" disabled>${e(project.fullDescription || "")}</textarea>
       </label>
-      <label class="field field-full">
+      <label class="field field-full" hidden>
         ${fieldTitle("Texto comercial adicional", "Complemento institucional ou comercial exibido na página pública.")}
-        <textarea name="commercialText" rows="4" maxlength="6000">${e(project.commercialText || "")}</textarea>
+        <textarea name="commercialText" rows="4" maxlength="6000" disabled>${e(project.commercialText || "")}</textarea>
       </label>
-      <label class="field field-full">
+      <label class="field field-full" hidden>
         ${fieldTitle("Informações adicionais", "Observações públicas pertinentes ao programa.")}
-        <textarea name="additionalInfo" rows="4" maxlength="6000">${e(project.additionalInfo || "")}</textarea>
+        <textarea name="additionalInfo" rows="4" maxlength="6000" disabled>${e(project.additionalInfo || "")}</textarea>
       </label>
-      <label class="field field-full">
+      <label class="field field-full" hidden>
         ${fieldTitle("Recursos", "Um recurso por linha; serão exibidos como lista no portal.")}
-        <textarea name="features" rows="5">${e((project.features || []).join("\n"))}</textarea>
+        <textarea name="features" rows="5" disabled>${e((project.features || []).join("\n"))}</textarea>
       </label>
-      <label class="field field-full">
+      <label class="field field-full" hidden>
         ${fieldTitle("Requisitos", "Um requisito por linha; serão exibidos como lista no portal.")}
-        <textarea name="requirements" rows="5">${e((project.requirements || []).join("\n"))}</textarea>
+        <textarea name="requirements" rows="5" disabled>${e((project.requirements || []).join("\n"))}</textarea>
       </label>
-      <label class="field field-full">
+      <label class="field field-full" hidden>
         ${fieldTitle("Importar screenshots por URL", "Uma URL HTTPS por linha, no máximo 12. O backend baixa, valida e salva no Firebase Storage.")}
-        <textarea name="screenshots" rows="4">${e((project.screenshots || []).join("\n"))}</textarea>
+        <textarea name="screenshots" rows="4" disabled>${e((project.screenshots || []).join("\n"))}</textarea>
       </label>
-      <label class="field field-full">
+      <label class="field field-full" hidden>
         ${fieldTitle("Selecionar arquivos de screenshots", "JPG, PNG ou WebP de até 5 MB cada. URLs e arquivos somados aceitam no máximo 12 screenshots.")}
-        <input type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" data-media-kind="screenshot" multiple>
+        <input type="file" disabled accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" data-media-kind="screenshot" multiple>
         <small data-media-selection="screenshot">Nenhum arquivo selecionado.</small>
       </label>
-      <label class="field">
+      <label class="field" hidden>
         ${fieldTitle("Importar logo por URL", "A imagem será baixada, validada e salva no Firebase Storage.")}
-        <input name="logoUrl" type="url" maxlength="2048" value="${e(project.logoUrl || project.imageUrl || "")}">
+        <input name="logoUrl" type="url" disabled maxlength="2048" value="${e(project.logoUrl || project.imageUrl || "")}">
       </label>
-      <label class="field">
+      <label class="field" hidden>
         ${fieldTitle("Selecionar arquivo de logo", "JPG, PNG ou WebP de até 5 MB. SVG não é aceito.")}
-        <input type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" data-media-kind="logo">
+        <input type="file" disabled accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" data-media-kind="logo">
         <small data-media-selection="logo">Nenhum arquivo selecionado.</small>
       </label>
-      <label class="field">
+      <label class="field" hidden>
         ${fieldTitle("Importar ícone por URL", "A imagem será baixada, validada e salva no Firebase Storage.")}
-        <input name="iconUrl" type="url" maxlength="2048" value="${e(project.iconUrl || "")}">
+        <input name="iconUrl" type="url" disabled maxlength="2048" value="${e(project.iconUrl || "")}">
       </label>
-      <label class="field">
+      <label class="field" hidden>
         ${fieldTitle("Selecionar arquivo de ícone", "JPG, PNG ou WebP de até 5 MB. SVG não é aceito.")}
-        <input type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" data-media-kind="icon">
+        <input type="file" disabled accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" data-media-kind="icon">
         <small data-media-selection="icon">Nenhum arquivo selecionado.</small>
       </label>
-      <label class="field field-full">
+      <label class="field field-full" hidden>
         ${fieldTitle("Importar banner por URL", "A imagem será baixada, validada e salva no Firebase Storage.")}
-        <input name="bannerUrl" type="url" maxlength="2048" value="${e(project.bannerUrl || "")}">
+        <input name="bannerUrl" type="url" disabled maxlength="2048" value="${e(project.bannerUrl || "")}">
       </label>
-      <label class="field field-full">
+      <label class="field field-full" hidden>
         ${fieldTitle("Selecionar arquivo de banner", "JPG, PNG ou WebP de até 5 MB. SVG não é aceito.")}
-        <input type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" data-media-kind="banner">
+        <input type="file" disabled accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" data-media-kind="banner">
         <small data-media-selection="banner">Nenhum arquivo selecionado.</small>
       </label>
-      <label class="field">
+      <label class="field" hidden>
         ${fieldTitle("Título SEO", "Até 70 caracteres.")}
-        <input name="seoTitle" maxlength="70" value="${e(project.seoTitle || "")}">
+        <input name="seoTitle" disabled maxlength="70" value="${e(project.seoTitle || "")}">
       </label>
-      <label class="field">
+      <label class="field" hidden>
         ${fieldTitle("Descrição SEO", "Até 180 caracteres.")}
-        <input name="seoDescription" maxlength="180" value="${e(project.seoDescription || "")}">
+        <input name="seoDescription" disabled maxlength="180" value="${e(project.seoDescription || "")}">
       </label>
       <div class="field field-full" data-project-media-status hidden role="status" aria-live="polite"></div>
     </div>
@@ -1596,17 +1601,18 @@ function projectForm(project = {}) {
 }
 
 function projectPayload(values, form = null) {
-  return {
+  const payload = {
     ...values,
     featured: form ? form.elements.featured?.checked === true : Boolean(values.featured),
     catalogOrder: Math.max(0, Number(values.catalogOrder || 0)),
     featuredOrder: Math.max(0, Number(values.featuredOrder || 0)),
-    screenshots: String(values.screenshots || "").split(/\r?\n/).map(value => value.trim()).filter(Boolean),
-    features: String(values.features || "").split(/\r?\n/).map(value => value.trim()).filter(Boolean),
-    requirements: String(values.requirements || "").split(/\r?\n/).map(value => value.trim()).filter(Boolean),
     offlineDays: Number(values.offlineDays || 0),
     validationHours: Math.max(1, Number(values.validationHours || 24))
   };
+  for (const field of ["screenshots", "features", "requirements"]) {
+    if (field in values) payload[field] = String(values[field] || "").split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+  }
+  return payload;
 }
 
 const PROJECT_MEDIA_MIME_TYPES = Object.freeze({

@@ -158,14 +158,16 @@ function request(path, method = "GET", body) {
 
 async function completeProfile(api) {
   const response = await handleRequest(request("/api/v1/customer/me", "PATCH", {
-    displayName: "Nome editado C15", taxId: "529.982.247-25", phone: "(69) 99999-9999",
+    displayName: "Nome editado C15", taxId: "529.982.247-25", birthDate: "1990-05-20", phone: "(69) 99999-9999",
     postalCode: "76900-000", street: "Rua Teste", number: "100",
     complement: "", neighborhood: "Centro", city: "Ji-Paraná", state: "ro"
   }), environment(api));
   assert.equal(response.status, 200);
   assert.equal((await response.json()).account.profileComplete, true);
   const persisted = await handleRequest(request("/api/v1/customer/me"), environment(api));
-  assert.equal((await persisted.json()).account.displayName, "Nome editado C15");
+  const persistedBody = await persisted.json();
+  assert.equal(persistedBody.account.displayName, "Nome editado C15");
+  assert.equal(persistedBody.account.birthDate, "1990-05-20");
 }
 
 test("catálogo ignora booleano legado do projeto e usa publicação explícita do plano", async () => {
@@ -225,6 +227,27 @@ test("perfil incompleto bloqueia checkout e valida CPF, telefone, CEP e UF", asy
   assert.equal((await historical.json()).order.totalCents, 5000);
   assert.equal(isValidCpf("529.982.247-25"), true);
   assert.throws(() => validateCustomerProfilePayload({ taxId: "111.111.111-11" }), error => error.reason === "invalid_cpf");
+});
+
+test("perfil legado do Studio é incorporado à conta canônica sem apagar dados", async () => {
+  const uid = "customer-c15-a";
+  const api = services({
+    ...projectData(),
+    [`studioProfiles/${uid}`]: {
+      fullName: "Cliente migrado", cpf: "52998224725", birthDate: "1988-02-29",
+      phone: "69999999999", cep: "76900000", street: "Rua Legada", number: "12",
+      complement: "A", neighborhood: "Centro", city: "Ji-Paraná", state: "RO"
+    }
+  });
+  const response = await handleRequest(request("/api/v1/customer/me"), environment(api));
+  assert.equal(response.status, 200);
+  const account = (await response.json()).account;
+  assert.equal(account.displayName, "Cliente migrado");
+  assert.equal(account.birthDate, "1988-02-29");
+  assert.equal(account.profileComplete, true);
+  const accountId = `acct_${sha(uid).slice(0, 20)}`;
+  assert.equal(api.store.get(`customerAccounts/${accountId}`).street, "Rua Legada");
+  assert.equal(api.store.get(`studioProfiles/${uid}`).fullName, "Cliente migrado");
 });
 
 test("consulta de CEP valida entrada, sanitiza resposta e trata inexistente", async () => {

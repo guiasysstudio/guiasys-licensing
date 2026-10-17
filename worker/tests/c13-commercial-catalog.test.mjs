@@ -160,6 +160,7 @@ test("catálogo publica somente programas e planos elegíveis, ordenados e sanit
     [`projects/${PROJECT_B}`]: project({
       name: "Alfa",
       slug: "alfa",
+      studioProjectSlug: "alfa-studio",
       prefix: "ALF",
       imageUrl: `https://firebasestorage.googleapis.com/v0/b/guiasys-licensing.firebasestorage.app/o/${encodeURIComponent(`commerce/projects/${PROJECT_B}/logo/programa.png`)}?alt=media&token=test`,
       imageStoragePath: `commerce/projects/${PROJECT_B}/logo/programa.png`,
@@ -167,6 +168,19 @@ test("catálogo publica somente programas e planos elegíveis, ordenados e sanit
       featured: true,
       integrationCode: "GSLI-BCDE-FGHJ-KLMN"
     }),
+    "studioProjects/alfa-studio": {
+      visible: true,
+      shortDescription: "Resumo oficial do Studio",
+      fullDescription: "Descrição oficial do Studio",
+      features: ["Recurso compartilhado"],
+      requirements: ["Windows 11"],
+      faq: [{ question: "É oficial?", answer: "Sim." }],
+      logoUrl: "https://cdn.example.com/studio-logo.png",
+      bannerUrl: "https://cdn.example.com/studio-banner.png",
+      gallery: [{ url: "https://cdn.example.com/tela.png" }],
+      seoTitle: "Alfa no Studio",
+      seoDescription: "SEO compartilhado"
+    },
     [`projects/${PROJECT_HIDDEN}`]: project({ publicCatalog: false }),
     [`projects/${PROJECT_INACTIVE}`]: project({ status: "inactive" }),
     [`projects/${PROJECT_B}/plans/plan_zzzzzzzzzzzzzzzzzzzz`]: plan({ name: "Anual", price: 199.9, durationDays: 365, deviceLimit: 4, displayOrder: 20 }),
@@ -186,8 +200,12 @@ test("catálogo publica somente programas e planos elegíveis, ordenados e sanit
   assert.deepEqual(body.catalog.projects.map(item => item.projectId), [PROJECT_B, PROJECT_A]);
 
   const alfa = body.catalog.projects[0];
-  assert.equal(alfa.shortDescription, "Descrição curta");
-  assert.match(alfa.imageUrl, /^https:\/\/firebasestorage\.googleapis\.com/);
+  assert.equal(alfa.shortDescription, "Resumo oficial do Studio");
+  assert.equal(alfa.fullDescription, "Descrição oficial do Studio");
+  assert.equal(alfa.logoUrl, "https://cdn.example.com/studio-logo.png");
+  assert.deepEqual(alfa.features, ["Recurso compartilhado"]);
+  assert.deepEqual(alfa.faq, [{ question: "É oficial?", answer: "Sim." }]);
+  assert.equal(alfa.contentSource, "studio");
   assert.equal(alfa.featured, true);
   assert.equal(body.catalog.projects[1].imageUrl, "");
   assert.deepEqual(alfa.plans.map(item => item.name), ["Vitalícia", "Anual"]);
