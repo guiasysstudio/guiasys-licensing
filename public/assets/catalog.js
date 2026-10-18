@@ -56,7 +56,7 @@ function safeHttpsUrl(value) {
     const match = url.pathname.match(/^\/v0\/b\/([^/]+)\/o\/(.+)$/);
     if (!match || !["guiasys-licensing.firebasestorage.app", "guiasys-licensing.appspot.com"].includes(decodeURIComponent(match[1]))) return "";
     const objectPath = decodeURIComponent(match[2]);
-    if (!/^(?:commerce\/projects\/prj_[a-f0-9]{20}\/(?:logo|icon|banner|screenshot)|profiles\/[A-Za-z0-9_-]+)\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(objectPath)) return "";
+    if (!/^(?:commerce\/projects\/prj_[a-f0-9]{20}\/(?:logo|icon|banner|screenshot)|studio-projects\/[a-z0-9]+(?:-[a-z0-9]+)*\/(?:logo|banner|gallery)|profiles\/[A-Za-z0-9_-]+)\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(objectPath)) return "";
     return url.searchParams.get("alt") === "media" && url.searchParams.get("token") ? url.href : "";
   } catch { return ""; }
 }

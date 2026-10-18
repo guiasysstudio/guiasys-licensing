@@ -380,6 +380,8 @@ test("frontend público cobre carregamento, vazio, erro, CTA e renderização an
   assert.match(app, /url\.protocol !== "https:"/);
   assert.match(app, /url\.username \|\| url\.password/);
   assert.match(app, /url\.hostname !== "firebasestorage\.googleapis\.com"/);
+  assert.match(app, /studio-projects/);
+  assert.match(app, /logo\|banner\|gallery/);
   assert.match(css, /@media\(max-width:820px\)/);
   assert.match(css, /prefers-reduced-motion/);
 });
