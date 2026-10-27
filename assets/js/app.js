@@ -1778,7 +1778,7 @@ function openProjectCreate() {
             throw new Error(`Escolha apenas uma fonte para ${kind}: URL ou arquivo local.`);
           }
         }
-        const totalScreenshots = payload.screenshots.length + pendingMedia.screenshot.length;
+        const totalScreenshots = (payload.screenshots || []).length + pendingMedia.screenshot.length;
         if (totalScreenshots > 12) throw new Error("URLs e arquivos locais somados aceitam no máximo 12 screenshots.");
         Object.values(pendingMedia).flat().forEach(validateProjectMediaFile);
 

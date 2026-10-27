@@ -230,7 +230,7 @@ test("criação limita screenshots totais e preserva projeto para repetir falhas
   const start = source.indexOf("function openProjectCreate()");
   const end = source.indexOf("function openProjectEdit", start);
   const createSource = source.slice(start, end);
-  assert.match(createSource, /payload\.screenshots\.length \+ pendingMedia\.screenshot\.length/);
+  assert.match(createSource, /\(payload\.screenshots \|\| \[\]\)\.length \+ pendingMedia\.screenshot\.length/);
   assert.match(createSource, /totalScreenshots > 12/);
   assert.match(createSource, /O projeto foi criado e preservado, mas estas mídias falharam/);
   assert.match(createSource, /error\.retryLabel = "Tentar mídias novamente"/);
